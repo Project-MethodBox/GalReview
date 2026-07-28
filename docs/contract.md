@@ -30,7 +30,7 @@
 | 模块 | 负责人 | 本文覆盖 | 最终设计责任 |
 |---|---|---|---|
 | UserService | `@Sleexy` | 用户资料与偏好 | 字段、校验、持久化与迁移 |
-| AuthService | `@Sleexy` | 注册、会话、令牌、密码恢复 | 凭证模型、令牌策略与安全实现 |
+| AuthService | `@Sleexy` | 注册、会话、令牌、密码恢复、管理员账号治理与邀请码 | 凭证模型、令牌策略、管理员边界与安全实现 |
 | FileService | `@Sleexy` | 上传、GridFS、解析任务与内容访问 | 文件限制、解析器与存储实现 |
 | KnowledgeService | `@Arabidopsis` | 图谱、知识点、关系、复习计划与掌握度 | 图谱模型、抽取策略与 Neo4j 查询 |
 | GalGameService | `@F15EX` | 游戏生成任务、游戏包与 schema | 生成流程、剧情结构与兼容策略 |
@@ -251,8 +251,19 @@ interface UserPreferences extends UserPreferencesInput {
 ## 4. AuthService
 
 > 负责人：`@Sleexy`  
-> 拥有：凭证、会话、访问令牌、刷新令牌和撤销状态。  
-> 不拥有：用户展示资料。
+> 拥有：凭证、会话、访问令牌、刷新令牌、撤销状态、管理员会话和邀请码。  
+> 不拥有：用户展示资料、学习偏好和学习业务数据。
+
+### 4.0 管理员模块边界（BASELINE）
+
+管理员能力是 AuthService 的内部模块，当前不单独部署 Admin Service：
+
+- AuthService 负责管理员登录、管理员会话、用户凭证治理（重置密码、撤销会话、删除认证账户）和邀请码管理。
+- UserService 仍拥有用户展示资料与偏好。管理员操作如需影响该服务的数据，必须经 Gateway 调用对应的 `/internal/v1/...` 接口；禁止 AuthService 直接读取或修改 UserService 数据库。
+- 浏览器只可通过 Gateway 的 `/api/v1/admin/...` 路由访问管理员接口。Gateway 验证 Access Token 并注入可信身份上下文，AuthService 最终判定管理员权限。
+- 管理员默认凭据只能用于本地开发，禁止进入浏览器代码、日志、提交到版本控制的生产配置或公开文档。
+- 删除用户与重置密码属于高风险操作。生产上线前必须具备可检索的审计记录，至少包含操作者、目标用户、操作类型、结果、时间与 `traceId`。审计表结构为 `OWNER-TBD`。
+- 当后台扩展为内容审核、运营、跨服务报表或多角色权限体系时，再评估拆分独立 Admin Service。
 
 ### 4.1 接口目录
 
@@ -263,10 +274,22 @@ interface UserPreferences extends UserPreferencesInput {
 | `GET` | `/api/v1/auth/sessions/{sessionId}` | 读取会话状态 | - | `AuthSession` | `200/404` |
 | `DELETE` | `/api/v1/auth/sessions/{sessionId}` | 退出并撤销会话 | - | - | `204/404` |
 | `POST` | `/api/v1/auth/tokens` | 刷新访问令牌 | `RefreshTokenRequest` | `TokenPair` | `201/401` |
-| `POST` | `/api/v1/auth/password-reset-requests` | 请求密码恢复 | `PasswordResetRequest` | - | `202` |
+| `POST` | `/api/v1/auth/password-reset-requests` | 请求密码恢复 | `PasswordResetRequest` | - | `202/404` |
 | `POST` | `/api/v1/auth/password-resets` | 重设密码 | `PasswordResetConfirmation` | - | `204/422` |
 | `POST` | `/api/v1/auth/password-changes` | 当前用户修改密码 | `PasswordChangeRequest` | - | `204/400/401` |
 | `POST` | `/internal/v1/auth/introspections` | 查询令牌状态 | `TokenIntrospectionRequest` | `TokenIntrospection` | `200/401/P1` |
+
+### 4.1.1 管理员接口（BASELINE）
+
+| 方法 | Gateway 路由 | 用途 | 请求 | 响应 | 状态 |
+|---|---|---|---|---|---|
+| `POST` | `/api/v1/admin/sessions` | 管理员用户名密码登录 | `AdminLoginRequest` | `AuthSessionResponse` | `201/401` |
+| `GET` | `/api/v1/admin/users` | 列出已注册用户 | - | `AdminUser[]` | `200/403` |
+| `DELETE` | `/api/v1/admin/users/{userId}` | 删除用户认证账户及其关联认证数据 | - | - | `204/403/404` |
+| `POST` | `/api/v1/admin/users/{userId}/password` | 管理员重置用户密码并撤销会话 | `AdminPasswordResetRequest` | - | `204/400/403/404` |
+| `GET` | `/api/v1/admin/invitations` | 列出邀请码 | - | `AdminInvitation[]` | `200/403` |
+| `POST` | `/api/v1/admin/invitations` | 创建邀请码 | `CreateInvitationRequest` | `AdminInvitation` | `201/400/403` |
+| `DELETE` | `/api/v1/admin/invitations/{code}` | 删除未使用或不再需要的邀请码 | - | - | `204/403/404` |
 
 ### 4.2 数据类型
 
@@ -314,8 +337,43 @@ interface PasswordResetRequest {
 }
 
 interface PasswordResetConfirmation {
-  resetToken: string;
+  resetToken: string; // 六位数字验证码；有效期 10 分钟
   newPassword: string;
+}
+
+interface AdminLoginRequest {
+  username: string;
+  password: string;
+}
+
+interface AdminPasswordResetRequest {
+  newPassword: string; // 至少 8 个字符
+}
+
+interface AdminUser {
+  id: Uuid;
+  email: string;
+  displayName: string;
+  isActive: boolean;
+}
+
+type InvitationType = "single-use" | "multi-use" | "time-window";
+
+interface CreateInvitationRequest {
+  type: InvitationType;
+  maxUses?: number;        // single-use 固定为 1；multi-use 必填
+  validFrom?: DateTime;    // 仅 time-window 使用
+  validTo?: DateTime;      // 仅 time-window 使用，且必须晚于 validFrom
+}
+
+interface AdminInvitation {
+  code: string;
+  type: InvitationType;
+  maxUses: number;
+  usedCount: number;
+  validFrom: DateTime | null;
+  validTo: DateTime | null;
+  createdAt: DateTime;
 }
 
 interface PasswordChangeRequest {
@@ -1034,6 +1092,7 @@ interface WasmAdapter {
 |---|---|---|---|
 | `/api/v1/users` | UserService | Browser | 用户令牌 |
 | `/api/v1/auth` | AuthService | Browser | 登录和注册公开，其余按接口 |
+| `/api/v1/admin` | AuthService | Browser（管理员后台） | 管理员登录公开，其余管理员令牌 |
 | `/api/v1/materials`、`/api/v1/ingestion-jobs` | FileService | Browser | 用户令牌 |
 | `/api/v1/knowledge-*`、`/api/v1/review-plans`、`/api/v1/mastery-records` | KnowledgeService | Browser | 用户令牌 |
 | `/api/v1/game-*` | GalGameService | Browser / Render | 用户令牌 |
