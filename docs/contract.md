@@ -265,6 +265,7 @@ interface UserPreferences extends UserPreferencesInput {
 | `POST` | `/api/v1/auth/tokens` | 刷新访问令牌 | `RefreshTokenRequest` | `TokenPair` | `201/401` |
 | `POST` | `/api/v1/auth/password-reset-requests` | 请求密码恢复 | `PasswordResetRequest` | - | `202` |
 | `POST` | `/api/v1/auth/password-resets` | 重设密码 | `PasswordResetConfirmation` | - | `204/422` |
+| `POST` | `/api/v1/auth/password-changes` | 当前用户修改密码 | `PasswordChangeRequest` | - | `204/400/401` |
 | `POST` | `/internal/v1/auth/introspections` | 查询令牌状态 | `TokenIntrospectionRequest` | `TokenIntrospection` | `200/401/P1` |
 
 ### 4.2 数据类型
@@ -314,6 +315,11 @@ interface PasswordResetRequest {
 
 interface PasswordResetConfirmation {
   resetToken: string;
+  newPassword: string;
+}
+
+interface PasswordChangeRequest {
+  currentPassword: string;
   newPassword: string;
 }
 
