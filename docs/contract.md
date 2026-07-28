@@ -38,6 +38,13 @@
 | Frontend / WASM Adapter | `@甲烷` | JS 桥接、页面调用与错误展示 | 前端适配器和运行时集成 |
 | API Gateway | `@甲烷` | 路由、鉴权、错误、CORS 与链路头 | Gateway 策略与部署配置 |
 
+### 0.2 当前持久化基线
+
+- **UserService 的权威数据库为 MySQL**：仅持久化用户展示资料、学习偏好及其关联数据。
+- **AuthService 的权威数据库为 MySQL**：仅持久化凭证密码哈希、会话、令牌撤销状态、密码恢复记录、管理员账号治理、邀请码与管理员审计记录。
+- 同一业务事实只能由一个服务及其权威数据库写入；禁止 AuthService 与 UserService 互相直连或读写对方的 MySQL 数据表。
+- 后续引入 MongoDB 时，应由对应业务服务独占其文档型数据；不得将上述账户与用户资料数据在 MySQL、MongoDB 中双写作为两个权威来源。
+
 ## 1. 架构级调用约束
 
 ### 1.1 同步调用
@@ -175,12 +182,15 @@ interface ApiFailure {
 > 负责人：`@Sleexy`  
 > 拥有：用户资料、偏好与资料更新时间。  
 > 不拥有：密码、刷新令牌、图谱、游戏包和复习结果。
+> 权威数据库：MySQL。
 
 ### 3.1 接口目录
 
 | 方法 | Gateway 路由 | 用途 | 请求 | 响应 | 状态 |
 |---|---|---|---|---|---|
 | `POST` | `/internal/v1/users` | 注册后创建用户资料 | `CreateUserProfileRequest` | `UserProfile` | `201/409` |
+| `POST` | `/internal/v1/users/profile-lookups` | 管理员查询认证账户对应的展示名 | `AdminProfileLookupRequest` | `AdminProfileSummary[]` | `200/400/403` |
+| `DELETE` | `/internal/v1/users/{userId}` | 管理员删除用户资料与偏好 | - | - | `204/400/403/404` |
 | `GET` | `/api/v1/users/me` | 读取当前用户资料 | - | `UserProfile` | `200/401` |
 | `PATCH` | `/api/v1/users/me` | 部分更新资料 | `UpdateUserProfileRequest` | `UserProfile` | `200/400` |
 | `GET` | `/api/v1/users/me/preferences` | 读取学习与显示偏好 | - | `UserPreferences` | `200/401` |
@@ -193,6 +203,15 @@ interface CreateUserProfileRequest {
   userId: Uuid;           // AuthService 生成
   displayName: string;    // 1-64 字符，禁止纯空白
   locale?: string;        // 默认 zh-CN
+}
+
+interface AdminProfileLookupRequest {
+  userIds: Uuid[];       // 最多 500 个；仅 AuthService 可经 Gateway 调用
+}
+
+interface AdminProfileSummary {
+  userId: Uuid;
+  displayName: string;
 }
 
 interface UserProfile {
@@ -253,6 +272,7 @@ interface UserPreferences extends UserPreferencesInput {
 > 负责人：`@Sleexy`  
 > 拥有：凭证、会话、访问令牌、刷新令牌、撤销状态、管理员会话和邀请码。  
 > 不拥有：用户展示资料、学习偏好和学习业务数据。
+> 权威数据库：MySQL。
 
 ### 4.0 管理员模块边界（BASELINE）
 
@@ -269,7 +289,7 @@ interface UserPreferences extends UserPreferencesInput {
 
 | 方法 | Gateway 路由 | 用途 | 请求 | 响应 | 状态 |
 |---|---|---|---|---|---|
-| `POST` | `/api/v1/auth/registrations` | 创建凭证和初始会话 | `RegistrationRequest` | `AuthSessionResponse` | `201/409` |
+| `POST` | `/api/v1/auth/registrations` | 校验邀请码后创建凭证和初始会话 | `RegistrationRequest` | `AuthSessionResponse` | `201/400/409/422/503` |
 | `POST` | `/api/v1/auth/sessions` | 邮箱与密码登录 | `LoginRequest` | `AuthSessionResponse` | `201/401` |
 | `GET` | `/api/v1/auth/sessions/{sessionId}` | 读取会话状态 | - | `AuthSession` | `200/404` |
 | `DELETE` | `/api/v1/auth/sessions/{sessionId}` | 退出并撤销会话 | - | - | `204/404` |
@@ -298,6 +318,8 @@ interface RegistrationRequest {
   email: string;
   password: string;
   displayName: string;
+  invitationCode: string; // 必填；由管理员生成，忽略首尾空白并按大写校验
+  deviceName?: string;
 }
 
 interface LoginRequest {
@@ -375,6 +397,13 @@ interface AdminInvitation {
   validTo: DateTime | null;
   createdAt: DateTime;
 }
+
+邀请码注册规则：
+
+- `single-use` 只能成功注册一次；`multi-use` 成功次数不得超过 `maxUses`；`time-window` 仅在 `validFrom` 至 `validTo`（含边界）期间有效。
+- AuthService 必须在创建凭证的同一数据库事务中锁定邀请码、校验可用性并递增 `usedCount`，避免并发超额使用。
+- 若后续创建用户资料或会话失败，AuthService 必须删除本次凭证并归还邀请码使用次数。
+- 无效、过期或已用尽的邀请码返回 `422 BUSINESS_RULE_VIOLATION`；邀请码不得出现在日志中。
 
 interface PasswordChangeRequest {
   currentPassword: string;
