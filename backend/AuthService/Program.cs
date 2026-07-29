@@ -138,7 +138,7 @@ app.MapPost("/api/v1/admin/users/{userId}/password", (string userId, AdminResetP
 app.MapPost("/api/v1/auth/password-changes", (PasswordChangeRequest request, HttpContext c, AuthRepository repository, IPasswordHasher<Credential> hasher) =>
 {
     var userId = GetGatewayUser(c, gatewayKey);
-    if (userId is null) return Failure(c, 401, "AUTH_REQUIRED", "需要有效登录状态");
+    if (userId is null) return Failure(c, 401, "AUTH_REQUIRED", "登录状态已失效");
     if (!ValidPassword(request.NewPassword)) return Failure(c, 400, "VALIDATION_ERROR", "新密码至少需要 8 个字符");
     var credential = repository.FindCredentialById(userId);
     if (credential is null) return Failure(c, 404, "RESOURCE_NOT_FOUND", "用户不存在");
@@ -150,8 +150,8 @@ app.MapPost("/api/v1/auth/password-changes", (PasswordChangeRequest request, Htt
 app.MapDelete("/api/v1/auth/account", async ([FromBody] AccountDeletionRequest request, HttpContext c, AuthRepository repository, AdminAuditRepository audit, IPasswordHasher<Credential> hasher, IHttpClientFactory clients) =>
 {
     var userId = GetGatewayUser(c, gatewayKey);
-    if (userId is null) return Failure(c, 401, "AUTH_REQUIRED", "需要有效登录状态");
-    if (IsAdmin(c, gatewayKey)) return Failure(c, 403, "FORBIDDEN", "管理员账号不能通过此接口注销");
+    if (userId is null) return Failure(c, 401, "AUTH_REQUIRED", "登陆状态已失效");
+    if (IsAdmin(c, gatewayKey)) return Failure(c, 403, "FORBIDDEN", "管理员不能通过此接口注销");
     if (string.IsNullOrWhiteSpace(request.CurrentPassword)) return Failure(c, 400, "VALIDATION_ERROR", "请输入当前登录密码以确认注销");
 
     var credential = repository.FindCredentialById(userId);
@@ -160,7 +160,7 @@ app.MapDelete("/api/v1/auth/account", async ([FromBody] AccountDeletionRequest r
     if (!await DeleteUserProfileAsync(clients.CreateClient("gateway"), gatewayKey, c.TraceIdentifier, userId, c.RequestAborted))
     {
         audit.Write(AdminAuditRecord.Create(userId, "ACCOUNT_SELF_DELETE", userId, null, "PROFILE_DELETE_FAILED", c.TraceIdentifier));
-        return Failure(c, 503, "SERVICE_UNAVAILABLE", "用户资料服务暂时不可用，账户未注销");
+        return Failure(c, 503, "SERVICE_UNAVAILABLE", "用户资料服务暂时不可用，注销失败");
     }
 
     var deleted = repository.DeleteAccount(userId);
@@ -173,7 +173,7 @@ app.MapPost("/api/v1/admin/invitations", (CreateInvitationRequest request, HttpC
 {
     if (!IsAdmin(c, gatewayKey)) return Failure(c, 403, "FORBIDDEN", "需要管理员权限");
     var invitation = admin.CreateInvitation(request);
-    if (invitation is null) return Failure(c, 400, "VALIDATION_ERROR", "邀请码参数不符合要求");
+    if (invitation is null) return Failure(c, 400, "VALIDATION_ERROR", "请填写邀请码");
     audit.Write(AdminAuditRecord.Create(GetGatewayUser(c, gatewayKey)!, "INVITATION_CREATE", null, invitation.Code, "SUCCEEDED", c.TraceIdentifier));
     return Results.Created($"/api/v1/admin/invitations/{invitation.Code}", ApiSuccess.Create(invitation, c.TraceIdentifier));
 });
@@ -187,12 +187,12 @@ app.MapDelete("/api/v1/admin/invitations/{code}", (string code, HttpContext c, A
 
 app.MapGet("/api/v1/auth/sessions/{sessionId}", (string sessionId, HttpContext c, AuthRepository repository) =>
 {
-    var caller = GetGatewayUser(c, gatewayKey); if (caller is null) return Failure(c, 401, "AUTH_REQUIRED", "需要有效登录状态");
+    var caller = GetGatewayUser(c, gatewayKey); if (caller is null) return Failure(c, 401, "AUTH_REQUIRED", "登录状态已失效");
     var session = repository.FindSession(sessionId); return session is null || session.UserId != caller ? Failure(c, 404, "RESOURCE_NOT_FOUND", "会话不存在") : Results.Ok(ApiSuccess.Create(session.ToContract(), c.TraceIdentifier));
 });
 app.MapDelete("/api/v1/auth/sessions/{sessionId}", (string sessionId, HttpContext c, AuthRepository repository) =>
 {
-    var caller = GetGatewayUser(c, gatewayKey); if (caller is null) return Failure(c, 401, "AUTH_REQUIRED", "需要有效登录状态");
+    var caller = GetGatewayUser(c, gatewayKey); if (caller is null) return Failure(c, 401, "AUTH_REQUIRED", "登录状态已失效");
     return repository.RevokeSession(sessionId, caller) ? Results.NoContent() : Failure(c, 404, "RESOURCE_NOT_FOUND", "会话不存在");
 });
 app.MapPost("/api/v1/auth/tokens", (RefreshTokenRequest request, HttpContext c, AuthRepository repository) =>
