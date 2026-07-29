@@ -432,7 +432,7 @@ interface TokenIntrospection {
 ```json
 {
   "email": "student@example.com",
-  "password": "local-only-mock",
+  "password": "mock114514",
   "deviceName": "Chrome on Windows"
 }
 ```
