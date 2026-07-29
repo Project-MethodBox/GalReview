@@ -1,12 +1,6 @@
-<<<<<<< HEAD
 # UserService
 
 UserService 是 千知万理 的用户资料服务，默认监听 `http://localhost:5106`。采用的数据库是 **MySQL**，只负责用户展示资料与学习偏好；密码、令牌、会话、邀请码和管理员认证均属于 AuthService。
-=======
-#  UserService
-
-UserService 是 千知万理 的用户资料服务，默认监听 `http://localhost:5106`。它的权威数据库是 **MySQL**，只负责用户展示资料与学习偏好；密码、令牌、会话、邀请码和管理员认证均属于 AuthService。
->>>>>>> f6ecc521290776ccb894e17fa02e4f1b12bbd9cb
 
 浏览器只能经 Gateway 访问 `/api/v1/users/...`。UserService 不解析浏览器令牌，而是只信任 Gateway 注入并由共享服务密钥保护的用户上下文。
 
@@ -81,7 +75,7 @@ UserService 在 MySQL 中拥有：
 | `user_profiles` | 用户 ID、显示名、头像地址、语言地区、学科偏好、创建与更新时间 |
 | `user_preferences` | 每日目标分钟数、内容难度、减少动画偏好；外键关联 `user_profiles`，删除资料时级联删除 |
 
-服务启动时会创建本服务表，并执行从旧 `users` 表迁移本地开发数据的兼容逻辑。全新生产库应使用明确的数据库迁移流程；在兼容迁移仍存在时，部署前需确认旧表来源或先完成迁移改造。
+服务启动时会确保 UserService 所拥有的数据表存在。全新生产库应由受控部署流程管理数据库结构与版本，而不是依赖运行时建表逻辑。
 
 ## 5. 浏览器 API
 

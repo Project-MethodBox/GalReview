@@ -44,11 +44,5 @@ public sealed class AuthDatabase(string connectionString)
             );
             """;
         command.ExecuteNonQuery();
-        // Compatibility migration: read legacy credential rows once into Auth-owned storage.
-        command.CommandText = """
-            INSERT IGNORE INTO auth_credentials (user_id, email, password_hash)
-            SELECT id, email, password_hash FROM users;
-            """;
-        command.ExecuteNonQuery();
     }
 }

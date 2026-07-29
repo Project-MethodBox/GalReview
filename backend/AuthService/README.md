@@ -1,10 +1,6 @@
 #  AuthService
 
-<<<<<<< HEAD
 AuthService 是 千知万理 的认证与账户治理服务。本地开发时默认监听 `http://localhost:5101`；生产环境应通过 `ASPNETCORE_URLS` 或宿主服务器配置监听地址。采用的数据库是 **MySQL**，负责凭证、密码哈希、会话、访问令牌、刷新令牌、密码恢复、管理员会话、邀请码和管理员审计记录。
-=======
-AuthService 是 千知万理 的认证与账户治理服务。本地开发时默认监听 `http://localhost:5101`；生产环境应通过 `ASPNETCORE_URLS` 或宿主服务器配置监听地址。它的权威数据库是 **MySQL**，负责凭证、密码哈希、会话、访问令牌、刷新令牌、密码恢复、管理员会话、邀请码和管理员审计记录。
->>>>>>> f6ecc521290776ccb894e17fa02e4f1b12bbd9cb
 
 浏览器不得直接访问本服务。所有浏览器请求必须先到 API Gateway，再由 Gateway 转发并注入受信任的身份头。用户展示资料和学习偏好由 UserService 管理；AuthService 不得直接访问 UserService 的数据表。
 
@@ -17,7 +13,6 @@ AuthService 是 千知万理 的认证与账户治理服务。本地开发时默
 | 管理员登录、用户认证账户治理、邀请码 | 直接读写 UserService 的 MySQL 表 |
 | 管理员高风险操作审计 | 浏览器鉴权头的最终可信判定（由 Gateway 注入） |
 
-当前管理员能力属于 AuthService 的内部模块，并不单独部署 Admin Service。
 
 ## 2. 运行依赖
 
@@ -99,7 +94,7 @@ AuthService 在 `moonstone_auth` 中拥有以下表：
 | `admin_audit_logs` | 管理员删除用户、重置密码、创建/删除邀请码的审计记录 |
 | `admin_user_overrides` | 兼容保留的管理员用户覆盖数据 |
 
-服务启动时会执行建表与旧 `users` 表的兼容迁移。当前兼容迁移面向已有本地开发数据；部署全新数据库前，应先验证旧表迁移逻辑已被移除或准备好相应迁移方案，避免把运行时建表逻辑当作正式数据库版本管理。
+服务启动时会确保 AuthService 所拥有的数据表存在
 
 ## 5. 浏览器 API
 
@@ -301,6 +296,7 @@ Gateway 调用内部接口时使用 `X-Gateway-Key`；服务间调用 Gateway �
 3. AuthService 经 Gateway 调用 UserService 的内部删除接口，删除该用户的资料和学习偏好；AuthService 不直接读写 UserService 数据表。
 4. 用户资料删除完成后，AuthService 在自己的 MySQL 事务中删除认证凭证、全部会话、密码恢复记录和用户覆盖记录。
 5. 写入 `admin_audit_logs`：`action=ACCOUNT_SELF_DELETE`，其中保留操作人、目标、处理结果、时间和 `traceId`，但不记录密码或令牌。
+
 
 管理员账户不能使用此接口，返回 `403 FORBIDDEN`。资料服务暂时不可用时返回 `503 SERVICE_UNAVAILABLE`，认证数据不会在该次请求中删除。由于资料服务和认证服务是独立服务，并不存在跨服务数据库事务；若资料删除已完成但后续认证删除因短暂故障中断，重新使用仍有效的会话和正确密码提交同一请求即可继续完成注销，资料不存在会被视为已删除。
 

@@ -154,12 +154,6 @@ public sealed class UserDatabase(string connectionString)
             );
             """;
         command.ExecuteNonQuery();
-        // Compatibility migration: preserves locally-created accounts from the pre-split service.
-        command.CommandText = """
-            INSERT IGNORE INTO user_profiles (user_id, display_name, avatar_url, locale, preferred_subject_codes, created_at, updated_at)
-            SELECT id, display_name, NULL, 'zh-CN', JSON_ARRAY(), created_at, created_at FROM users;
-            """;
-        command.ExecuteNonQuery();
     }
 }
 
