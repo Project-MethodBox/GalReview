@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
 using MySqlConnector;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -146,6 +147,26 @@ app.MapPost("/api/v1/auth/password-changes", (PasswordChangeRequest request, Htt
     repository.RevokeAllSessions(userId);
     return Results.NoContent();
 });
+app.MapDelete("/api/v1/auth/account", async ([FromBody] AccountDeletionRequest request, HttpContext c, AuthRepository repository, AdminAuditRepository audit, IPasswordHasher<Credential> hasher, IHttpClientFactory clients) =>
+{
+    var userId = GetGatewayUser(c, gatewayKey);
+    if (userId is null) return Failure(c, 401, "AUTH_REQUIRED", "需要有效登录状态");
+    if (IsAdmin(c, gatewayKey)) return Failure(c, 403, "FORBIDDEN", "管理员账号不能通过此接口注销");
+    if (string.IsNullOrWhiteSpace(request.CurrentPassword)) return Failure(c, 400, "VALIDATION_ERROR", "请输入当前登录密码以确认注销");
+
+    var credential = repository.FindCredentialById(userId);
+    if (credential is null) return Failure(c, 404, "RESOURCE_NOT_FOUND", "用户不存在");
+    if (!PasswordMatches(hasher, credential, request.CurrentPassword)) return Failure(c, 401, "AUTH_REQUIRED", "当前密码错误");
+    if (!await DeleteUserProfileAsync(clients.CreateClient("gateway"), gatewayKey, c.TraceIdentifier, userId, c.RequestAborted))
+    {
+        audit.Write(AdminAuditRecord.Create(userId, "ACCOUNT_SELF_DELETE", userId, null, "PROFILE_DELETE_FAILED", c.TraceIdentifier));
+        return Failure(c, 503, "SERVICE_UNAVAILABLE", "用户资料服务暂时不可用，账户未注销");
+    }
+
+    var deleted = repository.DeleteAccount(userId);
+    audit.Write(AdminAuditRecord.Create(userId, "ACCOUNT_SELF_DELETE", userId, null, deleted ? "SUCCEEDED" : "NOT_FOUND", c.TraceIdentifier));
+    return deleted ? Results.NoContent() : Failure(c, 404, "RESOURCE_NOT_FOUND", "用户不存在");
+});
 app.MapGet("/api/v1/admin/invitations", (HttpContext c, AdminRepository admin) =>
     IsAdmin(c, gatewayKey) ? Results.Ok(ApiSuccess.Create(admin.ListInvitations(), c.TraceIdentifier)) : Failure(c, 403, "FORBIDDEN", "需要管理员权限"));
 app.MapPost("/api/v1/admin/invitations", (CreateInvitationRequest request, HttpContext c, AdminRepository admin, AdminAuditRepository audit) =>
@@ -257,6 +278,7 @@ public sealed record LoginRequest(string Email, string Password, string? DeviceN
 public sealed record AdminLoginRequest(string Username, string Password);
 public sealed record AdminResetPasswordRequest(string NewPassword);
 public sealed record PasswordChangeRequest(string CurrentPassword, string NewPassword);
+public sealed record AccountDeletionRequest(string CurrentPassword);
 public sealed record CreateInvitationRequest(string Type, int? MaxUses, DateTimeOffset? ValidFrom, DateTimeOffset? ValidTo);
 public sealed record AdminUser(string Id, string Email, string DisplayName, bool IsActive);
 public sealed record AdminInvitation(string Code, string Type, int MaxUses, int UsedCount, DateTimeOffset? ValidFrom, DateTimeOffset? ValidTo, DateTimeOffset CreatedAt);
@@ -351,6 +373,20 @@ public sealed class AuthRepository(AuthDatabase database)
         transaction.Commit();
     }
     public void DeleteCredential(string id) { using var c=database.OpenConnection();using var q=c.CreateCommand();q.CommandText="DELETE FROM auth_credentials WHERE user_id=@id;";q.Parameters.AddWithValue("@id",id);q.ExecuteNonQuery(); }
+    public bool DeleteAccount(string userId)
+    {
+        using var connection = database.OpenConnection(); using var transaction = connection.BeginTransaction(); using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT CAST(user_id AS CHAR) FROM auth_credentials WHERE user_id=@id LIMIT 1 FOR UPDATE;";
+        command.Parameters.AddWithValue("@id", userId);
+        if (command.ExecuteScalar() is null) { transaction.Rollback(); return false; }
+        command.Parameters.Clear();
+        command.CommandText = "DELETE FROM auth_sessions WHERE user_id=@id; DELETE FROM auth_password_resets WHERE user_id=@id; DELETE FROM admin_user_overrides WHERE user_id=@id; DELETE FROM auth_credentials WHERE user_id=@id;";
+        command.Parameters.AddWithValue("@id", userId);
+        command.ExecuteNonQuery();
+        transaction.Commit();
+        return true;
+    }
     public Credential? FindCredential(string email) { using var c=database.OpenConnection();using var q=c.CreateCommand();q.CommandText="SELECT CAST(user_id AS CHAR),email,password_hash FROM auth_credentials WHERE email=@email;";q.Parameters.AddWithValue("@email",email);using var r=q.ExecuteReader();return r.Read()?new Credential(DbText(r.GetValue(0)),r.GetString(1),r.GetString(2)):null; }
     public Credential? FindCredentialById(string userId) { using var c=database.OpenConnection();using var q=c.CreateCommand();q.CommandText="SELECT CAST(user_id AS CHAR),email,password_hash FROM auth_credentials WHERE user_id=@id;";q.Parameters.AddWithValue("@id",userId);using var r=q.ExecuteReader();return r.Read()?new Credential(DbText(r.GetValue(0)),r.GetString(1),r.GetString(2)):null; }
     public StoredSession CreateSession(string userId,string? deviceName) { var now=DateTimeOffset.UtcNow;var s=new StoredSession(Guid.NewGuid().ToString(),userId,Token(),Token(),now,now.AddMinutes(15),now.AddDays(7),null); InsertSession(s);return s; }

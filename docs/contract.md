@@ -3,7 +3,7 @@
 > 版本：v0.1  
 > 状态：Draft / 各服务负责人待确认  
 > 总负责人：PM & TL `@Arabidopsis`  
-> 更新时间：2026-07-27  
+> 更新时间：2026-07-29  
 > 依据：《千知万理 产品需求与技术方案》v0.2
 
 ## 0. 文档定位
@@ -40,8 +40,8 @@
 
 ### 0.2 当前持久化基线
 
-- **UserService 的权威数据库为 MySQL**：仅持久化用户展示资料、学习偏好及其关联数据。
-- **AuthService 的权威数据库为 MySQL**：仅持久化凭证密码哈希、会话、令牌撤销状态、密码恢复记录、管理员账号治理、邀请码与管理员审计记录。
+- **UserService 的数据库为 MySQL**：仅持久化用户展示资料、学习偏好及其关联数据。
+- **AuthService 的数据库为 MySQL**：仅持久化凭证密码哈希、会话、令牌撤销状态、密码恢复记录、管理员账号治理、邀请码与管理员审计记录。
 - 同一业务事实只能由一个服务及其权威数据库写入；禁止 AuthService 与 UserService 互相直连或读写对方的 MySQL 数据表。
 - 后续引入 MongoDB 时，应由对应业务服务独占其文档型数据；不得将上述账户与用户资料数据在 MySQL、MongoDB 中双写作为两个权威来源。
 
@@ -181,8 +181,8 @@ interface ApiFailure {
 
 > 负责人：`@Sleexy`  
 > 拥有：用户资料、偏好与资料更新时间。  
-> 不拥有：密码、刷新令牌、图谱、游戏包和复习结果。
-> 权威数据库：MySQL。
+> 不拥有：密码、刷新令牌、图谱、游戏包和复习结果。  
+> 数据库：MySQL
 
 ### 3.1 接口目录
 
@@ -263,16 +263,16 @@ interface UserPreferences extends UserPreferencesInput {
 
 ### 3.4 OWNER-TBD
 
-- [ ] 头像来源和上传方式；
-- [ ] `preferredSubjectCodes` 最大数量；
-- [ ] 账户注销是否进入首版。
+- [ √ ] 头像来源和上传方式：头像暂不支持用户自定义，由前端实现，默认头像为用户名首字符
+- [ √ ] `preferredSubjectCodes` 最大数量为10项，超过 10 项或包含空白项时，UserService 返回 400 VALIDATION_ERROR。
+- [   ] 账户注销是否进入首版。用户调用 `DELETE /api/v1/auth/account` 并输入当前登录密码确认后，AuthService 经 Gateway 删除 UserService 的资料与偏好，再删除认证凭证、会话、密码恢复记录及认证侧关联数据；操作立即生效且不可恢复。
 
 ## 4. AuthService
 
 > 负责人：`@Sleexy`  
 > 拥有：凭证、会话、访问令牌、刷新令牌、撤销状态、管理员会话和邀请码。  
-> 不拥有：用户展示资料、学习偏好和学习业务数据。
-> 权威数据库：MySQL。
+> 不拥有：用户展示资料、学习偏好和学习业务数据。  
+> 数据库：MySQL
 
 ### 4.0 管理员模块边界（BASELINE）
 
@@ -297,6 +297,7 @@ interface UserPreferences extends UserPreferencesInput {
 | `POST` | `/api/v1/auth/password-reset-requests` | 请求密码恢复 | `PasswordResetRequest` | - | `202/404` |
 | `POST` | `/api/v1/auth/password-resets` | 重设密码 | `PasswordResetConfirmation` | - | `204/422` |
 | `POST` | `/api/v1/auth/password-changes` | 当前用户修改密码 | `PasswordChangeRequest` | - | `204/400/401` |
+| `DELETE` | `/api/v1/auth/account` | 当前用户输入密码后永久注销账户 | `AccountDeletionRequest` | - | `204/400/401/403/404/503` |
 | `POST` | `/internal/v1/auth/introspections` | 查询令牌状态 | `TokenIntrospectionRequest` | `TokenIntrospection` | `200/401/P1` |
 
 ### 4.1.1 管理员接口（BASELINE）
@@ -409,6 +410,9 @@ interface PasswordChangeRequest {
   currentPassword: string;
   newPassword: string;
 }
+interface AccountDeletionRequest {
+  currentPassword: string; // 必填；用于确认立即永久注销
+}
 
 interface TokenIntrospectionRequest {
   token: string;
@@ -457,13 +461,26 @@ interface TokenIntrospection {
 
 ### 4.4 OWNER-TBD
 
-- [ ] 密码强度和哈希算法；
-- [ ] Access Token 使用 JWT 还是通过 INTERNAL introspection；
-- [ ] 刷新令牌是否每次轮换；
-- [ ] Access Token、会话和密码重置令牌有效期；
-- [ ] 注册时 AuthService 与 UserService 的一致性方案。
+- [ √ ] 密码强度和哈希算法：目前密码要求非空、长度至少为8位字符。加密采用 ASP.NET Core Identity 自带的 PBKDF2 哈希
+- [ √ ] Access Token 通过 INTERNAL introspection，token 入库时不是存明文，而是存 SHA256 hash，Gateway 校验 Access Token 时，会调用 AuthService 的内部接口，最后AuthService 通过 token hash 查会话：
+- [ √ ] 刷新令牌是否每次轮换：是的，目前刷新令牌是每次刷新都会轮换
+- [ √ ] Access Token、Refresh Token和密码重置令牌有效期如下表：
+  | 类型 | 有效期 | 说明 |
+  |---|---:|---|
+  | Access Token | 15 分钟 | 用于访问受保护接口 |
+  | Refresh Token | 7 天 | 用于刷新访问令牌 |
+  | Reset Password Token | 10 分钟 | 用于忘记密码重设 |
 
-建议首版：Gateway 本地验证 JWT；AuthService 经 Gateway 的 INTERNAL 路由同步创建 UserProfile。
+
+- [ √ ] 注册时 AuthService 与 UserService 的一致性方案。
+ #### 注册一致性流程：
+
+ 1. AuthService 创建凭证。
+ 2. AuthService 经 Gateway 调用 `/internal/v1/users`。
+ 3. UserService 创建 `UserProfile`。
+ 4. 如果 `UserProfile` 创建失败，AuthService 删除刚创建的凭证。
+
+
 
 ## 5. FileService
 
