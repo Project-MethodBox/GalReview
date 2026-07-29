@@ -1,6 +1,12 @@
+<<<<<<< HEAD
 # UserService
 
 UserService 是 千知万理 的用户资料服务，默认监听 `http://localhost:5106`。采用的数据库是 **MySQL**，只负责用户展示资料与学习偏好；密码、令牌、会话、邀请码和管理员认证均属于 AuthService。
+=======
+#  UserService
+
+UserService 是 千知万理 的用户资料服务，默认监听 `http://localhost:5106`。它的权威数据库是 **MySQL**，只负责用户展示资料与学习偏好；密码、令牌、会话、邀请码和管理员认证均属于 AuthService。
+>>>>>>> f6ecc521290776ccb894e17fa02e4f1b12bbd9cb
 
 浏览器只能经 Gateway 访问 `/api/v1/users/...`。UserService 不解析浏览器令牌，而是只信任 Gateway 注入并由共享服务密钥保护的用户上下文。
 
