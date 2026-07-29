@@ -1,6 +1,10 @@
 #  AuthService
 
+<<<<<<< HEAD
 AuthService 是 千知万理 的认证与账户治理服务。本地开发时默认监听 `http://localhost:5101`；生产环境应通过 `ASPNETCORE_URLS` 或宿主服务器配置监听地址。采用的数据库是 **MySQL**，负责凭证、密码哈希、会话、访问令牌、刷新令牌、密码恢复、管理员会话、邀请码和管理员审计记录。
+=======
+AuthService 是 千知万理 的认证与账户治理服务。本地开发时默认监听 `http://localhost:5101`；生产环境应通过 `ASPNETCORE_URLS` 或宿主服务器配置监听地址。它的权威数据库是 **MySQL**，负责凭证、密码哈希、会话、访问令牌、刷新令牌、密码恢复、管理员会话、邀请码和管理员审计记录。
+>>>>>>> f6ecc521290776ccb894e17fa02e4f1b12bbd9cb
 
 浏览器不得直接访问本服务。所有浏览器请求必须先到 API Gateway，再由 Gateway 转发并注入受信任的身份头。用户展示资料和学习偏好由 UserService 管理；AuthService 不得直接访问 UserService 的数据表。
 
