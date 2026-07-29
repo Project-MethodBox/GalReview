@@ -3,16 +3,25 @@ using Microsoft.AspNetCore.Diagnostics;
 using MySqlConnector;
 
 var builder = WebApplication.CreateBuilder(args);
-var connectionString = builder.Configuration.GetConnectionString("UserDatabase")
-    ?? throw new InvalidOperationException("ConnectionStrings:UserDatabase must be configured.");
+var isMockMode = string.Equals(Environment.GetEnvironmentVariable("MOONSTONE_MODE"), "Mock", StringComparison.OrdinalIgnoreCase);
+var connectionString = builder.Configuration.GetConnectionString("UserDatabase");
+if (!isMockMode && string.IsNullOrWhiteSpace(connectionString))
+    throw new InvalidOperationException("ConnectionStrings:UserDatabase must be configured.");
 var gatewayKey = builder.Configuration["Gateway:ServiceKey"]
     ?? throw new InvalidOperationException("Gateway:ServiceKey must be configured.");
-builder.Services.AddSingleton(new UserDatabase(connectionString));
-builder.Services.AddSingleton<UserRepository>();
+if (isMockMode)
+{
+    builder.Services.AddSingleton<IUserRepository, InMemoryUserRepository>();
+}
+else
+{
+    builder.Services.AddSingleton(new UserDatabase(connectionString!));
+    builder.Services.AddSingleton<IUserRepository, MySqlUserRepository>();
+}
 var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 
 var app = builder.Build();
-app.Services.GetRequiredService<UserDatabase>().EnsureCreated();
+if (!isMockMode) app.Services.GetRequiredService<UserDatabase>().EnsureCreated();
 app.Use(async (context, next) =>
 {
     var correlationId = context.Request.Headers["X-Correlation-Id"].FirstOrDefault();
@@ -30,7 +39,7 @@ app.UseExceptionHandler(error => error.Run(context =>
 app.MapGet("/healthz", (HttpContext c) => Results.Ok(ApiSuccess.Create(new { status = "live" }, c.TraceIdentifier)));
 app.MapGet("/readyz", (HttpContext c) => Results.Ok(ApiSuccess.Create(new { status = "ready", storage = "mysql" }, c.TraceIdentifier)));
 
-app.MapPost("/internal/v1/users", (CreateUserProfileRequest request, HttpContext c, UserRepository users) =>
+app.MapPost("/internal/v1/users", (CreateUserProfileRequest request, HttpContext c, IUserRepository users) =>
 {
     if (!IsGateway(c, gatewayKey) || !string.Equals(c.Request.Headers["X-Service-Name"], "AuthService", StringComparison.Ordinal))
         return Failure(c, 403, "FORBIDDEN", "仅允许经 Gateway 的 AuthService 创建用户资料");
@@ -43,7 +52,7 @@ app.MapPost("/internal/v1/users", (CreateUserProfileRequest request, HttpContext
         : Failure(c, 409, "STATE_CONFLICT", "用户资料已存在");
 });
 
-app.MapPost("/internal/v1/users/profile-lookups", (AdminProfileLookupRequest request, HttpContext c, UserRepository users) =>
+app.MapPost("/internal/v1/users/profile-lookups", (AdminProfileLookupRequest request, HttpContext c, IUserRepository users) =>
 {
     if (!IsAuthService(c, gatewayKey))
         return Failure(c, 403, "FORBIDDEN", "仅允许经 Gateway 的 AuthService 查询用户资料");
@@ -53,7 +62,7 @@ app.MapPost("/internal/v1/users/profile-lookups", (AdminProfileLookupRequest req
     return Results.Ok(ApiSuccess.Create(users.FindAdminProfiles(userIds), c.TraceIdentifier));
 });
 
-app.MapDelete("/internal/v1/users/{userId}", (string userId, HttpContext c, UserRepository users) =>
+app.MapDelete("/internal/v1/users/{userId}", (string userId, HttpContext c, IUserRepository users) =>
 {
     if (!IsAuthService(c, gatewayKey))
         return Failure(c, 403, "FORBIDDEN", "仅允许经 Gateway 的 AuthService 删除用户资料");
@@ -64,7 +73,7 @@ app.MapDelete("/internal/v1/users/{userId}", (string userId, HttpContext c, User
         : Failure(c, 404, "RESOURCE_NOT_FOUND", "用户资料不存在");
 });
 
-app.MapGet("/api/v1/users/me", (HttpContext c, UserRepository users) =>
+app.MapGet("/api/v1/users/me", (HttpContext c, IUserRepository users) =>
 {
     var userId = GetUserId(c, gatewayKey);
     return userId is null ? Failure(c, 401, "AUTH_REQUIRED", "需要有效登录状态")
@@ -72,7 +81,7 @@ app.MapGet("/api/v1/users/me", (HttpContext c, UserRepository users) =>
         : Failure(c, 404, "RESOURCE_NOT_FOUND", "用户资料不存在");
 });
 
-app.MapMethods("/api/v1/users/me", ["PATCH", "PUT"], async (HttpContext c, UserRepository users) =>
+app.MapMethods("/api/v1/users/me", ["PATCH", "PUT"], async (HttpContext c, IUserRepository users) =>
 {
     var userId = GetUserId(c, gatewayKey);
     if (userId is null) return Failure(c, 401, "AUTH_REQUIRED", "需要有效登录状态");
@@ -83,7 +92,7 @@ app.MapMethods("/api/v1/users/me", ["PATCH", "PUT"], async (HttpContext c, UserR
     return profile is null ? Failure(c, 404, "RESOURCE_NOT_FOUND", "用户资料不存在") : Results.Ok(ApiSuccess.Create(profile, c.TraceIdentifier));
 });
 
-app.MapGet("/api/v1/users/me/preferences", (HttpContext c, UserRepository users) =>
+app.MapGet("/api/v1/users/me/preferences", (HttpContext c, IUserRepository users) =>
 {
     var userId = GetUserId(c, gatewayKey);
     return userId is null ? Failure(c, 401, "AUTH_REQUIRED", "需要有效登录状态")
@@ -91,7 +100,7 @@ app.MapGet("/api/v1/users/me/preferences", (HttpContext c, UserRepository users)
         : Failure(c, 404, "RESOURCE_NOT_FOUND", "用户资料不存在");
 });
 
-app.MapPut("/api/v1/users/me/preferences", async (HttpContext c, UserRepository users) =>
+app.MapPut("/api/v1/users/me/preferences", async (HttpContext c, IUserRepository users) =>
 {
     var userId = GetUserId(c, gatewayKey);
     if (userId is null) return Failure(c, 401, "AUTH_REQUIRED", "需要有效登录状态");
@@ -157,7 +166,7 @@ public sealed class UserDatabase(string connectionString)
     }
 }
 
-public sealed class UserRepository(UserDatabase database)
+public sealed class MySqlUserRepository(UserDatabase database) : IUserRepository
 {
     public bool TryCreate(UserProfile profile)
     {

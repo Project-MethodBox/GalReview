@@ -7,18 +7,31 @@ using Microsoft.AspNetCore.Mvc;
 using MySqlConnector;
 
 var builder = WebApplication.CreateBuilder(args);
-var connectionString = builder.Configuration.GetConnectionString("AuthDatabase") ?? throw new InvalidOperationException("ConnectionStrings:AuthDatabase must be configured.");
+var isMockMode = string.Equals(Environment.GetEnvironmentVariable("MOONSTONE_MODE"), "Mock", StringComparison.OrdinalIgnoreCase);
+var connectionString = builder.Configuration.GetConnectionString("AuthDatabase");
+if (!isMockMode && string.IsNullOrWhiteSpace(connectionString))
+    throw new InvalidOperationException("ConnectionStrings:AuthDatabase must be configured.");
 var gatewayKey = builder.Configuration["Gateway:ServiceKey"] ?? throw new InvalidOperationException("Gateway:ServiceKey must be configured.");
 var gatewayBaseUrl = builder.Configuration["Gateway:BaseUrl"] ?? "http://localhost:5000";
 var adminUsername = builder.Configuration["Admin:Username"] ?? throw new InvalidOperationException("Admin:Username must be configured.");
 var adminPassword = builder.Configuration["Admin:Password"] ?? throw new InvalidOperationException("Admin:Password must be configured.");
 var isDevelopment = builder.Environment.IsDevelopment();
-builder.Services.AddSingleton(new AuthDatabase(connectionString));
-builder.Services.AddSingleton<AuthRepository>();
-builder.Services.AddSingleton<AdminRepository>();
-builder.Services.AddSingleton<AdminAuditRepository>();
 builder.Services.AddSingleton<PasswordResetEmailSender>();
 builder.Services.AddSingleton<IPasswordHasher<Credential>>(_ => new PasswordHasher<Credential>());
+if (isMockMode)
+{
+    builder.Services.AddSingleton<MockAuthStore>();
+    builder.Services.AddSingleton<IAuthRepository, InMemoryAuthRepository>();
+    builder.Services.AddSingleton<IAdminRepository, InMemoryAdminRepository>();
+    builder.Services.AddSingleton<IAdminAuditRepository, InMemoryAdminAuditRepository>();
+}
+else
+{
+    builder.Services.AddSingleton(new AuthDatabase(connectionString!));
+    builder.Services.AddSingleton<IAuthRepository, MySqlAuthRepository>();
+    builder.Services.AddSingleton<IAdminRepository, MySqlAdminRepository>();
+    builder.Services.AddSingleton<IAdminAuditRepository, MySqlAdminAuditRepository>();
+}
 builder.Services.AddHttpClient("gateway", client => client.BaseAddress = new Uri(gatewayBaseUrl));
 builder.Services.AddRateLimiter(options =>
 {
@@ -35,7 +48,7 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
-app.Services.GetRequiredService<AuthDatabase>().EnsureCreated();
+if (!isMockMode) app.Services.GetRequiredService<AuthDatabase>().EnsureCreated();
 app.Use(async (context, next) =>
 {
     var correlationId = context.Request.Headers["X-Correlation-Id"].FirstOrDefault();
@@ -56,7 +69,7 @@ app.UseRateLimiter();
 app.MapGet("/healthz", (HttpContext c) => Results.Ok(ApiSuccess.Create(new { status = "live" }, c.TraceIdentifier)));
 app.MapGet("/readyz", (HttpContext c) => Results.Ok(ApiSuccess.Create(new { status = "ready", storage = "mysql" }, c.TraceIdentifier)));
 
-app.MapPost("/api/v1/auth/registrations", async (RegistrationRequest request, HttpContext c, AuthRepository repository, IPasswordHasher<Credential> hasher, IHttpClientFactory clients) =>
+app.MapPost("/api/v1/auth/registrations", async (RegistrationRequest request, HttpContext c, IAuthRepository repository, IPasswordHasher<Credential> hasher, IHttpClientFactory clients) =>
 {
     var invitationCode = NormalizeInvitationCode(request.InvitationCode);
     if (!ValidEmail(request.Email) || !ValidName(request.DisplayName) || !ValidPassword(request.Password) || invitationCode is null) return Failure(c, 400, "VALIDATION_ERROR", "邮箱、显示名、密码或邀请码格式不正确");
@@ -78,7 +91,7 @@ app.MapPost("/api/v1/auth/registrations", async (RegistrationRequest request, Ht
     return Results.Created($"/api/v1/auth/sessions/{session.SessionId}", ApiSuccess.Create(session.ToResponse(), c.TraceIdentifier));
 });
 
-app.MapPost("/api/v1/auth/sessions", (LoginRequest request, HttpContext c, AuthRepository repository, IPasswordHasher<Credential> hasher) =>
+app.MapPost("/api/v1/auth/sessions", (LoginRequest request, HttpContext c, IAuthRepository repository, IPasswordHasher<Credential> hasher) =>
 {
     if (!ValidEmail(request.Email) || string.IsNullOrEmpty(request.Password)) return Failure(c, 400, "VALIDATION_ERROR", "邮箱和密码不能为空");
     var credential = repository.FindCredential(request.Email.Trim().ToLowerInvariant());
@@ -86,14 +99,14 @@ app.MapPost("/api/v1/auth/sessions", (LoginRequest request, HttpContext c, AuthR
     var session = repository.CreateSession(credential.UserId, request.DeviceName);
     return Results.Created($"/api/v1/auth/sessions/{session.SessionId}", ApiSuccess.Create(session.ToResponse(), c.TraceIdentifier));
 });
-app.MapPost("/api/v1/admin/sessions", (AdminLoginRequest request, HttpContext c, AuthRepository repository) =>
+app.MapPost("/api/v1/admin/sessions", (AdminLoginRequest request, HttpContext c, IAuthRepository repository) =>
 {
     if (!FixedTimeEquals(request.Username.Trim(), adminUsername) || !FixedTimeEquals(request.Password, adminPassword))
         return Failure(c, 401, "AUTH_REQUIRED", "管理员账号或密码错误");
     var session = repository.CreateSession("00000000-0000-0000-0000-000000000001", "MoonStone admin");
     return Results.Created($"/api/v1/auth/sessions/{session.SessionId}", ApiSuccess.Create(session.ToResponse(), c.TraceIdentifier));
 });
-app.MapGet("/api/v1/admin/users", async (HttpContext c, AdminRepository admin, IHttpClientFactory clients) =>
+app.MapGet("/api/v1/admin/users", async (HttpContext c, IAdminRepository admin, IHttpClientFactory clients) =>
 {
     if (!IsAdmin(c, gatewayKey)) return Failure(c, 403, "FORBIDDEN", "需要管理员权限");
     var accounts = admin.ListUsers();
@@ -102,7 +115,7 @@ app.MapGet("/api/v1/admin/users", async (HttpContext c, AdminRepository admin, I
     var users = accounts.Select(account => new AdminUser(account.Id, account.Email, displayNames.GetValueOrDefault(account.Id, account.Email), true)).ToArray();
     return Results.Ok(ApiSuccess.Create(users, c.TraceIdentifier));
 });
-app.MapDelete("/api/v1/admin/users/{userId}", async (string userId, HttpContext c, AdminRepository admin, AdminAuditRepository audit, IHttpClientFactory clients) =>
+app.MapDelete("/api/v1/admin/users/{userId}", async (string userId, HttpContext c, IAdminRepository admin, IAdminAuditRepository audit, IHttpClientFactory clients) =>
 {
     if (!IsAdmin(c, gatewayKey)) return Failure(c, 403, "FORBIDDEN", "需要管理员权限");
     var actorUserId = GetGatewayUser(c, gatewayKey)!;
@@ -120,7 +133,7 @@ app.MapDelete("/api/v1/admin/users/{userId}", async (string userId, HttpContext 
     audit.Write(AdminAuditRecord.Create(actorUserId, "USER_DELETE", userId, null, deleted ? "SUCCEEDED" : "NOT_FOUND", c.TraceIdentifier));
     return deleted ? Results.NoContent() : Failure(c, 404, "RESOURCE_NOT_FOUND", "用户不存在");
 });
-app.MapPost("/api/v1/admin/users/{userId}/password", (string userId, AdminResetPasswordRequest request, HttpContext c, AuthRepository repository, AdminAuditRepository audit, IPasswordHasher<Credential> hasher) =>
+app.MapPost("/api/v1/admin/users/{userId}/password", (string userId, AdminResetPasswordRequest request, HttpContext c, IAuthRepository repository, IAdminAuditRepository audit, IPasswordHasher<Credential> hasher) =>
 {
     if (!IsAdmin(c, gatewayKey)) return Failure(c, 403, "FORBIDDEN", "需要管理员权限");
     if (!ValidPassword(request.NewPassword)) return Failure(c, 400, "VALIDATION_ERROR", "新密码至少需要 8 个字符");
@@ -135,7 +148,7 @@ app.MapPost("/api/v1/admin/users/{userId}/password", (string userId, AdminResetP
     audit.Write(AdminAuditRecord.Create(GetGatewayUser(c, gatewayKey)!, "USER_PASSWORD_RESET", userId, null, "SUCCEEDED", c.TraceIdentifier));
     return Results.NoContent();
 });
-app.MapPost("/api/v1/auth/password-changes", (PasswordChangeRequest request, HttpContext c, AuthRepository repository, IPasswordHasher<Credential> hasher) =>
+app.MapPost("/api/v1/auth/password-changes", (PasswordChangeRequest request, HttpContext c, IAuthRepository repository, IPasswordHasher<Credential> hasher) =>
 {
     var userId = GetGatewayUser(c, gatewayKey);
     if (userId is null) return Failure(c, 401, "AUTH_REQUIRED", "登录状态已失效");
@@ -147,7 +160,7 @@ app.MapPost("/api/v1/auth/password-changes", (PasswordChangeRequest request, Htt
     repository.RevokeAllSessions(userId);
     return Results.NoContent();
 });
-app.MapDelete("/api/v1/auth/account", async ([FromBody] AccountDeletionRequest request, HttpContext c, AuthRepository repository, AdminAuditRepository audit, IPasswordHasher<Credential> hasher, IHttpClientFactory clients) =>
+app.MapDelete("/api/v1/auth/account", async ([FromBody] AccountDeletionRequest request, HttpContext c, IAuthRepository repository, IAdminAuditRepository audit, IPasswordHasher<Credential> hasher, IHttpClientFactory clients) =>
 {
     var userId = GetGatewayUser(c, gatewayKey);
     if (userId is null) return Failure(c, 401, "AUTH_REQUIRED", "登陆状态已失效");
@@ -167,9 +180,9 @@ app.MapDelete("/api/v1/auth/account", async ([FromBody] AccountDeletionRequest r
     audit.Write(AdminAuditRecord.Create(userId, "ACCOUNT_SELF_DELETE", userId, null, deleted ? "SUCCEEDED" : "NOT_FOUND", c.TraceIdentifier));
     return deleted ? Results.NoContent() : Failure(c, 404, "RESOURCE_NOT_FOUND", "用户不存在");
 });
-app.MapGet("/api/v1/admin/invitations", (HttpContext c, AdminRepository admin) =>
+app.MapGet("/api/v1/admin/invitations", (HttpContext c, IAdminRepository admin) =>
     IsAdmin(c, gatewayKey) ? Results.Ok(ApiSuccess.Create(admin.ListInvitations(), c.TraceIdentifier)) : Failure(c, 403, "FORBIDDEN", "需要管理员权限"));
-app.MapPost("/api/v1/admin/invitations", (CreateInvitationRequest request, HttpContext c, AdminRepository admin, AdminAuditRepository audit) =>
+app.MapPost("/api/v1/admin/invitations", (CreateInvitationRequest request, HttpContext c, IAdminRepository admin, IAdminAuditRepository audit) =>
 {
     if (!IsAdmin(c, gatewayKey)) return Failure(c, 403, "FORBIDDEN", "需要管理员权限");
     var invitation = admin.CreateInvitation(request);
@@ -177,7 +190,7 @@ app.MapPost("/api/v1/admin/invitations", (CreateInvitationRequest request, HttpC
     audit.Write(AdminAuditRecord.Create(GetGatewayUser(c, gatewayKey)!, "INVITATION_CREATE", null, invitation.Code, "SUCCEEDED", c.TraceIdentifier));
     return Results.Created($"/api/v1/admin/invitations/{invitation.Code}", ApiSuccess.Create(invitation, c.TraceIdentifier));
 });
-app.MapDelete("/api/v1/admin/invitations/{code}", (string code, HttpContext c, AdminRepository admin, AdminAuditRepository audit) =>
+app.MapDelete("/api/v1/admin/invitations/{code}", (string code, HttpContext c, IAdminRepository admin, IAdminAuditRepository audit) =>
 {
     if (!IsAdmin(c, gatewayKey)) return Failure(c, 403, "FORBIDDEN", "需要管理员权限");
     var deleted = admin.DeleteInvitation(code);
@@ -185,21 +198,21 @@ app.MapDelete("/api/v1/admin/invitations/{code}", (string code, HttpContext c, A
     return deleted ? Results.NoContent() : Failure(c, 404, "RESOURCE_NOT_FOUND", "邀请码不存在");
 });
 
-app.MapGet("/api/v1/auth/sessions/{sessionId}", (string sessionId, HttpContext c, AuthRepository repository) =>
+app.MapGet("/api/v1/auth/sessions/{sessionId}", (string sessionId, HttpContext c, IAuthRepository repository) =>
 {
     var caller = GetGatewayUser(c, gatewayKey); if (caller is null) return Failure(c, 401, "AUTH_REQUIRED", "登录状态已失效");
     var session = repository.FindSession(sessionId); return session is null || session.UserId != caller ? Failure(c, 404, "RESOURCE_NOT_FOUND", "会话不存在") : Results.Ok(ApiSuccess.Create(session.ToContract(), c.TraceIdentifier));
 });
-app.MapDelete("/api/v1/auth/sessions/{sessionId}", (string sessionId, HttpContext c, AuthRepository repository) =>
+app.MapDelete("/api/v1/auth/sessions/{sessionId}", (string sessionId, HttpContext c, IAuthRepository repository) =>
 {
     var caller = GetGatewayUser(c, gatewayKey); if (caller is null) return Failure(c, 401, "AUTH_REQUIRED", "登录状态已失效");
     return repository.RevokeSession(sessionId, caller) ? Results.NoContent() : Failure(c, 404, "RESOURCE_NOT_FOUND", "会话不存在");
 });
-app.MapPost("/api/v1/auth/tokens", (RefreshTokenRequest request, HttpContext c, AuthRepository repository) =>
+app.MapPost("/api/v1/auth/tokens", (RefreshTokenRequest request, HttpContext c, IAuthRepository repository) =>
 {
     var session = repository.Rotate(request.RefreshToken); return session is null ? Failure(c, 401, "AUTH_REQUIRED", "刷新令牌无效") : Results.Created("/api/v1/auth/tokens", ApiSuccess.Create(session.ToTokenPair(), c.TraceIdentifier));
 });
-app.MapPost("/api/v1/auth/password-reset-requests", async (PasswordResetRequest request, HttpContext c, AuthRepository repository, PasswordResetEmailSender emailSender) =>
+app.MapPost("/api/v1/auth/password-reset-requests", async (PasswordResetRequest request, HttpContext c, IAuthRepository repository, PasswordResetEmailSender emailSender) =>
 {
     if (!ValidEmail(request.Email)) return Failure(c, 400, "VALIDATION_ERROR", "请输入有效的邮箱地址");
     var credential = repository.FindCredential(request.Email.Trim().ToLowerInvariant());
@@ -209,13 +222,13 @@ app.MapPost("/api/v1/auth/password-reset-requests", async (PasswordResetRequest 
     if (!delivered) repository.DeletePasswordReset(resetToken);
     return Results.Accepted();
 });
-app.MapPost("/api/v1/auth/password-resets", (PasswordResetConfirmation request, HttpContext c, AuthRepository repository, IPasswordHasher<Credential> hasher) =>
+app.MapPost("/api/v1/auth/password-resets", (PasswordResetConfirmation request, HttpContext c, IAuthRepository repository, IPasswordHasher<Credential> hasher) =>
 {
     if (!ValidPassword(request.NewPassword)) return Failure(c, 422, "BUSINESS_RULE_VIOLATION", "新密码不符合安全要求");
     var credential = repository.ConsumePasswordReset(request.ResetToken); if (credential is null) return Failure(c, 422, "BUSINESS_RULE_VIOLATION", "重置令牌无效或已过期");
     repository.UpdatePassword(credential with { PasswordHash = hasher.HashPassword(credential, request.NewPassword) }); repository.RevokeAllSessions(credential.UserId); return Results.NoContent();
 }).RequireRateLimiting("password-reset-confirmation");
-app.MapPost("/internal/v1/auth/introspections", (TokenIntrospectionRequest request, HttpContext c, AuthRepository repository) =>
+app.MapPost("/internal/v1/auth/introspections", (TokenIntrospectionRequest request, HttpContext c, IAuthRepository repository) =>
 {
     if (!IsGateway(c, gatewayKey)) return Failure(c, 403, "FORBIDDEN", "仅允许 Gateway 调用令牌内省接口");
     var session = repository.FindByAccessToken(request.Token);
@@ -306,7 +319,7 @@ public sealed record StoredSession(string SessionId, string UserId, string Acces
     public AuthSessionResponse ToResponse() => new(ToContract(), ToTokenPair());
 }
 
-public sealed class AuthRepository(AuthDatabase database)
+public sealed class MySqlAuthRepository(AuthDatabase database) : IAuthRepository
 {
     public RegistrationOutcome TryCreateCredentialWithInvitation(Credential value, string invitationCode)
     {
@@ -421,7 +434,7 @@ public sealed class AuthRepository(AuthDatabase database)
     private static string Token()=>Convert.ToBase64String(RandomNumberGenerator.GetBytes(48)).Replace('+','-').Replace('/','_').TrimEnd('='); private static string PasswordResetToken()=>RandomNumberGenerator.GetInt32(1_000_000).ToString("D6"); private static string Hash(string value)=>Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value)));private static string DbText(object value)=>value is Guid guid?guid.ToString():Convert.ToString(value)!;private static DateTimeOffset AsUtc(DateTime value)=>new(DateTime.SpecifyKind(value,DateTimeKind.Utc));
 }
 
-public sealed class AdminRepository(AuthDatabase database)
+public sealed class MySqlAdminRepository(AuthDatabase database) : IAdminRepository
 {
     public List<AdminAccount> ListUsers()
     {
@@ -458,7 +471,7 @@ public sealed class AdminRepository(AuthDatabase database)
     private static string DbText(object value)=>value is Guid guid?guid.ToString():Convert.ToString(value)!;private static DateTimeOffset Utc(DateTime value)=>new(DateTime.SpecifyKind(value,DateTimeKind.Utc));
 }
 
-public sealed class AdminAuditRepository(AuthDatabase database)
+public sealed class MySqlAdminAuditRepository(AuthDatabase database) : IAdminAuditRepository
 {
     public void Write(AdminAuditRecord record)
     {

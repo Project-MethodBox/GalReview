@@ -8,6 +8,12 @@ public sealed class PasswordResetEmailSender(
 {
     public async Task<bool> SendAsync(string recipient, string resetToken, string correlationId, CancellationToken cancellationToken)
     {
+        if (string.Equals(Environment.GetEnvironmentVariable("MOONSTONE_MODE"), "Mock", StringComparison.OrdinalIgnoreCase))
+        {
+            logger.LogInformation("Mock password-reset request accepted. CorrelationId: {CorrelationId}", correlationId);
+            return true;
+        }
+
         var host = configuration["Email:SmtpHost"];
         var username = configuration["Email:Username"];
         var password = configuration["Email:Password"];
