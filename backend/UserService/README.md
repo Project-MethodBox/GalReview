@@ -77,6 +77,17 @@ UserService 在 MySQL 中拥有：
 
 服务启动时会确保 UserService 所拥有的数据表存在。全新生产库应由受控部署流程管理数据库结构与版本，而不是依赖运行时建表逻辑。
 
+## Mock 模式
+
+设置 `MOONSTONE_MODE=Mock` 后，UserService 使用 InMemory Repository，不连接 MySQL。预置用户 ID 为 `7bc4918a-9079-4ea2-9e8e-369ad79a9f20`，显示名称为 `Arabidopsis`，并带有 `AGRONOMY`、`MEDICINE` 两项学科偏好。
+
+```powershell
+$env:MOONSTONE_MODE = "Mock"
+dotnet run --project .\UserService\GalGame.UserService.csproj
+```
+
+Mock 状态仅在进程运行期间有效，重启服务后会恢复为预置数据；它不应连接或修改 MySQL，也不能用于生产环境。
+
 ## 5. 浏览器 API
 
 以下地址均由 Gateway 暴露。受保护请求需要：

@@ -332,3 +332,14 @@ Token 内省返回 `active=false` 时，Gateway 应将其视为未认证请求�
 - `/healthz` 用于确认进程是否存活；`/readyz` 当前返回服务已配置为使用 MySQL 的就绪信息。生产部署若需要严格的数据库可用性探针，应在运维侧额外执行一次最小 MySQL 连通性检查，或后续将 `/readyz` 扩展为真实数据库探测。
 - 历史开发数据中可能存在 32 位、无连字符的用户 ID。读取 MySQL `CHAR(36)` 用户 ID 时，仓储层会以文本兼容读取，避免 MySqlConnector 把旧格式强制解析为 `Guid` 后造成 `FormatException`。新数据仍应统一使用标准 UUID 字符串。
 - 当 AuthService 返回“认证服务暂时不可用”时，先检查 AuthService 控制台或 bug report 中与 `X-Correlation-Id` 对应的异常；再检查 MySQL 连接串、Gateway 到 UserService 的内部路由，以及 `Gateway__ServiceKey` 是否在三个服务中保持一致。
+
+## 13. Mock 模式
+
+设置 `MOONSTONE_MODE=Mock` 后，AuthService 使用 InMemory Repository，不连接 MySQL。接口地址、请求与响应结构保持不变，服务重启后所有 Mock 状态会恢复为初始数据。
+
+```powershell
+$env:MOONSTONE_MODE = "Mock"
+dotnet run --project .\AuthService\GalGame.AuthService.csproj
+```
+
+预置测试账户为 `student@example.com` / `mock114514`，预置邀请码为 `MS-MOCK2026`。密码恢复请求不发送邮件，使用验证码 `123456`。Mock 模式仅用于本地前端联调与演示，禁止用于生产环境。
