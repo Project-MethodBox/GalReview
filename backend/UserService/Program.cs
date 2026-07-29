@@ -77,7 +77,7 @@ app.MapMethods("/api/v1/users/me", ["PATCH", "PUT"], async (HttpContext c, UserR
     var userId = GetUserId(c, gatewayKey);
     if (userId is null) return Failure(c, 401, "AUTH_REQUIRED", "需要有效登录状态");
     var request = await JsonSerializer.DeserializeAsync<UpdateUserProfileRequest>(c.Request.Body, jsonOptions, c.RequestAborted);
-    if (request is null || (!string.IsNullOrWhiteSpace(request.DisplayName) && !ValidDisplayName(request.DisplayName)) || (request.Locale is not null && !ValidLocale(request.Locale)) || (request.PreferredSubjectCodes is not null && request.PreferredSubjectCodes.Any(string.IsNullOrWhiteSpace)))
+    if (request is null || (!string.IsNullOrWhiteSpace(request.DisplayName) && !ValidDisplayName(request.DisplayName)) || (request.Locale is not null && !ValidLocale(request.Locale)) || (request.PreferredSubjectCodes is not null && (request.PreferredSubjectCodes.Length > 10 || request.PreferredSubjectCodes.Any(string.IsNullOrWhiteSpace))))
         return Failure(c, 400, "VALIDATION_ERROR", "资料字段不符合要求");
     var profile = users.UpdateProfile(userId, request);
     return profile is null ? Failure(c, 404, "RESOURCE_NOT_FOUND", "用户资料不存在") : Results.Ok(ApiSuccess.Create(profile, c.TraceIdentifier));

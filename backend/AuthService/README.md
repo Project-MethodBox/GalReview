@@ -1,6 +1,6 @@
 #  AuthService
 
-AuthService 是 MoonStone 的认证与账户治理服务。本地开发时默认监听 `http://localhost:5101`；生产环境应通过 `ASPNETCORE_URLS` 或宿主服务器配置监听地址。它的权威数据库是 **MySQL**，负责凭证、密码哈希、会话、访问令牌、刷新令牌、密码恢复、管理员会话、邀请码和管理员审计记录。
+AuthService 是 千知万理 的认证与账户治理服务。本地开发时默认监听 `http://localhost:5101`；生产环境应通过 `ASPNETCORE_URLS` 或宿主服务器配置监听地址。采用的数据库是 **MySQL**，负责凭证、密码哈希、会话、访问令牌、刷新令牌、密码恢复、管理员会话、邀请码和管理员审计记录。
 
 浏览器不得直接访问本服务。所有浏览器请求必须先到 API Gateway，再由 Gateway 转发并注入受信任的身份头。用户展示资料和学习偏好由 UserService 管理；AuthService 不得直接访问 UserService 的数据表。
 
@@ -275,3 +275,60 @@ Gateway 调用内部接口时使用 `X-Gateway-Key`；服务间调用 Gateway �
 - 生产数据库使用专用低权限账号，不使用 MySQL `root`。
 - 管理员账号不得写入前端资源或版本库中的生产配置。
 - 发布前执行 `dotnet build .\AuthService\GalGame.AuthService.csproj`，并至少验证 `/healthz`、`/readyz`、注册、登录、密码恢复和管理员邀请码流程。
+
+## 10. 账户注销
+
+普通用户可通过下列接口永久注销自己的账户。浏览器必须经 Gateway 调用，不能直接请求 AuthService 的 `5101` 端口。
+
+| 方法 | 地址 | 鉴权 | 请求体 | 成功状态 |
+| --- | --- | --- | --- | --- |
+| `DELETE` | `/api/v1/auth/account` | Bearer（当前用户） | `AccountDeletionRequest` | `204 No Content` |
+
+```json
+{
+  "currentPassword": "your-current-password"
+}
+```
+
+注销流程如下：
+
+1. Gateway 内省 Access Token，并把可信的用户 ID 传给 AuthService。
+2. AuthService 校验当前密码；空密码返回 `400`，密码错误或会话失效返回 `401`。
+3. AuthService 经 Gateway 调用 UserService 的内部删除接口，删除该用户的资料和学习偏好；AuthService 不直接读写 UserService 数据表。
+4. 用户资料删除完成后，AuthService 在自己的 MySQL 事务中删除认证凭证、全部会话、密码恢复记录和用户覆盖记录。
+5. 写入 `admin_audit_logs`：`action=ACCOUNT_SELF_DELETE`，其中保留操作人、目标、处理结果、时间和 `traceId`，但不记录密码或令牌。
+
+管理员账户不能使用此接口，返回 `403 FORBIDDEN`。资料服务暂时不可用时返回 `503 SERVICE_UNAVAILABLE`，认证数据不会在该次请求中删除。由于资料服务和认证服务是独立服务，并不存在跨服务数据库事务；若资料删除已完成但后续认证删除因短暂故障中断，重新使用仍有效的会话和正确密码提交同一请求即可继续完成注销，资料不存在会被视为已删除。
+
+前端应在用户菜单中提供“注销账户”入口，并在独立确认窗口中提示操作不可恢复、要求重新输入当前登录密码。成功收到 `204` 后，前端必须清除本地会话并跳转至登录页。
+
+## 11. Access Token、内省与 Gateway 信任边界
+
+当前 Access Token 采用INTERNAL introspection，由 AuthService 随机生成的**不透明令牌**。数据库只保存其 SHA-256 哈希，令牌明文只在登录或刷新成功时返回给客户端。
+
+受保护请求的处理链路为：
+
+```text
+Browser Authorization: Bearer <access-token>
+    -> API Gateway
+    -> POST /internal/v1/auth/introspections
+    -> AuthService 查询会话状态、过期时间和 scope
+    -> Gateway 注入 X-User-Id / X-User-Scopes 后转发到目标服务
+```
+
+内部内省接口为：
+
+| 方法 | 地址 | 调用方 | 鉴权方式 | 返回重点 |
+| --- | --- | --- | --- | --- |
+| `POST` | `/internal/v1/auth/introspections` | 仅 Gateway | `X-Gateway-Key` | `active`、`userId`、`sessionId`、`scopes`、`expiresAt` |
+
+Gateway 必须在转发前移除浏览器伪造的 `X-Gateway-Key`、`X-Service-Key`、`X-Service-Name`、`X-User-Id` 和 `X-User-Scopes`，并只在自己完成令牌内省后注入可信身份头。AuthService 只信任携带正确 `X-Gateway-Key` 的请求；因此 AuthService、Gateway 和 UserService 必须使用同一个高强度 `Gateway__ServiceKey`，该值不得出现在前端代码、浏览器存储或日志中。
+
+Token 内省返回 `active=false` 时，Gateway 应将其视为未认证请求，不应继续把原始令牌或身份头转发给业务服务。退出登录、刷新令牌轮换、修改密码、管理员重置密码、密码恢复和账户注销都会使相应旧会话失效。
+
+## 12. 运行诊断与兼容性说明
+
+- 每个请求都会携带或生成 `X-Correlation-Id`，响应中也会返回相同的值。排查 `500`、`503` 或邮件投递问题时，应先按该值关联 Gateway、AuthService 和 UserService 日志。
+- `/healthz` 用于确认进程是否存活；`/readyz` 当前返回服务已配置为使用 MySQL 的就绪信息。生产部署若需要严格的数据库可用性探针，应在运维侧额外执行一次最小 MySQL 连通性检查，或后续将 `/readyz` 扩展为真实数据库探测。
+- 历史开发数据中可能存在 32 位、无连字符的用户 ID。读取 MySQL `CHAR(36)` 用户 ID 时，仓储层会以文本兼容读取，避免 MySqlConnector 把旧格式强制解析为 `Guid` 后造成 `FormatException`。新数据仍应统一使用标准 UUID 字符串。
+- 当 AuthService 返回“认证服务暂时不可用”时，先检查 AuthService 控制台或 bug report 中与 `X-Correlation-Id` 对应的异常；再检查 MySQL 连接串、Gateway 到 UserService 的内部路由，以及 `Gateway__ServiceKey` 是否在三个服务中保持一致。
