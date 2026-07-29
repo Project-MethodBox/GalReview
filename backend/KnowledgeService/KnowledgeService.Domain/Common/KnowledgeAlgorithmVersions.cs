@@ -1,0 +1,11 @@
+namespace KnowledgeService.Domain.Common;
+
+public static class KnowledgeAlgorithmVersions
+{
+    public const string Segmenter = "chapter-segmenter-v1";
+    public const string Extractor = "knowledge-extractor-v1";
+    public const string GraphWeight = "graph-weight-v1";
+    public const string AssessmentPlanner = "assessment-planner-v1";
+    public const string LearningPlanner = "learning-planner-v1";
+    public const string Mastery = "sm2-graph-v1";
+}

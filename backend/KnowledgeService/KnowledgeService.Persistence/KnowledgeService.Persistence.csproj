@@ -6,4 +6,13 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Neo4j.Driver" Version="6.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\KnowledgeService.Application\KnowledgeService.Application.csproj" />
+    <ProjectReference Include="..\KnowledgeService.Domain\KnowledgeService.Domain.csproj" />
+  </ItemGroup>
+
 </Project>

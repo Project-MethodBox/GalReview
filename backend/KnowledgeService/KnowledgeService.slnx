@@ -3,4 +3,5 @@
   <Project Path="KnowledgeService.Application/KnowledgeService.Application.csproj" />
   <Project Path="KnowledgeService.Domain/KnowledgeService.Domain.csproj" />
   <Project Path="KnowledgeService.Persistence/KnowledgeService.Persistence.csproj" />
+  <Project Path="KnowledgeService.Tests/KnowledgeService.Tests.csproj" />
 </Solution>
