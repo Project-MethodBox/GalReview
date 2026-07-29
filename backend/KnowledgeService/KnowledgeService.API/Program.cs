@@ -1,15 +1,74 @@
-namespace KnowledgeService.API
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using KnowledgeService.API.Background;
+using KnowledgeService.API.Endpoints;
+using KnowledgeService.API.Infrastructure;
+using KnowledgeService.Application.Extraction;
+using KnowledgeService.Application.Features.Builds;
+using KnowledgeService.Application.Materials;
+using KnowledgeService.Application.Mastery;
+using KnowledgeService.Application.Persistence;
+using KnowledgeService.Application.Planning;
+using KnowledgeService.Application.Segmentation;
+using KnowledgeService.Application.Time;
+using KnowledgeService.Persistence.Materials;
+using KnowledgeService.Persistence.Neo4j;
+using KnowledgeService.Persistence.Options;
+using KnowledgeService.Persistence.Repositories;
+using Neo4j.Driver;
+
+var builder = WebApplication.CreateBuilder(args);
+
+var neo4jOptions = builder.Configuration
+    .GetSection(Neo4jOptions.SectionName)
+    .Get<Neo4jOptions>() ?? new Neo4jOptions();
+var materialTextOptions = builder.Configuration
+    .GetSection(GatewayMaterialTextOptions.SectionName)
+    .Get<GatewayMaterialTextOptions>() ?? new GatewayMaterialTextOptions();
+neo4jOptions.Validate();
+materialTextOptions.Validate();
+
+builder.Services.ConfigureHttpJsonOptions(options =>
 {
-    public class Program
-    {
-        public static void Main(string[] args)
-        {
-            var builder = WebApplication.CreateBuilder(args);
-            var app = builder.Build();
+    options.SerializerOptions.Converters.Add(
+        new JsonStringEnumConverter(JsonNamingPolicy.SnakeCaseUpper));
+});
+builder.Services.AddMediatR(configuration =>
+    configuration.RegisterServicesFromAssemblyContaining<
+        CreateGraphBuildCommand>());
 
-            app.MapGet("/", () => "Hello World!");
+builder.Services.AddSingleton(neo4jOptions);
+builder.Services.AddSingleton(materialTextOptions);
+builder.Services.AddSingleton<IDriver>(_ =>
+    Neo4jDriverFactory.Create(neo4jOptions));
+builder.Services.AddSingleton<IKnowledgeRepository, Neo4jKnowledgeRepository>();
+builder.Services.AddHttpClient<IMaterialTextClient, GatewayMaterialTextClient>();
 
-            app.Run();
-        }
-    }
-}
+builder.Services.AddSingleton<ISystemClock, SystemClock>();
+builder.Services.AddSingleton<IChapterSegmenter, ChapterSegmenter>();
+builder.Services.AddSingleton<IKnowledgeExtractor, RuleBasedKnowledgeExtractor>();
+builder.Services.AddSingleton<AssessmentPlanner>();
+builder.Services.AddSingleton<LearningPlanner>();
+builder.Services.AddSingleton<MasteryEvidenceUpdater>();
+
+builder.Services.AddSingleton<IGraphBuildQueue, GraphBuildQueue>();
+builder.Services.AddHostedService<Neo4jSchemaInitializer>();
+builder.Services.AddHostedService<GraphBuildWorker>();
+
+var app = builder.Build();
+app.UseMiddleware<TraceContextMiddleware>();
+app.UseMiddleware<ApiExceptionMiddleware>();
+
+app.MapGet("/", () => Results.Ok(new
+{
+    service = "KnowledgeService",
+    status = "running"
+}));
+app.MapHealthEndpoints();
+app.MapGraphBuildEndpoints();
+app.MapKnowledgeGraphEndpoints();
+app.MapReviewPlanEndpoints();
+
+app.Run();
+
+public partial class Program;

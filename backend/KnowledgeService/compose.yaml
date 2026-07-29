@@ -1,0 +1,47 @@
+name: galreview-knowledge
+
+services:
+  neo4j:
+    image: neo4j:2026.06.0
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-knowledge-dev-password}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-knowledge-dev-password}
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - knowledge-neo4j-data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          cypher-shell -u neo4j -p "$${NEO4J_PASSWORD}"
+          "RETURN 1" >/dev/null 2>&1
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  knowledge-service:
+    build:
+      context: .
+      dockerfile: KnowledgeService.API/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      Neo4j__Uri: bolt://neo4j:7687
+      Neo4j__Username: neo4j
+      Neo4j__Password: ${NEO4J_PASSWORD:-knowledge-dev-password}
+      Neo4j__Database: neo4j
+      GatewayMaterialText__BaseUrl: ${GATEWAY_BASE_URL:-http://host.docker.internal:5000}
+      GatewayMaterialText__ServiceName: KnowledgeService
+      GatewayMaterialText__ServiceKey: ${KNOWLEDGE_SERVICE_KEY:-development-only}
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    ports:
+      - "5080:8080"
+    restart: unless-stopped
+
+volumes:
+  knowledge-neo4j-data:
