@@ -3,9 +3,9 @@ using MongoDB.Bson.Serialization.Attributes;
 
 public sealed record Material(string MaterialId, string OwnerUserId, string DisplayName, string OriginalFileName, string MediaType, long SizeBytes, string Checksum, string Status, string? LatestIngestionJobId, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
 public sealed record MaterialPage(IReadOnlyList<Material> Items, string? NextCursor);
-public sealed record CreateIngestionJobRequest(string? ParserVersion, bool Force = false);
+public sealed record CreateIngestionJobRequest(string? ParserVersion, bool Force = false, bool EnableOcr = false, string? OcrMode = null);
 [BsonIgnoreExtraElements]
-public sealed record IngestionJob(string JobId, string MaterialId, string Status, int Progress, string ParserVersion, ApiError? Error, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
+public sealed record IngestionJob(string JobId, string MaterialId, string Status, int Progress, string ParserVersion, ApiError? Error, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, bool EnableOcr = false, string OcrMode = "standard", bool OcrUsed = false);
 public sealed record CreateAccessGrantRequest(string Purpose);
 public sealed record AccessGrant(string Url, DateTimeOffset ExpiresAt);
 public sealed record TextSourceSpan(long StartOffset, long EndOffset, int? PageNumber, int? ParagraphIndex, string? SourceLabel);

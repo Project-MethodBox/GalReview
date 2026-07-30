@@ -10,7 +10,7 @@ public interface IFileStore
     bool TryDelete(string materialId, string ownerUserId, out Material? material);
     IngestionJob? GetJob(string jobId);
     IngestionJob? GetLatestJob(string materialId);
-    IngestionJob CreateJob(string materialId, string parserVersion);
+    IngestionJob CreateJob(string materialId, string parserVersion, bool enableOcr, string ocrMode);
     Task ProcessJobAsync(string jobId, CancellationToken cancellationToken);
     Stream? OpenContent(string materialId);
     ExtractedTextDocument? GetExtractedText(string materialId);
@@ -63,9 +63,9 @@ public sealed class LocalFileStore : IFileStore
     }
     public IngestionJob? GetJob(string jobId) => _jobs.TryGetValue(jobId, out var job) ? job : null;
     public IngestionJob? GetLatestJob(string materialId) => _jobs.Values.Where(x => x.MaterialId == materialId).OrderByDescending(x => x.CreatedAt).FirstOrDefault();
-    public IngestionJob CreateJob(string materialId, string parserVersion)
+    public IngestionJob CreateJob(string materialId, string parserVersion, bool enableOcr, string ocrMode)
     {
-        var now = DateTimeOffset.UtcNow; var job = new IngestionJob(Guid.NewGuid().ToString(), materialId, "QUEUED", 0, parserVersion, null, now, now); _jobs[job.JobId] = job;
+        var now = DateTimeOffset.UtcNow; var job = new IngestionJob(Guid.NewGuid().ToString(), materialId, "QUEUED", 0, parserVersion, null, now, now, enableOcr, ocrMode); _jobs[job.JobId] = job;
         var stored = _materials[materialId]; _materials[materialId] = stored with { Material = stored.Material with { Status = "PROCESSING", LatestIngestionJobId = job.JobId, UpdatedAt = now } }; return job;
     }
     public async Task ProcessJobAsync(string jobId, CancellationToken cancellationToken)
