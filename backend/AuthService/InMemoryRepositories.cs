@@ -120,6 +120,19 @@ public sealed class InMemoryAuthRepository(MockAuthStore store) : IAuthRepositor
         }
     }
 
+    public StoredSession? TouchAccessToken(string token)
+    {
+        lock (store.Sync)
+        {
+            if (!store.SessionIdsByAccessToken.TryGetValue(token, out var sessionId) || !store.SessionsById.TryGetValue(sessionId, out var session)) return null;
+            var now = DateTimeOffset.UtcNow;
+            if (session.Status != "ACTIVE" || session.AccessExpiresAt <= now) return null;
+            var extended = session with { AccessExpiresAt = now.AddMinutes(15), RefreshExpiresAt = now.AddDays(7) };
+            store.SessionsById[sessionId] = extended;
+            return extended;
+        }
+    }
+
     public bool RevokeSession(string sessionId, string userId)
     {
         lock (store.Sync)
