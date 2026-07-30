@@ -10,11 +10,11 @@ FileService 是 千知万理 的资料文件服务，负责保存用户上传文
 - 将文件二进制存入 MongoDB GridFS，元数据与解析任务存入 MongoDB 集合。
 - 计算并保存原文件 SHA-256 checksum。
 - 异步解析任务：任务完成后资料才会标记为 `READY`。
-- 支持 TXT、Markdown、HTML、DOCX 与文本型 PDF。
+- 支持 TXT、Markdown、HTML、DOCX、文本型 PDF，以及通过本机 OCR 解析扫描版 PDF、JPG、JPEG、PNG（图片仅支持这三种格式）。
 - 文本统一采用 UTF-8、NFC 规范化与 LF 换行保存。
 - DOCX 解析标题、列表、表格；Markdown/HTML 转换为纯文本，同时写入结构化 `blocks`。
 
-扫描版 PDF 没有内嵌文字层时无法提取，需后续接入 OCR。
+扫描版 PDF 没有内嵌文字层时，服务会调用本机 [OcrService](../OcrService/README.md)。请先启动 OcrService；若它未运行，此类文件的解析任务会明确标记为失败，不会产生伪造的文本结果。
 
 ## 启动
 

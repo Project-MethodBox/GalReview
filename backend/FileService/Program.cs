@@ -5,6 +5,11 @@ using Microsoft.AspNetCore.Mvc;
 var builder = WebApplication.CreateBuilder(args);
 var gatewayKey = builder.Configuration["Gateway:ServiceKey"] ?? throw new InvalidOperationException("Gateway:ServiceKey must be configured.");
 builder.Services.Configure<FormOptions>(options => options.MultipartBodyLengthLimit = 10 * 1024 * 1024);
+builder.Services.AddHttpClient("ocr", client =>
+{
+    client.BaseAddress = new Uri(builder.Configuration["Ocr:BaseUrl"] ?? "http://127.0.0.1:5110/");
+    client.Timeout = TimeSpan.FromMinutes(builder.Configuration.GetValue<int?>("Ocr:TimeoutMinutes") ?? 20);
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { UseProxy = false });
 builder.Services.AddSingleton<MongoFileStore>();
 builder.Services.AddSingleton<IFileStore>(serviceProvider => serviceProvider.GetRequiredService<MongoFileStore>());
 var app = builder.Build();
@@ -71,14 +76,25 @@ app.MapPost("/api/v1/materials/{materialId}/ingestion-jobs", (string materialId,
     if (material is null || material.OwnerUserId != userId || material.Status == "DELETED") return Failure(c, 404, "RESOURCE_NOT_FOUND", "Material was not found.");
     if (store.GetLatestJob(materialId)?.Status is "QUEUED" or "RUNNING") return Failure(c, 409, "STATE_CONFLICT", "An ingestion job is already active.");
     if (material.Status == "READY" && !request.Force) return Failure(c, 409, "STATE_CONFLICT", "Material text is already ready; use force to reprocess.");
-    var job = store.CreateJob(materialId, string.IsNullOrWhiteSpace(request.ParserVersion) ? "files-text-v1" : request.ParserVersion);
+    var ocrMode = string.IsNullOrWhiteSpace(request.OcrMode) ? "standard" : request.OcrMode.Trim().ToLowerInvariant();
+    if (ocrMode is not ("quick" or "standard")) return Failure(c, 400, "VALIDATION_FAILED", "OCR mode must be quick or standard.");
+    var job = store.CreateJob(materialId, string.IsNullOrWhiteSpace(request.ParserVersion) ? "files-text-v1" : request.ParserVersion, request.EnableOcr, ocrMode);
     _ = Task.Run(() => store.ProcessJobAsync(job.JobId, CancellationToken.None));
     return Results.Accepted($"/api/v1/ingestion-jobs/{job.JobId}", ApiSuccess.Create(job, c.TraceIdentifier));
 });
-app.MapGet("/api/v1/ingestion-jobs/{jobId}", (string jobId, HttpContext c, IFileStore store) =>
+app.MapGet("/api/v1/ingestion-jobs/{jobId}", async (string jobId, HttpContext c, IFileStore store, IHttpClientFactory httpClientFactory) =>
 {
     var userId = GatewayUser(c, gatewayKey); var job = store.GetJob(jobId); var material = job is null ? null : store.GetMaterial(job.MaterialId);
-    return userId is null ? Failure(c, 401, "AUTH_REQUIRED", "A gateway-authenticated user is required.") : job is null || material?.OwnerUserId != userId ? Failure(c, 404, "RESOURCE_NOT_FOUND", "Ingestion job was not found.") : Results.Ok(ApiSuccess.Create(job, c.TraceIdentifier));
+    if (userId is null) return Failure(c, 401, "AUTH_REQUIRED", "A gateway-authenticated user is required.");
+    if (job is null || material?.OwnerUserId != userId) return Failure(c, 404, "RESOURCE_NOT_FOUND", "Ingestion job was not found.");
+    OcrProgress? progress = null;
+    if (job.EnableOcr && job.Status is "QUEUED" or "RUNNING")
+    {
+        try { progress = await httpClientFactory.CreateClient("ocr").GetFromJsonAsync<OcrProgress>($"v1/ocr/jobs/{job.JobId}", c.RequestAborted); }
+        catch { /* OCR progress is optional; the ingestion job remains authoritative. */ }
+    }
+    var data = progress is null ? (object)job : new { job.JobId, job.MaterialId, job.Status, job.Progress, job.ParserVersion, job.Error, job.CreatedAt, job.UpdatedAt, job.EnableOcr, job.OcrMode, job.OcrUsed, OcrProgress = progress };
+    return Results.Ok(ApiSuccess.Create(data, c.TraceIdentifier));
 });
 app.MapPost("/api/v1/materials/{materialId}/access-grants", (string materialId, CreateAccessGrantRequest request, HttpContext c, IFileStore store) =>
 {

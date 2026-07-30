@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
@@ -16,10 +17,12 @@ public sealed class MongoFileStore : IFileStore
     private readonly GridFSBucket _files;
     private readonly IMongoDatabase _database;
     private readonly ILogger<MongoFileStore> _logger;
+    private readonly IHttpClientFactory _httpClientFactory;
 
-    public MongoFileStore(IConfiguration configuration, ILogger<MongoFileStore> logger)
+    public MongoFileStore(IConfiguration configuration, ILogger<MongoFileStore> logger, IHttpClientFactory httpClientFactory)
     {
         _logger = logger;
+        _httpClientFactory = httpClientFactory;
         var connectionString = configuration.GetConnectionString("FileDatabase") ?? "mongodb://127.0.0.1:27017";
         var databaseName = configuration["MongoDb:Database"] ?? "moonstone_file";
         _database = new MongoClient(connectionString).GetDatabase(databaseName);
@@ -86,9 +89,9 @@ public sealed class MongoFileStore : IFileStore
     }
     public IngestionJob? GetJob(string jobId) => _jobs.Find(x => x.JobId == jobId).FirstOrDefault();
     public IngestionJob? GetLatestJob(string materialId) => _jobs.Find(x => x.MaterialId == materialId).SortByDescending(x => x.CreatedAt).FirstOrDefault();
-    public IngestionJob CreateJob(string materialId, string parserVersion)
+    public IngestionJob CreateJob(string materialId, string parserVersion, bool enableOcr, string ocrMode)
     {
-        var now = DateTimeOffset.UtcNow; var job = new IngestionJob(Guid.NewGuid().ToString(), materialId, "QUEUED", 0, parserVersion, null, now, now); _jobs.InsertOne(job);
+        var now = DateTimeOffset.UtcNow; var job = new IngestionJob(Guid.NewGuid().ToString(), materialId, "QUEUED", 0, parserVersion, null, now, now, enableOcr, ocrMode); _jobs.InsertOne(job);
         var stored = FindMaterial(materialId)!; _materials.ReplaceOne(x => x.Material.MaterialId == materialId, stored with { Material = stored.Material with { Status = "PROCESSING", LatestIngestionJobId = job.JobId, UpdatedAt = now } }); return job;
     }
     public async Task ProcessJobAsync(string jobId, CancellationToken cancellationToken)
@@ -97,17 +100,17 @@ public sealed class MongoFileStore : IFileStore
         _jobs.ReplaceOne(x => x.JobId == jobId, job = job with { Status = "RUNNING", Progress = 10, UpdatedAt = DateTimeOffset.UtcNow });
         try
         {
-            if (!IsSupportedParserInput(stored.Material)) throw new InvalidOperationException("Only TXT, Markdown, HTML, DOCX and text-based PDF extraction is available.");
+            if (!IsSupportedParserInput(stored.Material)) throw new InvalidOperationException("Only TXT, Markdown, HTML, DOCX, PDF, JPG and PNG extraction is available.");
             if (!ObjectId.TryParse(stored.GridFsId, out var gridFsId)) throw new InvalidOperationException("Invalid GridFS file ID.");
             await using var bytes = new MemoryStream(); await _files.DownloadToStreamAsync(gridFsId, bytes, cancellationToken: cancellationToken); bytes.Position = 0;
-            var extraction = await ExtractAsync(stored.Material, bytes, cancellationToken);
+            var extraction = await ExtractAsync(stored.Material, bytes, _httpClientFactory.CreateClient("ocr"), job.EnableOcr, job.OcrMode, job.JobId, cancellationToken);
             var text = extraction.Text; if (string.IsNullOrWhiteSpace(text)) throw new InvalidOperationException("No extractable text was found. Scanned PDFs require an OCR parser.");
             var checksum = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
             var sourceMap = extraction.SourceMap; var now = DateTimeOffset.UtcNow;
             var document = new ExtractedTextDocument(job.MaterialId, stored.Material.OwnerUserId, "READY", text, "utf-8", "NFC", "LF", checksum, text.Length, job.ParserVersion, "1", sourceMap, extraction.Blocks, now);
             // Text and READY status reside in one Mongo document, so READY cannot be observed without a complete text document.
             _materials.ReplaceOne(x => x.Material.MaterialId == job.MaterialId, stored with { ExtractedText = document, Material = stored.Material with { Status = "READY", LatestIngestionJobId = jobId, UpdatedAt = now } });
-            _jobs.ReplaceOne(x => x.JobId == jobId, job with { Status = "SUCCEEDED", Progress = 100, UpdatedAt = now });
+            _jobs.ReplaceOne(x => x.JobId == jobId, job with { Status = "SUCCEEDED", Progress = 100, OcrUsed = extraction.OcrUsed, UpdatedAt = now });
         }
         catch (Exception exception)
         {
@@ -124,25 +127,53 @@ public sealed class MongoFileStore : IFileStore
     }
     public ExtractedTextDocument? GetExtractedText(string materialId) => FindMaterial(materialId)?.ExtractedText;
     private MaterialDocument? FindMaterial(string materialId) => _materials.Find(x => x.Material.MaterialId == materialId).FirstOrDefault();
-    private static bool IsSupportedParserInput(Material material) => material.MediaType.StartsWith("text/", StringComparison.OrdinalIgnoreCase) || material.MediaType.Equals("application/pdf", StringComparison.OrdinalIgnoreCase) || material.MediaType.Equals("application/vnd.openxmlformats-officedocument.wordprocessingml.document", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(material.OriginalFileName).Equals(".txt", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(material.OriginalFileName).Equals(".md", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(material.OriginalFileName).Equals(".html", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(material.OriginalFileName).Equals(".htm", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(material.OriginalFileName).Equals(".pdf", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(material.OriginalFileName).Equals(".docx", StringComparison.OrdinalIgnoreCase);
+    private static bool IsSupportedParserInput(Material material) => material.MediaType.StartsWith("text/", StringComparison.OrdinalIgnoreCase) || material.MediaType.Equals("image/jpeg", StringComparison.OrdinalIgnoreCase) || material.MediaType.Equals("image/png", StringComparison.OrdinalIgnoreCase) || material.MediaType.Equals("application/pdf", StringComparison.OrdinalIgnoreCase) || material.MediaType.Equals("application/vnd.openxmlformats-officedocument.wordprocessingml.document", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(material.OriginalFileName).Equals(".txt", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(material.OriginalFileName).Equals(".md", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(material.OriginalFileName).Equals(".html", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(material.OriginalFileName).Equals(".htm", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(material.OriginalFileName).Equals(".pdf", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(material.OriginalFileName).Equals(".docx", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(material.OriginalFileName).Equals(".jpg", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(material.OriginalFileName).Equals(".jpeg", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(material.OriginalFileName).Equals(".png", StringComparison.OrdinalIgnoreCase);
     private static string DetectMediaType(string fileName, string? submittedType) => Path.GetExtension(fileName).ToLowerInvariant() switch
     {
         ".txt" when string.IsNullOrWhiteSpace(submittedType) || submittedType.Equals("application/octet-stream", StringComparison.OrdinalIgnoreCase) => "text/plain",
         ".md" when string.IsNullOrWhiteSpace(submittedType) || submittedType.Equals("application/octet-stream", StringComparison.OrdinalIgnoreCase) => "text/markdown",
         ".html" or ".htm" when string.IsNullOrWhiteSpace(submittedType) || submittedType.Equals("application/octet-stream", StringComparison.OrdinalIgnoreCase) => "text/html",
+        ".jpg" or ".jpeg" when string.IsNullOrWhiteSpace(submittedType) || submittedType.Equals("application/octet-stream", StringComparison.OrdinalIgnoreCase) => "image/jpeg",
+        ".png" when string.IsNullOrWhiteSpace(submittedType) || submittedType.Equals("application/octet-stream", StringComparison.OrdinalIgnoreCase) => "image/png",
         _ => string.IsNullOrWhiteSpace(submittedType) ? "application/octet-stream" : submittedType
     };
-    private static async Task<ExtractionResult> ExtractAsync(Material material, Stream content, CancellationToken cancellationToken)
+    private static async Task<ExtractionResult> ExtractAsync(Material material, Stream content, HttpClient ocrClient, bool enableOcr, string ocrMode, string ocrJobId, CancellationToken cancellationToken)
     {
         content.Position = 0;
-        return Path.GetExtension(material.OriginalFileName).ToLowerInvariant() switch
+        var extension = Path.GetExtension(material.OriginalFileName).ToLowerInvariant();
+        if (extension is ".jpg" or ".jpeg" or ".png")
+        {
+            if (!enableOcr) throw new InvalidOperationException("OCR is disabled. Enable OCR before parsing image files.");
+            return await ExtractOcrAsync(material, content, ocrClient, ocrMode, ocrJobId, cancellationToken);
+        }
+        if (extension == ".pdf")
+        {
+            var pdf = ExtractStructuredPdf(content);
+            if (!string.IsNullOrWhiteSpace(pdf.Text)) return pdf;
+            if (!enableOcr) throw new InvalidOperationException("No embedded PDF text was found. Enable OCR to parse a scanned PDF.");
+            return await ExtractOcrAsync(material, content, ocrClient, ocrMode, ocrJobId, cancellationToken);
+        }
+        return extension switch
         {
             ".docx" => ExtractStructuredDocx(content),
-            ".pdf" => ExtractStructuredPdf(content),
             ".md" => await ExtractMarkdownAsync(content, cancellationToken),
             ".html" or ".htm" => await ExtractHtmlAsync(content, cancellationToken),
             _ => await ExtractTextAsync(content, cancellationToken)
         };
+    }
+    private static async Task<ExtractionResult> ExtractOcrAsync(Material material, Stream content, HttpClient ocrClient, string ocrMode, string ocrJobId, CancellationToken cancellationToken)
+    {
+        content.Position = 0;
+        using var request = new HttpRequestMessage(HttpMethod.Post, "v1/ocr"); request.Headers.Add("X-Ocr-Job-Id", ocrJobId); request.Headers.Add("X-Ocr-Mode", ocrMode);
+        using var form = new MultipartFormDataContent();
+        using var file = new StreamContent(content);
+        file.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(material.MediaType);
+        form.Add(file, "file", material.OriginalFileName); request.Content = form;
+        using var response = await ocrClient.SendAsync(request, cancellationToken);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException($"OCR service failed ({(int)response.StatusCode}): {body}");
+        var result = JsonSerializer.Deserialize<OcrResponse>(body, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? throw new InvalidOperationException("OCR service returned an invalid response.");
+        return BuildStructuredText(result.Pages.SelectMany(page => page.Lines.Select((line, lineIndex) => new StructuredSegment(line, "PARAGRAPH", null, page.PageNumber, lineIndex, $"OCR page {page.PageNumber}")))) with { OcrUsed = true };
     }
     private static async Task<ExtractionResult> ExtractTextAsync(Stream content, CancellationToken cancellationToken)
     {
@@ -287,9 +318,12 @@ public sealed class MongoFileStore : IFileStore
     private static string Normalize(string text) => text.Normalize(NormalizationForm.FormC).Replace("\r\n", "\n").Replace("\r", "\n");
 }
 
-public sealed record ExtractionResult(string Text, IReadOnlyList<TextSourceSpan> SourceMap, IReadOnlyList<TextDocumentBlock> Blocks);
+public sealed record ExtractionResult(string Text, IReadOnlyList<TextSourceSpan> SourceMap, IReadOnlyList<TextDocumentBlock> Blocks, bool OcrUsed = false);
 public sealed record ExtractedSegment(string Text, int? PageNumber, int? ParagraphIndex, string? SourceLabel);
 public sealed record StructuredSegment(string Text, string Kind, int? Level, int? PageNumber, int? ParagraphIndex, string? SourceLabel);
+public sealed record OcrResponse(IReadOnlyList<OcrPage> Pages);
+public sealed record OcrPage(int PageNumber, IReadOnlyList<string> Lines);
+public sealed record OcrProgress(string Status, int CurrentPage, int TotalPages, string Phase);
 
 public sealed record MaterialDocument
 {
