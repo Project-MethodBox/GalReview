@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.Diagnostics;
 using MySqlConnector;
 
@@ -9,6 +10,7 @@ if (!isMockMode && string.IsNullOrWhiteSpace(connectionString))
     throw new InvalidOperationException("ConnectionStrings:UserDatabase must be configured.");
 var gatewayKey = builder.Configuration["Gateway:ServiceKey"]
     ?? throw new InvalidOperationException("Gateway:ServiceKey must be configured.");
+var storageName = isMockMode ? "memory" : "mysql";
 if (isMockMode)
 {
     builder.Services.AddSingleton<IUserRepository, InMemoryUserRepository>();
@@ -35,9 +37,25 @@ app.UseExceptionHandler(error => error.Run(context =>
         .LogError(context.Features.Get<IExceptionHandlerFeature>()?.Error, "Unhandled UserService error. CorrelationId: {CorrelationId}", context.TraceIdentifier);
     return Results.Json(ApiFailure.Create("INTERNAL_ERROR", "用户服务暂时不可用", context.TraceIdentifier), statusCode: 500).ExecuteAsync(context);
 }));
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path == "/healthz" || context.Request.Path == "/readyz")
+    {
+        await next();
+        return;
+    }
+
+    if (!IsGateway(context, gatewayKey))
+    {
+        await Failure(context, 403, "FORBIDDEN", "该服务仅接受经 API Gateway 转发的请求").ExecuteAsync(context);
+        return;
+    }
+
+    await next();
+});
 
 app.MapGet("/healthz", (HttpContext c) => Results.Ok(ApiSuccess.Create(new { status = "live" }, c.TraceIdentifier)));
-app.MapGet("/readyz", (HttpContext c) => Results.Ok(ApiSuccess.Create(new { status = "ready", storage = "mysql" }, c.TraceIdentifier)));
+app.MapGet("/readyz", (HttpContext c) => Results.Ok(ApiSuccess.Create(new { status = "ready", storage = storageName }, c.TraceIdentifier)));
 
 app.MapPost("/internal/v1/users", (CreateUserProfileRequest request, HttpContext c, IUserRepository users) =>
 {
@@ -113,13 +131,28 @@ app.MapPut("/api/v1/users/me/preferences", async (HttpContext c, IUserRepository
 
 app.Run();
 
-static bool IsGateway(HttpContext context, string key) => string.Equals(context.Request.Headers["X-Gateway-Key"], key, StringComparison.Ordinal);
+static bool IsGateway(HttpContext context, string key)
+{
+    var values = context.Request.Headers["X-Gateway-Key"];
+    return values.Count == 1 && FixedTimeEquals(values[0]!, key);
+}
 static bool IsAuthService(HttpContext context, string key) =>
     IsGateway(context, key) && string.Equals(context.Request.Headers["X-Service-Name"], "AuthService", StringComparison.Ordinal);
 static string? GetUserId(HttpContext context, string key)
 {
     var userId = context.Request.Headers["X-User-Id"].FirstOrDefault();
     return IsGateway(context, key) && !string.IsNullOrWhiteSpace(userId) ? userId : null;
+}
+static bool FixedTimeEquals(string left, string right)
+{
+    var leftBytes = System.Text.Encoding.UTF8.GetBytes(left);
+    var rightBytes = System.Text.Encoding.UTF8.GetBytes(right);
+    var length = Math.Max(leftBytes.Length, rightBytes.Length);
+    var paddedLeft = new byte[length];
+    var paddedRight = new byte[length];
+    leftBytes.CopyTo(paddedLeft, 0);
+    rightBytes.CopyTo(paddedRight, 0);
+    return CryptographicOperations.FixedTimeEquals(paddedLeft, paddedRight) && leftBytes.Length == rightBytes.Length;
 }
 static bool ValidDisplayName(string? value) => !string.IsNullOrWhiteSpace(value) && value.Trim().Length is >= 1 and <= 64;
 static bool ValidLocale(string value) => value.Length is > 1 and <= 16 && value.All(c => char.IsLetterOrDigit(c) || c is '-' or '_');

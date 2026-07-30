@@ -16,6 +16,7 @@ var gatewayBaseUrl = builder.Configuration["Gateway:BaseUrl"] ?? "http://localho
 var adminUsername = builder.Configuration["Admin:Username"] ?? throw new InvalidOperationException("Admin:Username must be configured.");
 var adminPassword = builder.Configuration["Admin:Password"] ?? throw new InvalidOperationException("Admin:Password must be configured.");
 var isDevelopment = builder.Environment.IsDevelopment();
+var storageName = isMockMode ? "memory" : "mysql";
 builder.Services.AddSingleton<PasswordResetEmailSender>();
 builder.Services.AddSingleton<IPasswordHasher<Credential>>(_ => new PasswordHasher<Credential>());
 if (isMockMode)
@@ -64,10 +65,26 @@ app.UseExceptionHandler(error => error.Run(context =>
     object details = isDevelopment ? new { exception = exception?.GetType().Name, message = exception?.Message } : new { };
     return Results.Json(new ApiFailure(null, new ApiError("INTERNAL_ERROR", "认证服务暂时不可用", details), context.TraceIdentifier), statusCode: 500).ExecuteAsync(context);
 }));
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path == "/healthz" || context.Request.Path == "/readyz")
+    {
+        await next();
+        return;
+    }
+
+    if (!IsGateway(context, gatewayKey))
+    {
+        await Failure(context, 403, "FORBIDDEN", "该服务仅接受经 API Gateway 转发的请求").ExecuteAsync(context);
+        return;
+    }
+
+    await next();
+});
 app.UseRateLimiter();
 
 app.MapGet("/healthz", (HttpContext c) => Results.Ok(ApiSuccess.Create(new { status = "live" }, c.TraceIdentifier)));
-app.MapGet("/readyz", (HttpContext c) => Results.Ok(ApiSuccess.Create(new { status = "ready", storage = "mysql" }, c.TraceIdentifier)));
+app.MapGet("/readyz", (HttpContext c) => Results.Ok(ApiSuccess.Create(new { status = "ready", storage = storageName }, c.TraceIdentifier)));
 
 app.MapPost("/api/v1/auth/registrations", async (RegistrationRequest request, HttpContext c, IAuthRepository repository, IPasswordHasher<Credential> hasher, IHttpClientFactory clients) =>
 {
@@ -270,7 +287,11 @@ static async Task<bool> DeleteUserProfileAsync(HttpClient client, string key, st
     }
     catch (HttpRequestException) { return false; }
 }
-static bool IsGateway(HttpContext c, string key) => string.Equals(c.Request.Headers["X-Gateway-Key"], key, StringComparison.Ordinal);
+static bool IsGateway(HttpContext c, string key)
+{
+    var values = c.Request.Headers["X-Gateway-Key"];
+    return values.Count == 1 && FixedTimeEquals(values[0]!, key);
+}
 static string? GetGatewayUser(HttpContext c, string key) => IsGateway(c, key) && !string.IsNullOrWhiteSpace(c.Request.Headers["X-User-Id"]) ? c.Request.Headers["X-User-Id"].ToString() : null;
 static bool ValidEmail(string? value) => !string.IsNullOrWhiteSpace(value) && value.Length <= 320 && value.Contains('@');
 static bool ValidName(string? value) => !string.IsNullOrWhiteSpace(value) && value.Trim().Length is >= 1 and <= 64;
@@ -283,7 +304,17 @@ static bool PasswordMatches(IPasswordHasher<Credential> hasher, Credential crede
     catch (ArgumentException) { return false; }
 }
 static IResult Failure(HttpContext c, int status, string code, string message) => Results.Json(ApiFailure.Create(code, message, c.TraceIdentifier), statusCode: status);
-static bool FixedTimeEquals(string left, string right) => CryptographicOperations.FixedTimeEquals(System.Text.Encoding.UTF8.GetBytes(left), System.Text.Encoding.UTF8.GetBytes(right));
+static bool FixedTimeEquals(string left, string right)
+{
+    var leftBytes = System.Text.Encoding.UTF8.GetBytes(left);
+    var rightBytes = System.Text.Encoding.UTF8.GetBytes(right);
+    var length = Math.Max(leftBytes.Length, rightBytes.Length);
+    var paddedLeft = new byte[length];
+    var paddedRight = new byte[length];
+    leftBytes.CopyTo(paddedLeft, 0);
+    rightBytes.CopyTo(paddedRight, 0);
+    return CryptographicOperations.FixedTimeEquals(paddedLeft, paddedRight) && leftBytes.Length == rightBytes.Length;
+}
 static bool IsAdmin(HttpContext c, string key) => GetGatewayUser(c, key) == "00000000-0000-0000-0000-000000000001";
 
 public sealed record RegistrationRequest(string Email, string Password, string DisplayName, string InvitationCode, string? DeviceName);
