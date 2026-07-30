@@ -9,6 +9,7 @@ public interface IAuthRepository
     StoredSession CreateSession(string userId, string? deviceName);
     StoredSession? FindSession(string id);
     StoredSession? FindByAccessToken(string token);
+    StoredSession? TouchAccessToken(string token);
     bool RevokeSession(string sessionId, string userId);
     StoredSession? Rotate(string refreshToken);
     void RevokeAllSessions(string userId);
