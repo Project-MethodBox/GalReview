@@ -22,7 +22,7 @@ http://127.0.0.1:5110
 ## 2. 前置条件
 
 - Windows 10/11
-- Python **3.9 至 3.12**（推荐 Python 3.12）
+- Python **3.9 以上**（实测Python 3.13.5可用）
 - 可访问清华 PyPI 镜像；首次识别时还需要下载 PaddleOCR 模型
 
 `setup.ps1` 会优先自动从系统 PATH 中的 `python` 或 Windows 的 `py` 启动器寻找兼容版本，因此通常不需要手动配置 Python 路径。
@@ -38,10 +38,11 @@ cd .\OCRService
 
 脚本会完成以下工作：
 
-1. 自动检测 Python 3.9–3.12；
+1. 自动检测 Python 3.9 及以上版本；
 2. 在 `OCRService\.venv` 创建独立虚拟环境；
 3. 使用清华 PyPI 镜像 `https://pypi.tuna.tsinghua.edu.cn/simple` 安装依赖；
-4. 安装 FastAPI、Uvicorn、PyMuPDF、PaddlePaddle 和 PaddleOCR。
+4. 安装 FastAPI、Uvicorn、PyMuPDF、PaddlePaddle 和 PaddleOCR；
+5. 预下载快速与标准模式所需的模型到 `OcrService/models`。
 
 如果 Python 不在 PATH 中，可以显式指定路径：
 
@@ -83,7 +84,7 @@ http://127.0.0.1:5110/healthz
 | `quick`（快速） | `PP-OCRv6_small_det` + `PP-OCRv6_small_rec`；PDF 以 1.5× 分辨率渲染 | 清晰的讲义、普通印刷体、优先速度 |
 | `standard`（标准，默认） | PaddleOCR 默认 PP-OCRv6 medium 方案；PDF 以 2× 分辨率渲染 | 小字号、模糊扫描、公式周边文字、优先准确度 |
 
-快速模式通常会比标准模式快约 1.5～3 倍；实际差异取决于页数、文字密度、扫描质量和 CPU 性能。首次使用某一模式时模型下载与加载会额外耗时，不能代表后续速度。
+快速模式通常会比标准模式快约 1.5～3 倍；实际差异取决于页数、文字密度、扫描质量和 CPU 性能。执行 `setup.ps1` 会预下载两种模式的模型；若直接安装依赖而未运行该脚本，首次使用某一模式时仍会下载与加载模型。
 
 ## 6. 与 FileService 的调用关系
 
@@ -249,6 +250,7 @@ OcrService/
 ├─ app.py             # FastAPI 与 PaddleOCR 适配逻辑
 ├─ requirements.txt   # Python 依赖
 ├─ setup.ps1          # 创建虚拟环境并从清华源安装依赖
+├─ models             # OCR模型(quick&standard)
 ├─ start.ps1          # 启动本地 OCR 服务
 ├─ verify.py          # 简单识别验证脚本
 ├─ logs/              # 安装与服务日志
