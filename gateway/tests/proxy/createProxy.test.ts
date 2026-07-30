@@ -1,4 +1,7 @@
+import { createServer, type Server } from 'node:http';
+import express from 'express';
 import { describe, it, expect } from 'vitest';
+import request from 'supertest';
 import type { GatewayConfig } from '../../src/config.js';
 import type { RouteEntry } from '../../src/types.js';
 import { createProxyForRoute } from '../../src/proxy/createProxy.js';
@@ -83,4 +86,78 @@ describe('createProxyForRoute', () => {
     // authService 无独立密钥，使用全局 gatewayKey
     expect(() => createProxyForRoute(route, mockConfig)).not.toThrow();
   });
+
+  it('应保留浏览器请求的完整契约路径和查询参数', async () => {
+    const upstream = await startUpstream();
+    try {
+      const app = express();
+      const route: RouteEntry = {
+        path: '/api/v1/users',
+        service: 'userService',
+        auth: 'user',
+        rateLimitCategory: 'general',
+      };
+      app.use(route.path, createProxyForRoute(route, configFor(upstream.origin)));
+
+      const response = await request(app).get('/api/v1/users/me?include=preferences');
+
+      expect(response.status).toBe(200);
+      expect(await upstream.requestUrl).toBe('/api/v1/users/me?include=preferences');
+    } finally {
+      await closeServer(upstream.server);
+    }
+  });
+
+  it('应保留服务间内部调用的完整契约路径', async () => {
+    const upstream = await startUpstream();
+    try {
+      const app = express();
+      const route: RouteEntry = {
+        path: '/internal/v1/users',
+        service: 'userService',
+        auth: 'service',
+        rateLimitCategory: 'general',
+      };
+      app.use(route.path, createProxyForRoute(route, configFor(upstream.origin)));
+
+      const response = await request(app).post('/internal/v1/users/profile-lookups').send({ userIds: [] });
+
+      expect(response.status).toBe(200);
+      expect(await upstream.requestUrl).toBe('/internal/v1/users/profile-lookups');
+    } finally {
+      await closeServer(upstream.server);
+    }
+  });
 });
+
+function configFor(userServiceUrl: string): GatewayConfig {
+  return {
+    ...mockConfig,
+    services: {
+      ...mockConfig.services,
+      userService: { ...mockConfig.services.userService!, url: userServiceUrl },
+    },
+  };
+}
+
+async function startUpstream(): Promise<{ server: Server; origin: string; requestUrl: Promise<string> }> {
+  let resolveRequestUrl!: (value: string) => void;
+  const requestUrl = new Promise<string>((resolve) => { resolveRequestUrl = resolve; });
+  const server = createServer((incoming, response) => {
+    resolveRequestUrl(incoming.url ?? '/');
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end('{"ok":true}');
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Upstream test server did not bind a TCP port.');
+  return { server, origin: `http://127.0.0.1:${address.port}`, requestUrl };
+}
+
+async function closeServer(server: Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+}

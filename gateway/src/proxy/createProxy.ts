@@ -61,6 +61,9 @@ export function createProxyForRoute(route: RouteEntry, config: GatewayConfig) {
   const options: Options<Request, Response> = {
     target: target.url,
     changeOrigin: true,
+    // Express 的 app.use(route.path, ...) 会从 req.url 移除已匹配的挂载前缀。
+    // 下游服务按完整契约路径注册路由，因此必须以 originalUrl 还原客户端路径。
+    pathRewrite: (path, req) => req.originalUrl || path,
     proxyTimeout: timeoutMs,
     timeout: timeoutMs,
     // 不自动跟随重定向，透传给客户端

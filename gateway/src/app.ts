@@ -14,8 +14,8 @@ import { buildApiFailure } from './types.js';
 
 /** 默认请求体大小上限（10MB） */
 const DEFAULT_BODY_LIMIT_BYTES = 10 * 1024 * 1024;
-/** 上传路由请求体大小上限（100MB） */
-const UPLOAD_BODY_LIMIT_BYTES = 100 * 1024 * 1024;
+/** 上传路由请求体大小上限（10MB） */
+const UPLOAD_BODY_LIMIT_BYTES = 10 * 1024 * 1024;
 
 /**
  * 创建 Gateway Express 应用

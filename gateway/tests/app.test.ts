@@ -110,7 +110,7 @@ describe('Gateway App 集成测试', () => {
         .post('/api/v1/materials')
         .set('Content-Type', 'application/octet-stream')
         .set('Authorization', 'Bearer valid-token')
-        .set('Content-Length', String(50 * MB));
+        .set('Content-Length', String(9 * MB));
       // 通过体检查 → 鉴权（但未 mock introspection → 503 unreachable）
       expect(res.status).toBe(503);
     });
@@ -149,7 +149,7 @@ describe('Gateway App 集成测试', () => {
         .post('/api/v1/materials')
         .set('Content-Type', 'application/octet-stream')
         .set('Authorization', 'Bearer valid-token')
-        .set('Content-Length', String(100 * MB));
+        .set('Content-Length', String(10 * MB));
       // 刚好等于限制不触发错误 → 被鉴权或代理处理
       expect(res.status).toBe(503);
     });
