@@ -19,8 +19,12 @@ try {
     }
 
     Write-Host "Starting OCR service at http://127.0.0.1:5110 ..."
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     & $python -m uvicorn app:app --host 127.0.0.1 --port 5110 2>&1 | Tee-Object -FilePath $serviceLog -Append
-    if ($LASTEXITCODE -ne 0) { throw "OCR service stopped with exit code $LASTEXITCODE." }
+    $serviceExitCode = $LASTEXITCODE
+    $ErrorActionPreference = $previousErrorActionPreference
+    if ($serviceExitCode -ne 0) { throw "OCR service stopped with exit code $serviceExitCode." }
     Write-Host "OCR service stopped."
 }
 catch {

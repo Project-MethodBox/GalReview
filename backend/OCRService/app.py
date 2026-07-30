@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+# Keep PaddleX model files beside OCRService instead of the user-profile cache.
+# This avoids inherited ACL issues and makes deployment/model cleanup self-contained.
+os.environ.setdefault("PADDLE_PDX_CACHE_HOME", str(Path(__file__).resolve().parent / "models"))
 
 import fitz
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
