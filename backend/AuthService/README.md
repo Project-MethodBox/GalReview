@@ -1,6 +1,6 @@
 #  AuthService
 
-AuthService 是 千知万理 的认证与账户治理服务。本地开发时默认监听 `http://localhost:5101`；生产环境应通过 `ASPNETCORE_URLS` 或宿主服务器配置监听地址。采用的数据库是 **MySQL**，负责凭证、密码哈希、会话、访问令牌、刷新令牌、密码恢复、管理员会话、邀请码和管理员审计记录。
+AuthService 是 千知万理 的认证与账户治理服务。本地开发时默认监听 `http://localhost:5102`；生产环境应通过 `ASPNETCORE_URLS` 或宿主服务器配置监听地址。采用的数据库是 **MySQL**，负责凭证、密码哈希、会话、访问令牌、刷新令牌、密码恢复、管理员会话、邀请码和管理员审计记录。
 
 浏览器不得直接访问本服务。所有浏览器请求必须先到 API Gateway，再由 Gateway 转发并注入受信任的身份头。用户展示资料和学习偏好由 UserService 管理；AuthService 不得直接访问 UserService 的数据表。
 
@@ -31,8 +31,8 @@ dotnet run --project .\AuthService\GalGame.AuthService.csproj
 健康检查：
 
 ```text
-GET http://localhost:5101/healthz  # 进程存活
-GET http://localhost:5101/readyz  # 当前返回 MySQL 就绪状态
+GET http://localhost:5102/healthz  # 进程存活
+GET http://localhost:5102/readyz  # 当前返回 MySQL 就绪状态
 ```
 
 ## 3. 配置
@@ -43,7 +43,7 @@ GET http://localhost:5101/readyz  # 当前返回 MySQL 就绪状态
 
 ### 监听地址与端口
 
-`Properties/launchSettings.json` 中的 `applicationUrl` 仅在本地开发执行 `dotnet run` 时生效；其中的 `http://localhost:5101` 不是生产环境固定地址，也不是由 Gateway 决定的。
+`Properties/launchSettings.json` 中的 `applicationUrl` 仅在本地开发执行 `dotnet run` 时生效；其中的 `http://localhost:5102` 不是生产环境固定地址，也不是由 Gateway 决定的。
 
 生产环境中，AuthService 自身通过 `ASPNETCORE_URLS` 决定 Kestrel 的监听地址；Gateway 只需把认证路由转发到这个实际地址。若在 Windows Server 使用 NSSM 或其他服务管理器，应将该变量配置到 **AuthService 这一项服务** 的进程环境中，而不是写成全局系统变量。每项服务必须使用不同端口，避免端口冲突。
 
@@ -66,7 +66,7 @@ GET http://localhost:5101/readyz  # 当前返回 MySQL 就绪状态
 
 ```powershell
 $env:ASPNETCORE_ENVIRONMENT = "Production"
-$env:ASPNETCORE_URLS = "http://127.0.0.1:5101"
+$env:ASPNETCORE_URLS = "http://127.0.0.1:5102"
 $env:ConnectionStrings__AuthDatabase = "Server=127.0.0.1;Port=3306;Database=moonstone_auth;User ID=moonstone_auth;Password=REPLACE_ME;SslMode=Required;"
 $env:Gateway__BaseUrl = "http://127.0.0.1:5000"
 $env:Gateway__ServiceKey = "REPLACE_WITH_ONE_LONG_RANDOM_SHARED_KEY"
@@ -77,7 +77,7 @@ $env:Admin__Password = "REPLACE_ADMIN_PASSWORD"
 临时验证时，可在同一个 PowerShell 窗口设置变量后启动服务：
 
 ```powershell
-$env:ASPNETCORE_URLS = "http://127.0.0.1:5101"
+$env:ASPNETCORE_URLS = "http://127.0.0.1:5102"
 dotnet .\GalGame.AuthService.dll
 ```
 

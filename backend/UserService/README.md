@@ -1,6 +1,6 @@
 # UserService
 
-UserService 是 千知万理 的用户资料服务，默认监听 `http://localhost:5106`。采用的数据库是 **MySQL**，只负责用户展示资料与学习偏好；密码、令牌、会话、邀请码和管理员认证均属于 AuthService。
+UserService 是 千知万理 的用户资料服务，默认监听 `http://localhost:5101`。采用的数据库是 **MySQL**，只负责用户展示资料与学习偏好；密码、令牌、会话、邀请码和管理员认证均属于 AuthService。
 
 浏览器只能经 Gateway 访问 `/api/v1/users/...`。UserService 不解析浏览器令牌，而是只信任 Gateway 注入并由共享服务密钥保护的用户上下文。
 
@@ -31,8 +31,8 @@ dotnet run --project .\UserService\GalGame.UserService.csproj
 健康检查：
 
 ```text
-GET http://localhost:5106/healthz
-GET http://localhost:5106/readyz
+GET http://localhost:5101/healthz
+GET http://localhost:5101/readyz
 ```
 
 ## 3. 配置
@@ -41,9 +41,9 @@ GET http://localhost:5106/readyz
 
 ### 监听地址与端口
 
-`Properties/launchSettings.json` 的 `applicationUrl` 只用于本地开发，当前本地约定为 `http://localhost:5106`。生产环境中，UserService 应通过其自身进程的 `ASPNETCORE_URLS` 配置监听地址；Gateway 的职责只是将 `/api/v1/users` 和 `/internal/v1/users` 路由指向该地址。
+`Properties/launchSettings.json` 的 `applicationUrl` 只用于本地开发，当前本地约定为 `http://localhost:5101`。生产环境中，UserService 应通过其自身进程的 `ASPNETCORE_URLS` 配置监听地址；Gateway 的职责只是将 `/api/v1/users` 和 `/internal/v1/users` 路由指向该地址。
 
-使用 Windows Server 的 NSSM、计划任务或其他服务管理器时，应把 `ASPNETCORE_URLS` 配置为 **UserService 服务专属** 的环境变量，例如 `http://127.0.0.1:5106`。不要把它设为机器级全局变量，因为 AuthService、Gateway 等服务需要各自监听不同端口。
+使用 Windows Server 的 NSSM、计划任务或其他服务管理器时，应把 `ASPNETCORE_URLS` 配置为 **UserService 服务专属** 的环境变量，例如 `http://127.0.0.1:5101`。不要把它设为机器级全局变量，因为 AuthService、Gateway 等服务需要各自监听不同端口。
 
 | 配置键 | 必填 | 说明 |
 | --- | ---: | --- |
@@ -54,7 +54,7 @@ GET http://localhost:5106/readyz
 
 ```powershell
 $env:ASPNETCORE_ENVIRONMENT = "Production"
-$env:ASPNETCORE_URLS = "http://127.0.0.1:5106"
+$env:ASPNETCORE_URLS = "http://127.0.0.1:5101"
 $env:ConnectionStrings__UserDatabase = "Server=127.0.0.1;Port=3306;Database=moonstone_auth;User ID=moonstone_user;Password=REPLACE_ME;SslMode=Required;"
 $env:Gateway__ServiceKey = "REPLACE_WITH_ONE_LONG_RANDOM_SHARED_KEY"
 ```
@@ -62,7 +62,7 @@ $env:Gateway__ServiceKey = "REPLACE_WITH_ONE_LONG_RANDOM_SHARED_KEY"
 临时验证时，可在同一个 PowerShell 窗口设置变量后启动服务：
 
 ```powershell
-$env:ASPNETCORE_URLS = "http://127.0.0.1:5106"
+$env:ASPNETCORE_URLS = "http://127.0.0.1:5101"
 dotnet .\GalGame.UserService.dll
 ```
 
