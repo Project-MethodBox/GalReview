@@ -6,6 +6,8 @@ namespace KnowledgeService.Application.Extraction;
 
 internal sealed partial class StructuredPointParser
 {
+    private readonly InlineQuestionBankBlockReader _inlineBlockReader = new();
+
     public IReadOnlyList<PointDraft> Parse(
         ChapterSegment segment,
         Guid chapterId,
@@ -37,8 +39,14 @@ internal sealed partial class StructuredPointParser
         return points;
     }
 
-    private static IReadOnlyList<StructuredBlock> ReadBlocks(ChapterSegment segment)
+    private IReadOnlyList<StructuredBlock> ReadBlocks(ChapterSegment segment)
     {
+        var inlineBlocks = _inlineBlockReader.Read(segment.Content);
+        if (inlineBlocks.Count > 0)
+        {
+            return inlineBlocks;
+        }
+
         var lines = TextNormalizer.Lines(segment.Content);
         var blocks = new List<StructuredBlock>();
         var category = "知识点";
@@ -114,8 +122,12 @@ internal sealed partial class StructuredPointParser
         int sourceOrder)
     {
         var normalizedContent = NormalizeWhitespace(
-            ItemRegex().Replace(block.Content, "${body}", 1));
-        var firstLine = NormalizeWhitespace(block.FirstLine);
+            ItemRegex().Replace(
+                RemovePageHeaderNoise(block.Content),
+                "${body}",
+                1));
+        var firstLine = NormalizeWhitespace(
+            RemovePageHeaderNoise(block.FirstLine));
         if (normalizedContent.Length < 4 || firstLine.Length < 2)
         {
             return null;
@@ -341,16 +353,19 @@ internal sealed partial class StructuredPointParser
     private static string NormalizeWhitespace(string value) =>
         WhitespaceRegex().Replace(value, " ").Trim();
 
+    private static string RemovePageHeaderNoise(string value) =>
+        PageHeaderRegex().Replace(value, "\n");
+
     private static string Limit(string value, int length) =>
         value.Length <= length ? value : value[..length].TrimEnd();
 
     [GeneratedRegex(
-        @"^(?<number>\d{1,3})[.、．]\s*(?<body>\S.*)$",
+        @"^(?<number>[0-9０-９]{1,3})[.、．]\s*(?<body>\S.*)$",
         RegexOptions.CultureInvariant)]
     private static partial Regex ItemRegex();
 
     [GeneratedRegex(
-        @"^[一二三四五六七八九十百0-9]+[、.．]\s*(?<category>名词解释|填空题|选择题|判断题|简答题|解答题|论述题|综合题|大题|习题|重要知识点|知识点)(?:\s*（.*）)?$",
+        @"^[一二三四五六七八九十百0-9０-９]+[、.．]\s*(?<category>名词解释|填空(?:题)?|选择(?:题)?|判断(?:题)?|简答(?:题)?|问答(?:题)?|解答题|论述题|综合题|大题|习题|重要知识点|知识点)(?:\s*[（(].*[）)])?$",
         RegexOptions.CultureInvariant)]
     private static partial Regex CategoryRegex();
 
@@ -359,4 +374,11 @@ internal sealed partial class StructuredPointParser
 
     [GeneratedRegex(@"\n\s*\n+", RegexOptions.CultureInvariant)]
     private static partial Regex BlankLinesRegex();
+
+    [GeneratedRegex(
+        @"^[^\r\n]{0,160}?(?:版权所有不得复制[！!]?|all\s+rights\s+reserved[.!]?)\s*[0-9０-９]{1,4}\s*",
+        RegexOptions.IgnoreCase |
+        RegexOptions.Multiline |
+        RegexOptions.CultureInvariant)]
+    private static partial Regex PageHeaderRegex();
 }

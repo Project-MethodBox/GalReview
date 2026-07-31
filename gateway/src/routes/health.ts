@@ -36,19 +36,28 @@ export function createHealthRouter(config: GatewayConfig): Router {
   router.get('/readyz', async (req, res) => {
     const traceId = req.traceId ?? 'unknown';
 
-    // 配置级检查
-    const servicesConfigured = Object.values(config.services).every(
-      (s) => s.url.startsWith('http'),
+    const readinessKeys = config.readinessServices ?? Object.keys(config.services);
+    const entries = readinessKeys.map(
+      (key) => [key, config.services[key]] as const,
     );
-    if (!servicesConfigured) {
-      res.status(503).json(buildApiFailure('SERVICE_UNAVAILABLE', '路由配置未就绪', traceId));
+
+    // 配置级检查
+    const invalid = entries
+      .filter(([, service]) => !service || !service.url.startsWith('http'))
+      .map(([key]) => key);
+    if (invalid.length > 0) {
+      res.status(503).json(buildApiFailure(
+        'SERVICE_UNAVAILABLE',
+        '路由配置未就绪',
+        traceId,
+        { invalid },
+      ));
       return;
     }
 
-    // 真实下游探测
-    const entries = Object.entries(config.services);
+    // 只探测当前端到端流程的核心依赖；尚未参与该流程的可选服务不阻塞就绪。
     const results = await Promise.allSettled(
-      entries.map(([, svc]) => probeService(svc.url)),
+      entries.map(([, svc]) => probeService(svc!.url)),
     );
 
     const unhealthy: string[] = [];

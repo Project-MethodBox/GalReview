@@ -1,3 +1,4 @@
+using System.Text.Json;
 using KnowledgeService.API.Contracts;
 using KnowledgeService.Application.Exceptions;
 
@@ -36,6 +37,15 @@ public sealed class ApiExceptionMiddleware
                 exception.Details);
         }
         catch (BadHttpRequestException exception)
+        {
+            await WriteFailure(
+                context,
+                400,
+                "VALIDATION_ERROR",
+                exception.Message,
+                new Dictionary<string, object?>());
+        }
+        catch (JsonException exception)
         {
             await WriteFailure(
                 context,

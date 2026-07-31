@@ -5,7 +5,7 @@ services:
     image: neo4j:2026.06.0
     environment:
       NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-knowledge-dev-password}
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-knowledge-dev-password}
+      HEALTHCHECK_PASSWORD: ${NEO4J_PASSWORD:-knowledge-dev-password}
     ports:
       - "7474:7474"
       - "7687:7687"
@@ -15,7 +15,7 @@ services:
       test:
         - CMD-SHELL
         - >-
-          cypher-shell -u neo4j -p "$${NEO4J_PASSWORD}"
+          cypher-shell -u neo4j -p "$${HEALTHCHECK_PASSWORD}"
           "RETURN 1" >/dev/null 2>&1
       interval: 5s
       timeout: 5s
@@ -35,7 +35,10 @@ services:
       Neo4j__Database: neo4j
       GatewayMaterialText__BaseUrl: ${GATEWAY_BASE_URL:-http://host.docker.internal:5000}
       GatewayMaterialText__ServiceName: KnowledgeService
-      GatewayMaterialText__ServiceKey: ${KNOWLEDGE_SERVICE_KEY:-development-only}
+      GatewayMaterialText__ServiceKey: ${KNOWLEDGE_SERVICE_KEY:-moonstone-local-gateway-key}
+      Gateway__ServiceKey: ${KNOWLEDGE_SERVICE_KEY:-moonstone-local-gateway-key}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       neo4j:
         condition: service_healthy

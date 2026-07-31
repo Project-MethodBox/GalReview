@@ -1,12 +1,48 @@
 using KnowledgeService.Application.Extraction;
 using KnowledgeService.Application.Segmentation;
 using KnowledgeService.Domain.Graphs;
+using KnowledgeService.Domain.Materials;
 using KnowledgeService.Domain.Segmentation;
 
 namespace KnowledgeService.Tests.Extraction;
 
 public sealed class RuleBasedKnowledgeExtractorTests
 {
+    [Theory]
+    [InlineData(SegmentationMode.Auto, "AUTO")]
+    [InlineData(SegmentationMode.HeadingRules, "HEADING_RULES")]
+    [InlineData(SegmentationMode.Markdown, "MARKDOWN")]
+    [InlineData(SegmentationMode.Delimiter, "DELIMITER")]
+    [InlineData(SegmentationMode.FixedWindow, "FIXED_WINDOW")]
+    public void Chapter_mode_uses_contract_enum_value(
+        SegmentationMode mode,
+        string expected)
+    {
+        const string content = "生态学：研究生物与环境关系的科学。";
+        ChapterSegment[] segments =
+        [
+            new(
+                "绪论",
+                0,
+                0,
+                0,
+                content.Length,
+                content,
+                mode)
+        ];
+
+        var graph = new RuleBasedKnowledgeExtractor().Extract(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            new string('a', 64),
+            "AGRONOMY",
+            segments,
+            DateTimeOffset.Parse("2026-07-31T00:00:00Z"));
+
+        Assert.Equal(expected, Assert.Single(graph.Chapters).SegmentationMode);
+    }
+
     [Fact]
     public void Extracts_definitions_questions_and_dependency_direction()
     {
@@ -76,5 +112,65 @@ public sealed class RuleBasedKnowledgeExtractorTests
         Assert.Contains(
             "农业生态系统",
             text[references[1].StartOffset..references[1].EndOffset]);
+    }
+
+    [Fact]
+    public void Source_map_labels_are_projected_to_point_references()
+    {
+        const string text = """
+            第一章 绪论
+            一、名词解释
+            1. 生态学：研究生物与环境关系的科学。
+            第二章 农业生态系统
+            一、名词解释
+            1. 农业生态学：运用生态学原理研究农业系统的学科。
+            """;
+        var segments = new ChapterSegmenter().Segment(
+            text,
+            new SegmentationOptions());
+        var graph = new RuleBasedKnowledgeExtractor().Extract(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            new string('d', 64),
+            "AGRONOMY",
+            segments,
+            DateTimeOffset.Parse("2026-07-30T00:00:00Z"));
+        var secondChapterStart = text.IndexOf(
+            "第二章",
+            StringComparison.Ordinal);
+        MaterialSourceSpan[] sourceMap =
+        [
+            new(0, secondChapterStart, 3, null, "第 3 页"),
+            new(secondChapterStart, text.Length, 4, null, "第 4 页")
+        ];
+        MaterialTextBlock[] blocks =
+        [
+            new(
+                "PARAGRAPH",
+                null,
+                text[..secondChapterStart],
+                sourceMap[0]),
+            new(
+                "PARAGRAPH",
+                null,
+                text[secondChapterStart..],
+                sourceMap[1])
+        ];
+
+        var located = SourceReferenceLocator.Apply(
+            graph,
+            sourceMap,
+            blocks);
+
+        var ecology = located.Points.Single(point => point.Title == "生态学");
+        var agriculturalEcology = located.Points.Single(
+            point => point.Title == "农业生态学");
+        Assert.Equal(
+            "第 3 页",
+            Assert.Single(ecology.SourceReferences).Location);
+        Assert.Equal(
+            "第 4 页",
+            Assert.Single(agriculturalEcology.SourceReferences).Location);
     }
 }

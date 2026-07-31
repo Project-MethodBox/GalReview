@@ -7,6 +7,9 @@ internal sealed class MaterialTextResponse
     [JsonPropertyName("materialId")]
     public Guid? MaterialId { get; init; }
 
+    [JsonPropertyName("ownerUserId")]
+    public Guid? OwnerUserId { get; init; }
+
     [JsonPropertyName("status")]
     public string? Status { get; init; }
 
@@ -30,6 +33,15 @@ internal sealed class MaterialTextResponse
 
     [JsonPropertyName("parserVersion")]
     public string? ParserVersion { get; init; }
+
+    [JsonPropertyName("sourceMapVersion")]
+    public string? SourceMapVersion { get; init; }
+
+    [JsonPropertyName("sourceMap")]
+    public IReadOnlyList<MaterialTextSourceSpanResponse>? SourceMap { get; init; }
+
+    [JsonPropertyName("blocks")]
+    public IReadOnlyList<MaterialTextBlockResponse>? Blocks { get; init; }
 
     [JsonPropertyName("language")]
     public string? Language { get; init; }

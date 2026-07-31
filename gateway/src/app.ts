@@ -14,8 +14,13 @@ import { buildApiFailure } from './types.js';
 
 /** 默认请求体大小上限（10MB） */
 const DEFAULT_BODY_LIMIT_BYTES = 10 * 1024 * 1024;
-/** 上传路由请求体大小上限（10MB） */
-const UPLOAD_BODY_LIMIT_BYTES = 10 * 1024 * 1024;
+/** FileService 对文件本体执行的严格上限（10 MiB） */
+export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+/** multipart 边界、字段和头部可占用的有限开销（1 MiB） */
+export const MULTIPART_OVERHEAD_BYTES = 1 * 1024 * 1024;
+/** Gateway 可接受的整个 multipart 请求上限；文件本体仍由 FileService 校验 */
+export const MAX_UPLOAD_REQUEST_BYTES =
+  MAX_UPLOAD_BYTES + MULTIPART_OVERHEAD_BYTES;
 
 /**
  * 创建 Gateway Express 应用
@@ -59,9 +64,9 @@ export function createApp(config: GatewayConfig): express.Express {
     const contentLength = Array.isArray(raw) ? raw[0] : raw;
     if (contentLength) {
       // 使用 req.originalUrl 避免子应用挂载场景下路径解析错误
-      const requestPath = req.originalUrl || req.path;
-      const isUpload = requestPath.startsWith('/api/v1/materials') && req.method === 'POST';
-      const limit = isUpload ? UPLOAD_BODY_LIMIT_BYTES : DEFAULT_BODY_LIMIT_BYTES;
+      const requestPath = (req.originalUrl || req.path).split('?', 1)[0];
+      const isUpload = requestPath === '/api/v1/materials' && req.method === 'POST';
+      const limit = isUpload ? MAX_UPLOAD_REQUEST_BYTES : DEFAULT_BODY_LIMIT_BYTES;
       const size = parseInt(contentLength, 10);
       if (isNaN(size) || size > limit) {
         const traceId = req.traceId ?? 'unknown';

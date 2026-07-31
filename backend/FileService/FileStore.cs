@@ -58,7 +58,7 @@ public sealed class LocalFileStore : IFileStore
     public bool TryDelete(string materialId, string ownerUserId, out Material? material)
     {
         material = null; if (!_materials.TryGetValue(materialId, out var stored) || stored.Material.OwnerUserId != ownerUserId || stored.Material.Status == "DELETED") return false;
-        if (GetLatestJob(materialId)?.Status is "QUEUED" or "RUNNING") return false;
+        if (stored.Material.Status == "PROCESSING" || GetLatestJob(materialId)?.Status is "QUEUED" or "RUNNING") return false;
         var deleted = stored.Material with { Status = "DELETED", UpdatedAt = DateTimeOffset.UtcNow }; _materials[materialId] = stored with { Material = deleted }; material = deleted; return true;
     }
     public IngestionJob? GetJob(string jobId) => _jobs.TryGetValue(jobId, out var job) ? job : null;

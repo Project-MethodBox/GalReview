@@ -6,6 +6,7 @@ namespace KnowledgeService.Application.Segmentation;
 public sealed class ChapterSegmenter : IChapterSegmenter
 {
     private readonly HeadingDetector _headingDetector = new();
+    private readonly InlineChapterHeadingDetector _inlineHeadingDetector = new();
 
     public IReadOnlyList<ChapterSegment> Segment(
         string text,
@@ -33,6 +34,13 @@ public sealed class ChapterSegmenter : IChapterSegmenter
         string text,
         SegmentationOptions options)
     {
+        var inlineHeadings = _inlineHeadingDetector.Find(text);
+        if (inlineHeadings.Count > 0 &&
+            options.Mode is SegmentationMode.Auto or SegmentationMode.HeadingRules)
+        {
+            return SegmentByInlineHeadings(text, inlineHeadings, options);
+        }
+
         var lines = TextNormalizer.Lines(text);
         var matches = new List<DetectedHeading>();
 
@@ -100,6 +108,37 @@ public sealed class ChapterSegmenter : IChapterSegmenter
                 nextHeadingStart,
                 contentRange.Content,
                 detected.Match.AppliedMode,
+                options.MaxChapterCharacters);
+        }
+
+        return Reorder(segments);
+    }
+
+    private static IReadOnlyList<ChapterSegment> SegmentByInlineHeadings(
+        string text,
+        IReadOnlyList<InlineChapterHeading> headings,
+        SegmentationOptions options)
+    {
+        var segments = new List<ChapterSegment>();
+        for (var index = 0; index < headings.Count; index++)
+        {
+            var heading = headings[index];
+            var chapterEnd = index + 1 < headings.Count
+                ? headings[index + 1].StartOffset
+                : text.Length;
+            var contentRange = TrimRange(
+                text,
+                heading.EndOffset,
+                chapterEnd);
+
+            AddWithMaximumSize(
+                segments,
+                heading.Title,
+                heading.StartOffset,
+                contentRange.Start,
+                chapterEnd,
+                contentRange.Content,
+                SegmentationMode.HeadingRules,
                 options.MaxChapterCharacters);
         }
 

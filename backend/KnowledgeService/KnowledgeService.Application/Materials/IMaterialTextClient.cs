@@ -6,6 +6,7 @@ public interface IMaterialTextClient
 {
     Task<MaterialTextDocument> GetExtractedTextAsync(
         Guid materialId,
+        Guid expectedOwnerUserId,
         string correlationId,
         CancellationToken cancellationToken);
 }

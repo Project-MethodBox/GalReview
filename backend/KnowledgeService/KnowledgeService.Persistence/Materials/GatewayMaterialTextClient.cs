@@ -45,12 +45,20 @@ public sealed class GatewayMaterialTextClient : IMaterialTextClient
 
     public async Task<MaterialTextDocument> GetExtractedTextAsync(
         Guid materialId,
+        Guid expectedOwnerUserId,
         string correlationId,
         CancellationToken cancellationToken)
     {
         if (materialId == Guid.Empty)
         {
             throw new ArgumentException("materialId must not be empty.", nameof(materialId));
+        }
+
+        if (expectedOwnerUserId == Guid.Empty)
+        {
+            throw new ArgumentException(
+                "expectedOwnerUserId must not be empty.",
+                nameof(expectedOwnerUserId));
         }
 
         ArgumentException.ThrowIfNullOrWhiteSpace(correlationId);
@@ -84,6 +92,7 @@ public sealed class GatewayMaterialTextClient : IMaterialTextClient
             return MaterialTextContractValidator.Validate(
                 payload,
                 materialId,
+                expectedOwnerUserId,
                 correlationId);
         }
         catch (KnowledgeServiceException)
@@ -263,6 +272,7 @@ public sealed class GatewayMaterialTextClient : IMaterialTextClient
         return new MaterialTextResponse
         {
             MaterialId = ReadGuidHeader(response, "X-Material-Id") ?? materialId,
+            OwnerUserId = ReadGuidHeader(response, "X-Owner-User-Id"),
             Status = ReadHeader(response, "X-Material-Status") ?? "READY",
             Text = text,
             Encoding = ReadHeader(response, "X-Text-Encoding") ?? "utf-8",
@@ -271,6 +281,34 @@ public sealed class GatewayMaterialTextClient : IMaterialTextClient
             TextChecksum = ReadChecksumHeader(response),
             TextLength = ReadInt64Header(response, "X-Text-Length"),
             ParserVersion = ReadHeader(response, "X-Parser-Version"),
+            SourceMapVersion = ReadHeader(
+                response,
+                "X-Source-Map-Version") ?? "1",
+            SourceMap =
+            [
+                new MaterialTextSourceSpanResponse
+                {
+                    StartOffset = 0,
+                    EndOffset = text.Length,
+                    SourceLabel = ReadHeader(response, "X-Source-Label")
+                }
+            ],
+            Blocks =
+            [
+                new MaterialTextBlockResponse
+                {
+                    Kind = "PARAGRAPH",
+                    Text = text,
+                    Source = new MaterialTextSourceSpanResponse
+                    {
+                        StartOffset = 0,
+                        EndOffset = text.Length,
+                        SourceLabel = ReadHeader(
+                            response,
+                            "X-Source-Label")
+                    }
+                }
+            ],
             Language = ReadHeader(response, "X-Text-Language") ??
                 response.Content.Headers.ContentLanguage.FirstOrDefault(),
             CreatedAt = ReadDateHeader(response, "X-Extracted-At") ??

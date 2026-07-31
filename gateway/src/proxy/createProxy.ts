@@ -1,16 +1,28 @@
 import { createProxyMiddleware, type Options } from 'http-proxy-middleware';
 import type { ClientRequest } from 'http';
-import type { Request, Response } from 'express';
+import type { Request, RequestHandler, Response } from 'express';
 import type { GatewayConfig } from '../config.js';
 import type { RouteEntry } from '../types.js';
 import { buildApiFailure } from '../types.js';
 
 /** 代理错误分类 */
-type ProxyErrorKind = 'timeout' | 'connection' | 'other';
+type ProxyErrorKind = 'timeout' | 'connection' | 'contract' | 'other';
 
 /** 错误关键词列表需要检查的类型集合 */
 const TIMEOUT_PATTERNS = ['ETIMEDOUT', 'ESOCKETTIMEDOUT', 'WSAETIMEDOUT', 'timeout'] as const;
-const CONNECTION_PATTERNS = ['ECONNREFUSED', 'ECONNRESET'] as const;
+const CONNECTION_PATTERNS = [
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ECONNABORTED',
+  'EPIPE',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+] as const;
+
+/** 让上游 proxyTimeout 先于客户端请求超时触发，以便返回统一错误信封。 */
+const PROXY_ERROR_RESPONSE_GRACE_MS = 1_000;
 
 /** 检查是否属于某类错误 */
 function matchesPattern(err: NodeJS.ErrnoException, patterns: readonly string[]): boolean {
@@ -22,6 +34,8 @@ function matchesPattern(err: NodeJS.ErrnoException, patterns: readonly string[])
 /** 将上游代理错误归类为可响应的种类 */
 function classifyProxyError(err: NodeJS.ErrnoException): ProxyErrorKind {
   if (matchesPattern(err, TIMEOUT_PATTERNS)) return 'timeout';
+  // Node 的 HTTP 客户端用 HPE_* 表示上游响应无法按 HTTP 契约解析。
+  if ((err.code ?? '').startsWith('HPE_')) return 'contract';
   if (matchesPattern(err, CONNECTION_PATTERNS)) return 'connection';
   return 'other';
 }
@@ -36,7 +50,8 @@ function stripSensitiveHeaders(proxyReq: ClientRequest): void {
 const ERROR_MAP: Record<ProxyErrorKind, [number, string, string]> = {
   timeout: [503, 'SERVICE_UNAVAILABLE', '上游服务响应超时'],
   connection: [503, 'SERVICE_UNAVAILABLE', '上游服务暂不可用'],
-  other: [502, 'INTERNAL_ERROR', '网关代理错误'],
+  contract: [502, 'UPSTREAM_CONTRACT_INVALID', '上游响应不可解析或违反服务契约'],
+  other: [503, 'SERVICE_UNAVAILABLE', '上游服务暂不可用'],
 };
 
 /**
@@ -48,13 +63,19 @@ const ERROR_MAP: Record<ProxyErrorKind, [number, string, string]> = {
  * - 配置超时
  * - 写操作不盲目重试；GET 仅在确认幂等时有限重试
  */
-export function createProxyForRoute(route: RouteEntry, config: GatewayConfig) {
+export function createProxyForRoute(
+  route: RouteEntry,
+  config: GatewayConfig,
+): RequestHandler {
   const target = config.services[route.service];
   if (!target) {
     throw new Error(`Unknown service "${route.service}" in route "${route.path}"`);
   }
 
-  const timeoutMs = route.timeoutMs ?? config.defaultTimeoutMs;
+  const timeoutMs = route.timeoutMs ??
+    (route.rateLimitCategory === 'upload'
+      ? config.uploadTimeoutMs
+      : config.defaultTimeoutMs);
   // 使用目标服务的独立密钥，避免全局 key 透传所有下游
   const targetServiceKey = target.serviceKey ?? config.gatewayKey;
 
@@ -65,7 +86,7 @@ export function createProxyForRoute(route: RouteEntry, config: GatewayConfig) {
     // 下游服务按完整契约路径注册路由，因此必须以 originalUrl 还原客户端路径。
     pathRewrite: (path, req) => req.originalUrl || path,
     proxyTimeout: timeoutMs,
-    timeout: timeoutMs,
+    timeout: timeoutMs + PROXY_ERROR_RESPONSE_GRACE_MS,
     // 不自动跟随重定向，透传给客户端
     followRedirects: false,
     on: {
@@ -105,5 +126,5 @@ export function createProxyForRoute(route: RouteEntry, config: GatewayConfig) {
     },
   };
 
-  return createProxyMiddleware(options);
+  return createProxyMiddleware(options) as RequestHandler;
 }

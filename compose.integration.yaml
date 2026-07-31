@@ -1,0 +1,154 @@
+name: galreview-integration
+
+services:
+  mongo:
+    image: mongo:8.0
+    volumes:
+      - file-mongo-data:/data/db
+    healthcheck:
+      test:
+        - CMD
+        - mongosh
+        - --quiet
+        - --eval
+        - db.adminCommand('ping').ok
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  neo4j:
+    image: neo4j:2026.06.0
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-knowledge-dev-password}
+      HEALTHCHECK_PASSWORD: ${NEO4J_PASSWORD:-knowledge-dev-password}
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - knowledge-neo4j-data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          cypher-shell -u neo4j -p "$${HEALTHCHECK_PASSWORD}"
+          "RETURN 1" >/dev/null 2>&1
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  user-service:
+    build:
+      context: ./backend/UserService
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:5101
+      MOONSTONE_MODE: Mock
+      Gateway__ServiceKey: ${USER_SERVICE_KEY:-moonstone-local-gateway-key}
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+
+  auth-service:
+    build:
+      context: ./backend/AuthService
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:5102
+      MOONSTONE_MODE: Mock
+      Gateway__BaseUrl: http://gateway:5000
+      Gateway__ServiceKey: ${AUTH_SERVICE_KEY:-moonstone-local-gateway-key}
+      Admin__Username: ${GALREVIEW_ADMIN_USERNAME:-integration-admin}
+      Admin__Password: ${GALREVIEW_ADMIN_PASSWORD:-integration-admin-password}
+    depends_on:
+      user-service:
+        condition: service_healthy
+    restart: unless-stopped
+
+  file-service:
+    build:
+      context: ./backend/FileService
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:5103
+      Gateway__ServiceKey: ${FILE_SERVICE_KEY:-moonstone-local-gateway-key}
+      ConnectionStrings__FileDatabase: mongodb://mongo:27017/qzwl_file
+      MongoDb__Database: qzwl_file
+      InternalAccess__ExtractedTextAllowedServices__0: KnowledgeService
+      Ocr__BaseUrl: http://ocr-service:5110/
+      Ocr__TimeoutMinutes: 20
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+
+  knowledge-service:
+    build:
+      context: ./backend/KnowledgeService
+      dockerfile: KnowledgeService.API/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      Neo4j__Uri: bolt://neo4j:7687
+      Neo4j__Username: neo4j
+      Neo4j__Password: ${NEO4J_PASSWORD:-knowledge-dev-password}
+      Neo4j__Database: neo4j
+      GatewayMaterialText__BaseUrl: http://gateway:5000
+      GatewayMaterialText__ServiceName: KnowledgeService
+      GatewayMaterialText__ServiceKey: ${KNOWLEDGE_SERVICE_KEY:-moonstone-local-gateway-key}
+      Gateway__ServiceKey: ${KNOWLEDGE_SERVICE_KEY:-moonstone-local-gateway-key}
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    ports:
+      - "5080:8080"
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: ./gateway
+    environment:
+      NODE_ENV: production
+      GATEWAY_PORT: 5000
+      GATEWAY_KEY: ${GATEWAY_KEY:-moonstone-local-gateway-key}
+      USER_SERVICE_KEY: ${USER_SERVICE_KEY:-moonstone-local-gateway-key}
+      AUTH_SERVICE_KEY: ${AUTH_SERVICE_KEY:-moonstone-local-gateway-key}
+      FILE_SERVICE_KEY: ${FILE_SERVICE_KEY:-moonstone-local-gateway-key}
+      KNOWLEDGE_SERVICE_KEY: ${KNOWLEDGE_SERVICE_KEY:-moonstone-local-gateway-key}
+      GALGAME_SERVICE_KEY: ${GALGAME_SERVICE_KEY:-moonstone-local-gateway-key}
+      RENDER_SERVICE_KEY: ${RENDER_SERVICE_KEY:-moonstone-local-gateway-key}
+      USER_SERVICE_URL: http://user-service:5101
+      AUTH_SERVICE_URL: http://auth-service:5102
+      FILE_SERVICE_URL: http://file-service:5103
+      KNOWLEDGE_SERVICE_URL: http://knowledge-service:8080
+      GALGAME_SERVICE_URL: http://galgame-service:5105
+      RENDER_SERVICE_URL: http://render-service:5106
+      READINESS_SERVICES: userService,authService,fileService,knowledgeService
+      DEFAULT_TIMEOUT_MS: 30000
+      UPLOAD_TIMEOUT_MS: 120000
+      CORS_ORIGINS: http://localhost:5173,http://localhost:5174
+    depends_on:
+      user-service:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+      file-service:
+        condition: service_healthy
+      knowledge-service:
+        condition: service_healthy
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
+
+  ocr-service:
+    profiles:
+      - ocr
+    build:
+      context: ./backend/OCRService
+    restart: unless-stopped
+
+volumes:
+  file-mongo-data:
+  knowledge-neo4j-data:

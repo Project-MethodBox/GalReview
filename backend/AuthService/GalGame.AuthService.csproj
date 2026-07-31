@@ -8,4 +8,9 @@
     <PackageReference Include="MailKit" Version="4.17.0" />
     <PackageReference Include="MySqlConnector" Version="2.4.0" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Remove="Tests\**\*.cs" />
+    <Content Remove="Tests\**\*" />
+    <None Remove="Tests\**\*" />
+  </ItemGroup>
 </Project>
