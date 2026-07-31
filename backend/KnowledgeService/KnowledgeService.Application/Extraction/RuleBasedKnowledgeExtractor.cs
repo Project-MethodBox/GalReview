@@ -1,6 +1,7 @@
 using KnowledgeService.Application.Segmentation;
 using KnowledgeService.Domain.Common;
 using KnowledgeService.Domain.Graphs;
+using KnowledgeService.Domain.Segmentation;
 
 namespace KnowledgeService.Application.Extraction;
 
@@ -29,7 +30,7 @@ public sealed class RuleBasedKnowledgeExtractor : IKnowledgeExtractor
                 0,
                 segment.StartOffset,
                 segment.EndOffset,
-                segment.AppliedMode.ToString().ToUpperInvariant()))
+                segment.AppliedMode.ToContractValue()))
             .ToArray();
 
         var drafts = chapters

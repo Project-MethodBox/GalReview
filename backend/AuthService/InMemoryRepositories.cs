@@ -127,9 +127,7 @@ public sealed class InMemoryAuthRepository(MockAuthStore store) : IAuthRepositor
             if (!store.SessionIdsByAccessToken.TryGetValue(token, out var sessionId) || !store.SessionsById.TryGetValue(sessionId, out var session)) return null;
             var now = DateTimeOffset.UtcNow;
             if (session.Status != "ACTIVE" || session.AccessExpiresAt <= now) return null;
-            var extended = session with { AccessExpiresAt = now.AddMinutes(15), RefreshExpiresAt = now.AddDays(7) };
-            store.SessionsById[sessionId] = extended;
-            return extended;
+            return session;
         }
     }
 
@@ -228,7 +226,8 @@ public sealed class InMemoryAdminRepository(MockAuthStore store) : IAdminReposit
     public AdminInvitation? CreateInvitation(CreateInvitationRequest request)
     {
         var type = request.Type?.Trim().ToLowerInvariant();
-        if (type is not ("single-use" or "multi-use" or "time-window")) return null;
+        if (type is not ("single-use" or "multi-use" or "time-window") ||
+            (type == "multi-use" && !request.MaxUses.HasValue)) return null;
         var maxUses = type == "single-use" ? 1 : request.MaxUses.GetValueOrDefault(10);
         if (maxUses is < 1 or > 10000 || (type == "time-window" && (!request.ValidFrom.HasValue || !request.ValidTo.HasValue || request.ValidTo <= request.ValidFrom))) return null;
 

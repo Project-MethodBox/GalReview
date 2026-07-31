@@ -128,6 +128,67 @@ describe('createProxyForRoute', () => {
       await closeServer(upstream.server);
     }
   });
+
+  it('上游连接失败应返回 503 SERVICE_UNAVAILABLE', async () => {
+    const unavailableOrigin = await reserveUnavailableOrigin();
+    const app = createProxyTestApp(unavailableOrigin, 1_000, 'proxy-connection-trace');
+
+    const response = await request(app).get('/api/v1/users/me');
+
+    expect(response.status).toBe(503);
+    expect(response.body).toMatchObject({
+      data: null,
+      error: {
+        code: 'SERVICE_UNAVAILABLE',
+        details: {},
+      },
+      traceId: 'proxy-connection-trace',
+    });
+  });
+
+  it('上游响应超时应返回 503 SERVICE_UNAVAILABLE', async () => {
+    const upstream = await startHangingUpstream();
+    try {
+      const app = createProxyTestApp(upstream.origin, 25, 'proxy-timeout-trace');
+
+      const response = await request(app).get('/api/v1/users/me');
+
+      expect(response.status).toBe(503);
+      expect(response.body).toMatchObject({
+        data: null,
+        error: {
+          code: 'SERVICE_UNAVAILABLE',
+          details: {},
+        },
+        traceId: 'proxy-timeout-trace',
+      });
+    } finally {
+      upstream.server.closeAllConnections();
+      await closeServer(upstream.server);
+    }
+  });
+
+  it('上游 HTTP 响应不可解析应返回 502 UPSTREAM_CONTRACT_INVALID', async () => {
+    const upstream = await startMalformedUpstream();
+    try {
+      const app = createProxyTestApp(upstream.origin, 1_000, 'proxy-contract-trace');
+
+      const response = await request(app).get('/api/v1/users/me');
+
+      expect(response.status).toBe(502);
+      expect(response.body).toMatchObject({
+        data: null,
+        error: {
+          code: 'UPSTREAM_CONTRACT_INVALID',
+          details: {},
+        },
+        traceId: 'proxy-contract-trace',
+      });
+    } finally {
+      upstream.server.closeAllConnections();
+      await closeServer(upstream.server);
+    }
+  });
 });
 
 function configFor(userServiceUrl: string): GatewayConfig {
@@ -138,6 +199,32 @@ function configFor(userServiceUrl: string): GatewayConfig {
       userService: { ...mockConfig.services.userService!, url: userServiceUrl },
     },
   };
+}
+
+function createProxyTestApp(
+  userServiceUrl: string,
+  timeoutMs: number,
+  traceId: string,
+): express.Express {
+  const app = express();
+  const route: RouteEntry = {
+    path: '/api/v1/users',
+    service: 'userService',
+    auth: 'user',
+    rateLimitCategory: 'general',
+  };
+  app.use((req, _res, next) => {
+    req.traceId = traceId;
+    next();
+  });
+  app.use(
+    route.path,
+    createProxyForRoute(route, {
+      ...configFor(userServiceUrl),
+      defaultTimeoutMs: timeoutMs,
+    }),
+  );
+  return app;
 }
 
 async function startUpstream(): Promise<{ server: Server; origin: string; requestUrl: Promise<string> }> {
@@ -156,6 +243,41 @@ async function startUpstream(): Promise<{ server: Server; origin: string; reques
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('Upstream test server did not bind a TCP port.');
   return { server, origin: `http://127.0.0.1:${address.port}`, requestUrl };
+}
+
+async function startHangingUpstream(): Promise<{ server: Server; origin: string }> {
+  const server = createServer(() => {
+    // 故意不写响应，等待 Gateway 的 proxyTimeout 生效。
+  });
+  const origin = await listenOnEphemeralPort(server);
+  return { server, origin };
+}
+
+async function startMalformedUpstream(): Promise<{ server: Server; origin: string }> {
+  const server = createServer((_incoming, response) => {
+    response.socket?.end('not-an-http-response\r\n\r\n');
+  });
+  const origin = await listenOnEphemeralPort(server);
+  return { server, origin };
+}
+
+async function reserveUnavailableOrigin(): Promise<string> {
+  const server = createServer();
+  const origin = await listenOnEphemeralPort(server);
+  await closeServer(server);
+  return origin;
+}
+
+async function listenOnEphemeralPort(server: Server): Promise<string> {
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === 'string') {
+    throw new Error('Upstream test server did not bind a TCP port.');
+  }
+  return `http://127.0.0.1:${address.port}`;
 }
 
 async function closeServer(server: Server): Promise<void> {

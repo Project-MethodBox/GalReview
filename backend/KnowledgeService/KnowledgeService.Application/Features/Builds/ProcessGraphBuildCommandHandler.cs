@@ -63,6 +63,7 @@ public sealed class ProcessGraphBuildCommandHandler
 
             var material = await _materialTextClient.GetExtractedTextAsync(
                 job.MaterialId,
+                job.OwnerUserId,
                 request.CorrelationId,
                 cancellationToken);
             if (material.MaterialId != job.MaterialId ||
@@ -91,6 +92,10 @@ public sealed class ProcessGraphBuildCommandHandler
                 job.SubjectHint ?? "GENERAL",
                 segments,
                 _clock.UtcNow);
+            graph = SourceReferenceLocator.Apply(
+                graph,
+                material.SourceMap,
+                material.Blocks);
             if (graph.Points.Count == 0)
             {
                 throw new KnowledgeServiceException(

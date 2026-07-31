@@ -3,8 +3,17 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <DefaultItemExcludes>
+      $(DefaultItemExcludes);Tests\**\*
+    </DefaultItemExcludes>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="MySqlConnector" Version="2.4.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Remove="Tests\**\*" />
+    <Content Remove="Tests\**\*" />
+    <EmbeddedResource Remove="Tests\**\*" />
+    <None Remove="Tests\**\*" />
   </ItemGroup>
 </Project>

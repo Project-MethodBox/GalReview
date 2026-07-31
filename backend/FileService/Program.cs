@@ -3,8 +3,15 @@ using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.Configure<Microsoft.AspNetCore.Routing.RouteHandlerOptions>(
+    options => options.ThrowOnBadRequest = true);
 var gatewayKey = builder.Configuration["Gateway:ServiceKey"] ?? throw new InvalidOperationException("Gateway:ServiceKey must be configured.");
-builder.Services.Configure<FormOptions>(options => options.MultipartBodyLengthLimit = 10 * 1024 * 1024);
+const long MaxFileSizeBytes = 10 * 1024 * 1024;
+const long MultipartOverheadBytes = 1024 * 1024;
+builder.Services.Configure<FormOptions>(options => options.MultipartBodyLengthLimit = MaxFileSizeBytes + MultipartOverheadBytes);
+var extractedTextAllowedServices = InternalServiceAccessPolicy.CreateAllowlist(
+    builder.Configuration.GetSection("InternalAccess:ExtractedTextAllowedServices"),
+    "KnowledgeService");
 builder.Services.AddHttpClient("ocr", client =>
 {
     client.BaseAddress = new Uri(builder.Configuration["Ocr:BaseUrl"] ?? "http://127.0.0.1:5110/");
@@ -22,6 +29,12 @@ app.Use(async (context, next) =>
 app.UseExceptionHandler(error => error.Run(context =>
 {
     var exception = context.Features.Get<IExceptionHandlerFeature>()?.Error;
+    if (exception is BadHttpRequestException or System.Text.Json.JsonException)
+    {
+        context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("FileService")
+            .LogWarning(exception, "Invalid FileService request. CorrelationId {CorrelationId}", context.TraceIdentifier);
+        return Failure(context, 400, "VALIDATION_ERROR", "Request JSON, parameter, or field format is invalid.").ExecuteAsync(context);
+    }
     context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("FileService").LogError(exception, "Unhandled FileService error. CorrelationId {CorrelationId}", context.TraceIdentifier);
     return Failure(context, 500, "INTERNAL_ERROR", "File service is temporarily unavailable.").ExecuteAsync(context);
 }));
@@ -30,24 +43,28 @@ app.MapGet("/readyz", (HttpContext c, MongoFileStore store) => store.IsReady()
     ? Results.Ok(ApiSuccess.Create(new { status = "ready", storage = "mongodb-gridfs" }, c.TraceIdentifier))
     : Failure(c, 503, "SERVICE_UNAVAILABLE", "MongoDB is unavailable."));
 
-app.MapPost("/api/v1/materials", async (HttpContext c, IFormFile? file, string? displayName, string? subjectCode, IFileStore store) =>
+app.MapPost("/api/v1/materials", async (HttpContext c, [FromForm] IFormFile? file, [FromForm] string? displayName, [FromForm] string? subjectCode, IFileStore store) =>
 {
     var userId = GatewayUser(c, gatewayKey); if (userId is null) return Failure(c, 401, "AUTH_REQUIRED", "A gateway-authenticated user is required.");
     if (file is null || file.Length == 0) return Failure(c, 400, "VALIDATION_ERROR", "A non-empty file is required.");
-    if (file.Length > 10 * 1024 * 1024) return Failure(c, 413, "FILE_TOO_LARGE", "The file exceeds the 10 MB limit.");
+    if (file.Length > MaxFileSizeBytes) return Failure(c, 413, "FILE_TOO_LARGE", "The file exceeds the 10 MB limit.");
     if (string.IsNullOrWhiteSpace(file.ContentType)) return Failure(c, 415, "MEDIA_TYPE_UNSUPPORTED", "Content-Type is required.");
+    if (!ParserInputPolicy.IsSupported(file.FileName, file.ContentType))
+        return Failure(c, 415, "MEDIA_TYPE_UNSUPPORTED", "The file format or media type is not supported.");
     var name = string.IsNullOrWhiteSpace(displayName) ? Path.GetFileName(file.FileName) : displayName.Trim();
     if (name.Length is < 1 or > 200) return Failure(c, 400, "VALIDATION_ERROR", "displayName must contain 1-200 characters.");
-    if (!ValidOptionalSubjectCode(subjectCode)) return Failure(c, 400, "VALIDATION_ERROR", "subjectCode must match ^[A-Z][A-Z0-9_]{0,31}$.");
-    var material = await store.CreateAsync(userId, file, name, subjectCode, c.RequestAborted);
+    var normalizedSubjectCode = NormalizeSubjectCode(subjectCode);
+    if (subjectCode is not null && normalizedSubjectCode is null) return Failure(c, 400, "VALIDATION_ERROR", "subjectCode must match ^[A-Z][A-Z0-9_]{0,31}$ after normalization.");
+    var material = await store.CreateAsync(userId, file, name, normalizedSubjectCode, c.RequestAborted);
     return Results.Created($"/api/v1/materials/{material.Material.MaterialId}", ApiSuccess.Create(material.Material, c.TraceIdentifier));
 }).DisableAntiforgery();
 
 app.MapGet("/api/v1/materials", (string? cursor, int? limit, string? status, string? subjectCode, HttpContext c, IFileStore store) =>
 {
     var userId = GatewayUser(c, gatewayKey); if (userId is null) return Failure(c, 401, "AUTH_REQUIRED", "A gateway-authenticated user is required.");
-    if (limit is < 1 or > 100 || (status is not null && !new[] { "UPLOADED", "PROCESSING", "READY", "FAILED", "DELETED" }.Contains(status)) || !ValidOptionalSubjectCode(subjectCode)) return Failure(c, 400, "VALIDATION_ERROR", "Invalid list query.");
-    var items = store.List(userId, cursor, limit ?? 20, status, subjectCode, out var next); return Results.Ok(ApiSuccess.Create(new MaterialPage(items, next), c.TraceIdentifier));
+    var normalizedSubjectCode = NormalizeSubjectCode(subjectCode);
+    if (limit is < 1 or > 100 || (status is not null && !new[] { "UPLOADED", "PROCESSING", "READY", "FAILED", "DELETED" }.Contains(status)) || (subjectCode is not null && normalizedSubjectCode is null)) return Failure(c, 400, "VALIDATION_ERROR", "Invalid list query.");
+    var items = store.List(userId, cursor, limit ?? 20, status, normalizedSubjectCode, out var next); return Results.Ok(ApiSuccess.Create(new MaterialPage(items, next), c.TraceIdentifier));
 });
 app.MapGet("/api/v1/materials/{materialId}", (string materialId, HttpContext c, IFileStore store) =>
 {
@@ -66,18 +83,30 @@ app.MapGet("/api/v1/materials/{materialId}/extracted-text-preview", (string mate
 });
 app.MapDelete("/api/v1/materials/{materialId}", (string materialId, HttpContext c, IFileStore store) =>
 {
-    var userId = GatewayUser(c, gatewayKey); if (userId is null) return Failure(c, 401, "AUTH_REQUIRED", "A gateway-authenticated user is required.");
-    return store.TryDelete(materialId, userId, out _) ? Results.NoContent() : store.GetMaterial(materialId) is not null ? Failure(c, 409, "STATE_CONFLICT", "A running ingestion job prevents deletion.") : Failure(c, 404, "RESOURCE_NOT_FOUND", "Material was not found.");
+    var userId = GatewayUser(c, gatewayKey);
+    if (userId is null) return Failure(c, 401, "AUTH_REQUIRED", "A gateway-authenticated user is required.");
+    var material = store.GetMaterial(materialId);
+    if (material is null || material.OwnerUserId != userId || material.Status == "DELETED")
+        return Failure(c, 404, "RESOURCE_NOT_FOUND", "Material was not found.");
+    if (material.Status == "PROCESSING" || store.GetLatestJob(materialId)?.Status is "QUEUED" or "RUNNING")
+        return Failure(c, 409, "STATE_CONFLICT", "A running ingestion job prevents deletion.");
+    if (store.TryDelete(materialId, userId, out _)) return Results.NoContent();
+
+    // Reclassify a concurrent state change without revealing another owner's material.
+    material = store.GetMaterial(materialId);
+    return material is null || material.OwnerUserId != userId || material.Status == "DELETED"
+        ? Failure(c, 404, "RESOURCE_NOT_FOUND", "Material was not found.")
+        : Failure(c, 409, "STATE_CONFLICT", "The material state changed before deletion.");
 });
 app.MapPost("/api/v1/materials/{materialId}/ingestion-jobs", (string materialId, CreateIngestionJobRequest request, HttpContext c, IFileStore store) =>
 {
     var userId = GatewayUser(c, gatewayKey); var material = store.GetMaterial(materialId);
     if (userId is null) return Failure(c, 401, "AUTH_REQUIRED", "A gateway-authenticated user is required.");
     if (material is null || material.OwnerUserId != userId || material.Status == "DELETED") return Failure(c, 404, "RESOURCE_NOT_FOUND", "Material was not found.");
-    if (store.GetLatestJob(materialId)?.Status is "QUEUED" or "RUNNING") return Failure(c, 409, "STATE_CONFLICT", "An ingestion job is already active.");
+    if (material.Status == "PROCESSING" || store.GetLatestJob(materialId)?.Status is "QUEUED" or "RUNNING") return Failure(c, 409, "STATE_CONFLICT", "An ingestion job is already active.");
     if (material.Status == "READY" && !request.Force) return Failure(c, 409, "STATE_CONFLICT", "Material text is already ready; use force to reprocess.");
     var ocrMode = string.IsNullOrWhiteSpace(request.OcrMode) ? "standard" : request.OcrMode.Trim().ToLowerInvariant();
-    if (ocrMode is not ("quick" or "standard")) return Failure(c, 400, "VALIDATION_FAILED", "OCR mode must be quick or standard.");
+    if (ocrMode is not ("quick" or "standard")) return Failure(c, 400, "VALIDATION_ERROR", "OCR mode must be quick or standard.");
     var job = store.CreateJob(materialId, string.IsNullOrWhiteSpace(request.ParserVersion) ? "files-text-v1" : request.ParserVersion, request.EnableOcr, ocrMode);
     _ = Task.Run(() => store.ProcessJobAsync(job.JobId, CancellationToken.None));
     return Results.Accepted($"/api/v1/ingestion-jobs/{job.JobId}", ApiSuccess.Create(job, c.TraceIdentifier));
@@ -106,12 +135,12 @@ app.MapPost("/api/v1/materials/{materialId}/access-grants", (string materialId, 
 });
 app.MapGet("/internal/v1/materials/{materialId}/content", (string materialId, HttpContext c, IFileStore store) =>
 {
-    if (!TrustedService(c, gatewayKey)) return Failure(c, 403, "FORBIDDEN", "A trusted service identity is required.");
+    if (!InternalServiceAccessPolicy.IsTrusted(c.Request.Headers, gatewayKey)) return Failure(c, 403, "FORBIDDEN", "A trusted service identity is required.");
     var stream = store.OpenContent(materialId); return stream is null ? Failure(c, 404, "RESOURCE_NOT_FOUND", "Material was not found.") : Results.Stream(stream, enableRangeProcessing: true);
 });
 app.MapGet("/internal/v1/materials/{materialId}/extracted-text", (string materialId, HttpContext c, IFileStore store) =>
 {
-    if (!TrustedService(c, gatewayKey)) return Failure(c, 403, "FORBIDDEN", "A trusted service identity is required.");
+    if (!InternalServiceAccessPolicy.IsTrusted(c.Request.Headers, gatewayKey, extractedTextAllowedServices)) return Failure(c, 403, "FORBIDDEN", "Only an allowlisted service routed through Gateway may read extracted text.");
     var material = store.GetMaterial(materialId); if (material is null || material.Status == "DELETED") return Failure(c, 404, "RESOURCE_NOT_FOUND", "Material was not found.");
     if (material.Status is "UPLOADED" or "PROCESSING") return Failure(c, 409, "MATERIAL_TEXT_NOT_READY", "Material text is not ready.");
     if (material.Status == "FAILED") return Failure(c, 422, "MATERIAL_TEXT_EXTRACTION_FAILED", "Latest text extraction failed.");
@@ -120,6 +149,14 @@ app.MapGet("/internal/v1/materials/{materialId}/extracted-text", (string materia
 app.Run();
 
 static string? GatewayUser(HttpContext context, string key) => context.Request.Headers["X-Gateway-Key"] == key && Guid.TryParse(context.Request.Headers["X-User-Id"], out _) ? context.Request.Headers["X-User-Id"].ToString() : null;
-static bool TrustedService(HttpContext context, string key) => context.Request.Headers["X-Gateway-Key"] == key && !string.IsNullOrWhiteSpace(context.Request.Headers["X-Service-Name"]);
-static bool ValidOptionalSubjectCode(string? value) => value is null || System.Text.RegularExpressions.Regex.IsMatch(value, "^[A-Z][A-Z0-9_]{0,31}$");
+static string? NormalizeSubjectCode(string? value)
+{
+    if (value is null) return null;
+    var normalized = value.Trim().ToUpperInvariant();
+    return System.Text.RegularExpressions.Regex.IsMatch(
+        normalized,
+        "^[A-Z][A-Z0-9_]{0,31}$")
+        ? normalized
+        : null;
+}
 static IResult Failure(HttpContext context, int status, string code, string message) => Results.Json(ApiFailure.Create(code, message, context.TraceIdentifier), statusCode: status);

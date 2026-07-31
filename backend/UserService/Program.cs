@@ -4,6 +4,10 @@ using Microsoft.AspNetCore.Diagnostics;
 using MySqlConnector;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+builder.Services.Configure<Microsoft.AspNetCore.Routing.RouteHandlerOptions>(
+    options => options.ThrowOnBadRequest = true);
 var isMockMode = string.Equals(Environment.GetEnvironmentVariable("MOONSTONE_MODE"), "Mock", StringComparison.OrdinalIgnoreCase);
 var connectionString = builder.Configuration.GetConnectionString("UserDatabase");
 if (!isMockMode && string.IsNullOrWhiteSpace(connectionString))
@@ -33,8 +37,17 @@ app.Use(async (context, next) =>
 });
 app.UseExceptionHandler(error => error.Run(context =>
 {
+    var exception = context.Features.Get<IExceptionHandlerFeature>()?.Error;
+    if (exception is BadHttpRequestException or JsonException)
+    {
+        context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("UserService")
+            .LogWarning(exception, "Invalid UserService request. CorrelationId: {CorrelationId}", context.TraceIdentifier);
+        return Results.Json(
+            ApiFailure.Create("VALIDATION_ERROR", "请求 JSON、参数或字段格式错误", context.TraceIdentifier),
+            statusCode: StatusCodes.Status400BadRequest).ExecuteAsync(context);
+    }
     context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("UserService")
-        .LogError(context.Features.Get<IExceptionHandlerFeature>()?.Error, "Unhandled UserService error. CorrelationId: {CorrelationId}", context.TraceIdentifier);
+        .LogError(exception, "Unhandled UserService error. CorrelationId: {CorrelationId}", context.TraceIdentifier);
     return Results.Json(ApiFailure.Create("INTERNAL_ERROR", "用户服务暂时不可用", context.TraceIdentifier), statusCode: 500).ExecuteAsync(context);
 }));
 app.Use(async (context, next) =>
@@ -61,7 +74,7 @@ app.MapPost("/internal/v1/users", (CreateUserProfileRequest request, HttpContext
 {
     if (!IsGateway(c, gatewayKey) || !string.Equals(c.Request.Headers["X-Service-Name"], "AuthService", StringComparison.Ordinal))
         return Failure(c, 403, "FORBIDDEN", "仅允许经 Gateway 的 AuthService 创建用户资料");
-    if (!Guid.TryParse(request.UserId, out _) || !ValidDisplayName(request.DisplayName))
+    if (!Guid.TryParse(request.UserId, out _) || !UserProfileValidation.IsValidDisplayName(request.DisplayName))
         return Failure(c, 400, "VALIDATION_ERROR", "userId 和 displayName 不符合要求");
 
     var profile = UserProfile.New(request.UserId, request.DisplayName.Trim(), NormalizeLocale(request.Locale));
@@ -74,10 +87,7 @@ app.MapPost("/internal/v1/users/profile-lookups", (AdminProfileLookupRequest req
 {
     if (!IsAuthService(c, gatewayKey))
         return Failure(c, 403, "FORBIDDEN", "仅允许经 Gateway 的 AuthService 查询用户资料");
-    var userIds = request.UserIds?.Distinct(StringComparer.Ordinal).ToArray() ?? [];
-    if (userIds.Length > 500 || userIds.Any(id => !Guid.TryParse(id, out _)))
-        return Failure(c, 400, "VALIDATION_ERROR", "userIds 不符合要求");
-    return Results.Ok(ApiSuccess.Create(users.FindAdminProfiles(userIds), c.TraceIdentifier));
+    return AdminProfileLookupHandler.Handle(request, c, users);
 });
 
 app.MapDelete("/internal/v1/users/{userId}", (string userId, HttpContext c, IUserRepository users) =>
@@ -103,11 +113,11 @@ app.MapMethods("/api/v1/users/me", ["PATCH", "PUT"], async (HttpContext c, IUser
 {
     var userId = GetUserId(c, gatewayKey);
     if (userId is null) return Failure(c, 401, "AUTH_REQUIRED", "需要有效登录状态");
-    var request = await JsonSerializer.DeserializeAsync<UpdateUserProfileRequest>(c.Request.Body, jsonOptions, c.RequestAborted);
-    if (request is null || (!string.IsNullOrWhiteSpace(request.DisplayName) && !ValidDisplayName(request.DisplayName)) || (request.Locale is not null && !ValidLocale(request.Locale)) || (request.PreferredSubjectCodes is not null && (request.PreferredSubjectCodes.Length > 10 || request.PreferredSubjectCodes.Any(string.IsNullOrWhiteSpace))))
-        return Failure(c, 400, "VALIDATION_ERROR", "资料字段不符合要求");
-    var profile = users.UpdateProfile(userId, request);
-    return profile is null ? Failure(c, 404, "RESOURCE_NOT_FOUND", "用户资料不存在") : Results.Ok(ApiSuccess.Create(profile, c.TraceIdentifier));
+    return await UserProfileUpdateHandler.HandleAsync(
+        userId,
+        c,
+        users,
+        jsonOptions);
 });
 
 app.MapGet("/api/v1/users/me/preferences", (HttpContext c, IUserRepository users) =>
@@ -122,11 +132,11 @@ app.MapPut("/api/v1/users/me/preferences", async (HttpContext c, IUserRepository
 {
     var userId = GetUserId(c, gatewayKey);
     if (userId is null) return Failure(c, 401, "AUTH_REQUIRED", "需要有效登录状态");
-    var request = await JsonSerializer.DeserializeAsync<UserPreferencesInput>(c.Request.Body, jsonOptions, c.RequestAborted);
-    if (request is null || request.DailyGoalMinutes is < 5 or > 180 || request.ContentDifficulty is not ("BASIC" or "STANDARD" or "ADVANCED"))
-        return Failure(c, 422, "BUSINESS_RULE_VIOLATION", "偏好设置不符合允许范围");
-    var preferences = users.ReplacePreferences(userId, request);
-    return preferences is null ? Failure(c, 404, "RESOURCE_NOT_FOUND", "用户资料不存在") : Results.Ok(ApiSuccess.Create(preferences, c.TraceIdentifier));
+    return await UserPreferencesUpdateHandler.HandleAsync(
+        userId,
+        c,
+        users,
+        jsonOptions);
 });
 
 app.Run();
@@ -154,8 +164,6 @@ static bool FixedTimeEquals(string left, string right)
     rightBytes.CopyTo(paddedRight, 0);
     return CryptographicOperations.FixedTimeEquals(paddedLeft, paddedRight) && leftBytes.Length == rightBytes.Length;
 }
-static bool ValidDisplayName(string? value) => !string.IsNullOrWhiteSpace(value) && value.Trim().Length is >= 1 and <= 64;
-static bool ValidLocale(string value) => value.Length is > 1 and <= 16 && value.All(c => char.IsLetterOrDigit(c) || c is '-' or '_');
 static string NormalizeLocale(string? value) => string.IsNullOrWhiteSpace(value) ? "zh-CN" : value.Trim();
 static IResult Failure(HttpContext context, int status, string code, string message) => Results.Json(ApiFailure.Create(code, message, context.TraceIdentifier), statusCode: status);
 

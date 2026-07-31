@@ -101,7 +101,7 @@ Authorization: Bearer <accessToken>
 | `GET` | `/api/v1/users/me` | 读取当前用户资料 | `200/401/404` |
 | `PATCH` / `PUT` | `/api/v1/users/me` | 局部更新当前用户资料 | `200/400/401/404` |
 | `GET` | `/api/v1/users/me/preferences` | 读取学习与显示偏好 | `200/401/404` |
-| `PUT` | `/api/v1/users/me/preferences` | 完整替换偏好 | `200/401/404/422` |
+| `PUT` | `/api/v1/users/me/preferences` | 完整替换偏好；格式/类型错误为 400，业务范围错误为 422 | `200/400/401/404/422` |
 
 成功响应统一为：
 

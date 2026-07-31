@@ -3,7 +3,7 @@
 > 版本：v0.1  
 > 状态：Draft / 各服务负责人待确认  
 > 总负责人：PM & TL `@Arabidopsis`  
-> 更新时间：2026-07-29
+> 更新时间：2026-07-31
 > 依据：《千知万理 产品需求与技术方案》v0.2
 
 ## 0. 文档定位
@@ -21,6 +21,7 @@
 约束强度：
 
 - `BASELINE`：调用方可据此开发，变更必须同步调用方和 Mock。
+- `URGENT`：属于当前端到端链路的跨服务义务，必须由标注的服务负责人处理；该标记不扩大 KnowledgeService 的实现范围。
 - `OWNER-TBD`：具体细节由服务负责人在正式编码前确认。
 - `P1`：不阻塞首个端到端闭环，可在黑客松时间不足时延后。
 - `INTERNAL`：只能由服务身份通过 API Gateway 调用，不向浏览器公开。
@@ -43,7 +44,9 @@
 - **UserService 的数据库为 MySQL**：仅持久化用户展示资料、学习偏好及其关联数据。
 - **AuthService 的数据库为 MySQL**：仅持久化凭证密码哈希、会话、令牌撤销状态、密码恢复记录、管理员账号治理、邀请码与管理员审计记录。
 - 同一业务事实只能由一个服务及其权威数据库写入；禁止 AuthService 与 UserService 互相直连或读写对方的 MySQL 数据表。
-- 后续引入 MongoDB 时，应由对应业务服务独占其文档型数据；不得将上述账户与用户资料数据在 MySQL、MongoDB 中双写作为两个权威来源。
+- **FileService 的数据库为 MongoDB + GridFS**：文件二进制、资料元数据、解析任务和规范化文本只由 FileService 写入。
+- **KnowledgeService 的数据库为 Neo4j**：章节、知识点、关系、计划和掌握度只由 KnowledgeService 写入。
+- 不得将同一事实跨 MySQL、MongoDB、Neo4j 双写为多个权威来源。
 
 ## 1. 架构级调用约束
 
@@ -63,6 +66,7 @@ Source Service
 - 禁止服务保存其他服务的直连地址。
 - 禁止服务直接读取其他服务的数据库。
 - 服务间同步调用仍然使用 Gateway 的 RESTful 路由。
+- OCRService 是 FileService 的无状态解析执行依赖，不是浏览器或其他领域服务的公共 API；`FileService -> OCRService` 是本规则的受限例外，OCRService 不注册 Gateway 路由且不得暴露公网。
 - Gateway 只负责鉴权、路由、超时、错误映射和链路信息，不承载领域规则。
 
 ### 1.2 异步调用
@@ -89,7 +93,10 @@ Source Service
 | `X-Correlation-Id` | 建议 | 缺失时由 Gateway 生成并回传 |
 | `Idempotency-Key` | 指定写接口 | UUID；相同键返回同一业务结果 |
 | `Content-Type` | 是 | JSON 使用 `application/json`；上传使用 `multipart/form-data` |
-| `X-Service-Name` | INTERNAL | 仅允许 Gateway 注入，客户端同名头必须被丢弃 |
+| `X-Service-Name` | INTERNAL 服务调用 Gateway | 与 `X-Service-Key` 一同提交；Gateway 验证后在下游请求中重新注入，浏览器同名头必须被丢弃 |
+| `X-Service-Key` | INTERNAL 服务调用 Gateway | 仅用于 Gateway 校验调用服务；转发前必须剥离，不得交给目标业务服务 |
+| `X-User-Id` | Gateway -> 业务服务 | 由已通过内省的用户令牌产生；外部同名头必须被丢弃 |
+| `X-Gateway-Key` | Gateway -> 业务服务 | 使用目标服务独立密钥（缺省才回退全局密钥）；浏览器和源服务不得自行注入 |
 
 ### 2.2 公共数据类型
 
@@ -99,7 +106,7 @@ type DateTime = string;   // ISO 8601 UTC，例如 2026-07-27T08:30:00Z
 type Uri = string;        // Gateway 控制地址、相对地址或短期签名地址
 type Sha256 = string;     // 64 位小写十六进制
 type Cursor = string;     // 不透明分页游标，调用方不得解析
-type SubjectCode = string;// 学科代码，由 KnowledgeService 维护
+type SubjectCode = string;// 输入先 Trim + 大写；输出匹配 ^[A-Z][A-Z0-9_]{0,31}$
 type JsonObject = Record<string, unknown>;
 
 interface PageMeta {
@@ -143,6 +150,13 @@ interface ApiFailure {
 }
 ```
 
+AuthService、UserService、FileService 与 KnowledgeService 的 JSON/路由绑定失败均必须返回
+上述 `ApiFailure`：畸形 JSON、字段类型错误、缺失 required 标量、非法 Guid 或无法解析的
+查询参数统一为 `400 VALIDATION_ERROR`，不得返回框架默认空体或落入 500。唯一的传输级
+例外是明确声明为 Binary stream 的
+`GET /internal/v1/materials/{materialId}/content`：不可满足的 `Range` 由文件流处理器直接
+返回空体 `416`，不包装 JSON 错误信封。
+
 ```json
 {
   "data": null,
@@ -172,10 +186,16 @@ interface ApiFailure {
 | `409` | 状态、版本或幂等冲突 | `STATE_CONFLICT`、`VERSION_CONFLICT` |
 | `413` | 文件过大 | `FILE_TOO_LARGE` |
 | `415` | 媒体类型不支持 | `MEDIA_TYPE_UNSUPPORTED` |
+| `416` | Binary stream 的 `Range` 不可满足；响应为空体 | - |
 | `422` | 语法正确但业务规则不满足 | `BUSINESS_RULE_VIOLATION` |
 | `429` | 超过限流 | `RATE_LIMITED` |
 | `500` | 服务内部错误 | `INTERNAL_ERROR` |
+| `502` | 上游返回不可解析或违反服务契约的数据 | `UPSTREAM_CONTRACT_INVALID` |
 | `503` | 服务或依赖暂不可用 | `SERVICE_UNAVAILABLE` |
+
+各服务接口表优先列出该端点直接产生的领域状态；经 Gateway 暴露的受保护路由还统一
+适用 `401/403/429/502/503`。测试报告必须区分“端点领域分支已验证”和“公共
+Gateway 分支由中间件契约测试验证”，不能因表格省略公共状态而宣称它们不存在。
 
 ## 3. UserService
 
@@ -188,13 +208,14 @@ interface ApiFailure {
 
 | 方法 | Gateway 路由 | 用途 | 请求 | 响应 | 状态 |
 |---|---|---|---|---|---|
-| `POST` | `/internal/v1/users` | 注册后创建用户资料 | `CreateUserProfileRequest` | `UserProfile` | `201/409` |
+| `POST` | `/internal/v1/users` | 注册后创建用户资料 | `CreateUserProfileRequest` | `UserProfile` | `201/400/403/409` |
 | `POST` | `/internal/v1/users/profile-lookups` | 管理员查询认证账户对应的展示名 | `AdminProfileLookupRequest` | `AdminProfileSummary[]` | `200/400/403` |
 | `DELETE` | `/internal/v1/users/{userId}` | 管理员删除用户资料与偏好 | - | - | `204/400/403/404` |
-| `GET` | `/api/v1/users/me` | 读取当前用户资料 | - | `UserProfile` | `200/401` |
-| `PATCH` | `/api/v1/users/me` | 部分更新资料 | `UpdateUserProfileRequest` | `UserProfile` | `200/400` |
-| `GET` | `/api/v1/users/me/preferences` | 读取学习与显示偏好 | - | `UserPreferences` | `200/401` |
-| `PUT` | `/api/v1/users/me/preferences` | 幂等替换偏好 | `UserPreferencesInput` | `UserPreferences` | `200/422` |
+| `GET` | `/api/v1/users/me` | 读取当前用户资料 | - | `UserProfile` | `200/401/404` |
+| `PATCH` | `/api/v1/users/me` | 部分更新资料 | `UpdateUserProfileRequest` | `UserProfile` | `200/400/404` |
+| `PUT` | `/api/v1/users/me` | 兼容性更新资料；当前语义与 PATCH 相同 | `UpdateUserProfileRequest` | `UserProfile` | `200/400/404` |
+| `GET` | `/api/v1/users/me/preferences` | 读取学习与显示偏好 | - | `UserPreferences` | `200/401/404` |
+| `PUT` | `/api/v1/users/me/preferences` | 幂等替换偏好 | `UserPreferencesInput` | `UserPreferences` | `200/400/404/422` |
 
 ### 3.2 数据类型
 
@@ -206,7 +227,7 @@ interface CreateUserProfileRequest {
 }
 
 interface AdminProfileLookupRequest {
-  userIds: Uuid[];       // 最多 500 个；仅 AuthService 可经 Gateway 调用
+  userIds: Uuid[];       // 原始数组最多 500 项（去重前计数）；仅 AuthService 可经 Gateway 调用
 }
 
 interface AdminProfileSummary {
@@ -265,6 +286,9 @@ interface UserPreferences extends UserPreferencesInput {
 
 - [ √ ] 头像来源和上传方式：头像暂不支持用户自定义，由前端实现，默认头像为用户名首字符
 - [ √ ] `preferredSubjectCodes` 最大数量为10项，超过 10 项或包含空白项时，UserService 返回 400 VALIDATION_ERROR。
+- [ √ ] 每个 `preferredSubjectCodes` 输入先 Trim、再执行 invariant 大写；规范化后必须匹配 `SubjectCode`，连字符不合法，响应和持久化只保留规范值。
+- [ √ ] `PATCH/PUT /api/v1/users/me` 共享同一更新语义；空请求体、畸形 JSON、JSON `null`、字段类型错误、纯空白 `displayName` 或其他字段校验失败均返回 `400 VALIDATION_ERROR`，不得落入 `500 INTERNAL_ERROR`。
+- [ √ ] `PUT /api/v1/users/me/preferences` 的 `dailyGoalMinutes`、`contentDifficulty`、`reducedMotion` 均为 required；任一缺失/null，以及空请求体、畸形 JSON、JSON `null` 或字段类型错误，返回 `400 VALIDATION_ERROR`。三项均存在但目标时长越界或难度不在枚举内时返回 `422 BUSINESS_RULE_VIOLATION`。数字字符串不得按数字宽松接收。
 - [ √ ] 账户注销是否进入首版。用户调用 `DELETE /api/v1/auth/account` 并输入当前登录密码确认后，AuthService 经 Gateway 删除 UserService 的资料与偏好，再删除认证凭证、会话、密码恢复记录及认证侧关联数据；操作立即生效且不可恢复。
 
 ## 4. AuthService
@@ -290,27 +314,39 @@ interface UserPreferences extends UserPreferencesInput {
 | 方法 | Gateway 路由 | 用途 | 请求 | 响应 | 状态 |
 |---|---|---|---|---|---|
 | `POST` | `/api/v1/auth/registrations` | 校验邀请码后创建凭证和初始会话 | `RegistrationRequest` | `AuthSessionResponse` | `201/400/409/422/503` |
-| `POST` | `/api/v1/auth/sessions` | 邮箱与密码登录 | `LoginRequest` | `AuthSessionResponse` | `201/401` |
+| `POST` | `/api/v1/auth/sessions` | 邮箱与密码登录 | `LoginRequest` | `AuthSessionResponse` | `201/400/401` |
 | `GET` | `/api/v1/auth/sessions/{sessionId}` | 读取会话状态 | - | `AuthSession` | `200/404` |
 | `DELETE` | `/api/v1/auth/sessions/{sessionId}` | 退出并撤销会话 | - | - | `204/404` |
 | `POST` | `/api/v1/auth/tokens` | 刷新访问令牌 | `RefreshTokenRequest` | `TokenPair` | `201/401` |
-| `POST` | `/api/v1/auth/password-reset-requests` | 请求密码恢复 | `PasswordResetRequest` | - | `202/404` |
-| `POST` | `/api/v1/auth/password-resets` | 重设密码 | `PasswordResetConfirmation` | - | `204/422` |
-| `POST` | `/api/v1/auth/password-changes` | 当前用户修改密码 | `PasswordChangeRequest` | - | `204/400/401` |
+| `POST` | `/api/v1/auth/password-reset-requests` | 请求密码恢复 | `PasswordResetRequest` | - | `202/400/404` |
+| `POST` | `/api/v1/auth/password-resets` | 重设密码 | `PasswordResetConfirmation` | - | `204/422/429` |
+| `POST` | `/api/v1/auth/password-changes` | 当前用户修改密码 | `PasswordChangeRequest` | - | `204/400/401/404` |
 | `DELETE` | `/api/v1/auth/account` | 当前用户输入密码后永久注销账户 | `AccountDeletionRequest` | - | `204/400/401/403/404/503` |
-| `POST` | `/internal/v1/auth/introspections` | 查询令牌状态 | `TokenIntrospectionRequest` | `TokenIntrospection` | `200/401/P1` |
+| `POST` | `/internal/v1/auth/introspections` | 查询令牌状态 | `TokenIntrospectionRequest` | `TokenIntrospection` | `200/403` |
+
+令牌无效、过期或撤销时，AuthService 内省仍返回 `200` 且
+`TokenIntrospection.active=false`；浏览器侧的 `401` 由 Gateway 据此生成。内省所用
+`X-Gateway-Key` 无效时返回 `403`，Gateway 必须把该服务配置故障转换为 `503`，不能
+伪装成用户令牌无效。除表内领域状态外，经 Gateway 暴露的受保护路由还统一适用
+`401/403/429/503`。
 
 ### 4.1.1 管理员接口（BASELINE）
 
 | 方法 | Gateway 路由 | 用途 | 请求 | 响应 | 状态 |
 |---|---|---|---|---|---|
 | `POST` | `/api/v1/admin/sessions` | 管理员用户名密码登录 | `AdminLoginRequest` | `AuthSessionResponse` | `201/401` |
-| `GET` | `/api/v1/admin/users` | 列出已注册用户 | - | `AdminUser[]` | `200/403` |
-| `DELETE` | `/api/v1/admin/users/{userId}` | 删除用户认证账户及其关联认证数据 | - | - | `204/403/404` |
+| `GET` | `/api/v1/admin/users` | 列出已注册用户 | - | `AdminUser[]` | `200/403/502/503` |
+| `DELETE` | `/api/v1/admin/users/{userId}` | 删除用户认证账户及其关联认证数据 | - | - | `204/403/404/503` |
 | `POST` | `/api/v1/admin/users/{userId}/password` | 管理员重置用户密码并撤销会话 | `AdminPasswordResetRequest` | - | `204/400/403/404` |
 | `GET` | `/api/v1/admin/invitations` | 列出邀请码 | - | `AdminInvitation[]` | `200/403` |
 | `POST` | `/api/v1/admin/invitations` | 创建邀请码 | `CreateInvitationRequest` | `AdminInvitation` | `201/400/403` |
 | `DELETE` | `/api/v1/admin/invitations/{code}` | 删除未使用或不再需要的邀请码 | - | - | `204/403/404` |
+
+`GET /api/v1/admin/users` 只接受 UserService 返回的完整成功信封：`data` 必须是非空引用的
+数组（无匹配时使用 `[]`），`meta` 必须为空对象，`traceId` 非空，且数组元素的 UUID、
+displayName、唯一性和请求集合归属均有效。上游非成功状态或不可达返回 `503`；上游
+`200` 但 JSON/信封/字段违反契约时返回 `502 UPSTREAM_CONTRACT_INVALID`，不得伪装成
+客户端 `400` 或静默回退为邮箱。
 
 ### 4.2 数据类型
 
@@ -467,8 +503,8 @@ interface TokenIntrospection {
 - [ √ ] Access Token、Refresh Token和密码重置令牌有效期如下表：
   | 类型 | 有效期 | 说明 |
   |---|---:|---|
-  | Access Token | 15 分钟 | 用于访问受保护接口 |
-  | Refresh Token | 7 天 | 用于刷新访问令牌 |
+  | Access Token | 15 分钟 | 自签发时起的绝对有效期；内省不延长 |
+  | Refresh Token | 7 天 | 自签发时起的绝对有效期；使用后轮换新会话 |
   | Reset Password Token | 10 分钟 | 用于忘记密码重设 |
 
 
@@ -492,15 +528,33 @@ interface TokenIntrospection {
 
 | 方法 | Gateway 路由 | 用途 | 请求 | 响应 | 状态 |
 |---|---|---|---|---|---|
-| `POST` | `/api/v1/materials` | 上传复习资料 | `multipart MaterialUploadForm` | `Material` | `201/413/415` |
+| `POST` | `/api/v1/materials` | 上传复习资料 | `multipart MaterialUploadForm` | `Material` | `201/400/413/415` |
 | `GET` | `/api/v1/materials` | 分页查询当前用户资料 | Query | `MaterialPage` | `200/400` |
 | `GET` | `/api/v1/materials/{materialId}` | 读取资料元数据 | - | `Material` | `200/404` |
-| `DELETE` | `/api/v1/materials/{materialId}` | 删除或标记删除 | - | - | `204/409` |
-| `POST` | `/api/v1/materials/{materialId}/ingestion-jobs` | 创建解析任务 | `CreateIngestionJobRequest` | `IngestionJob` | `202/409` |
-| `GET` | `/api/v1/ingestion-jobs/{jobId}` | 查询解析进度 | - | `IngestionJob` | `200/404` |
-| `POST` | `/api/v1/materials/{materialId}/access-grants` | 创建短期内容授权 | `CreateAccessGrantRequest` | `AccessGrant` | `201/403` |
-| `GET` | `/internal/v1/materials/{materialId}/content` | 服务读取原始内容流 | `Range?` | Binary stream | `200/206/404` |
+| `GET` | `/api/v1/materials/{materialId}/extracted-text-preview` | 当前用户预览已规范化文本 | - | `ExtractedTextDocument` | `200/404/409/422` |
+| `DELETE` | `/api/v1/materials/{materialId}` | 删除或标记删除 | - | - | `204/404/409` |
+| `POST` | `/api/v1/materials/{materialId}/ingestion-jobs` | 创建解析任务；可显式启用 OCR | `CreateIngestionJobRequest` | `IngestionJob` | `202/400/404/409` |
+| `GET` | `/api/v1/ingestion-jobs/{jobId}` | 查询解析进度；OCR 活跃时可附带非权威逐页进度 | - | `IngestionJobResponse` | `200/404` |
+| `GET` | `/internal/v1/materials/{materialId}/content` | 服务读取原始内容流 | `Range?` | Binary stream | `200/206/403/404/416` |
 | `GET` | `/internal/v1/materials/{materialId}/extracted-text` | **URGENT（跨服务阻塞项）** 服务读取规范化纯文本及来源映射 | - | `ExtractedTextDocument` | `200/403/404/409/422` |
+
+`POST /api/v1/materials/{materialId}/access-grants` 属于
+**URGENT（FileService / Gateway，未形成可执行契约、未测试）**。当前 FileService
+虽保留同路径占位映射，但它只返回固定 INTERNAL content URL，没有不可伪造 grant
+token、服务端过期校验或浏览器可消费的授权链路，因此不得把该映射宣称为“短期内容
+授权”。在负责人冻结 token 形状、purpose、TTL、撤销和下载校验语义并完成测试前，
+客户端不得调用，当前接口目录也不包含它。
+
+上传入口在写入 GridFS 前验证文件非空、10 MiB 文件本体上限和受支持的扩展名/MIME；
+未知扩展名只可在 `text/*` 或 `application/octet-stream` 下走 UTF-8 文本兜底，其他
+组合返回 `415 MEDIA_TYPE_UNSUPPORTED`。PDF、DOCX、HTML、Markdown 和图片的解析分派
+同时使用规范 MIME 与扩展名：例如 `application/pdf` 即使文件名为 `.bin` 也必须走
+PDF 解析，不能把二进制当 UTF-8 文本。
+
+`DELETE /api/v1/materials/{materialId}` 对不存在、已删除或非当前 owner 的资料统一返回
+`404 RESOURCE_NOT_FOUND`，不得泄漏其他用户资源是否存在；处于 PROCESSING 或具有
+活动任务，以及删除时发生可见状态竞态时返回 `409 STATE_CONFLICT`。Binary content
+端点的非法 `Range` 返回空体 `416`，是 2.4 明确的流式响应例外。
 
 列表查询参数：
 
@@ -549,8 +603,10 @@ interface MaterialPage {
 }
 
 interface CreateIngestionJobRequest {
-  parserVersion?: string;
+  parserVersion?: string; // 空值使用 files-text-v1
   force?: boolean; // 默认 false
+  enableOcr?: boolean; // 默认 false；仅为 true 时允许图片/扫描 PDF 进入 OCR
+  ocrMode?: "quick" | "standard"; // 空值默认 standard；其他值返回 400 VALIDATION_ERROR
 }
 
 type IngestionJobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED";
@@ -564,6 +620,20 @@ interface IngestionJob {
   error: ApiError | null;
   createdAt: DateTime;
   updatedAt: DateTime;
+  enableOcr: boolean;
+  ocrMode: "quick" | "standard";
+  ocrUsed: boolean; // 任务完成后表示实际是否调用过 OCR，而不是用户是否允许 OCR
+}
+
+interface OcrProgress {
+  status: string;
+  currentPage: number; // int32
+  totalPages: number;   // int32
+  phase: string;
+}
+
+interface IngestionJobResponse extends IngestionJob {
+  ocrProgress?: OcrProgress;
 }
 
 interface CreateAccessGrantRequest {
@@ -588,6 +658,7 @@ interface ExtractedTextDocument {
   parserVersion: string;
   sourceMapVersion: "1";
   sourceMap: TextSourceSpan[];
+  blocks: TextDocumentBlock[];
   createdAt: DateTime;
 }
 
@@ -598,21 +669,37 @@ interface TextSourceSpan {
   paragraphIndex: number | null;// 可识别段落时从 0 开始
   sourceLabel: string | null;   // 例如“第 3 页”“幻灯片 8”；不得替代 offset
 }
+
+interface TextDocumentBlock {
+  kind: string;                 // 当前解析器可产生 HEADING、PARAGRAPH 等结构类型
+  level: number | null;         // 标题级别为 1-6；无层级时为 null
+  text: string;                 // 必须与 source 指向的规范化 text 子串逐字一致
+  source: TextSourceSpan;       // 必须同时存在于 sourceMap
+}
 ```
 
 ### 5.2.1 **URGENT（跨服务阻塞项）** 纯文本交付基线
 
 FileService 必须在最新 `IngestionJob.status="SUCCEEDED"` 后，将 `Material.status` 原子地推进到 `READY`，随后才允许返回 `ExtractedTextDocument` 并发布 `MaterialTextReady v1`。具体规则已经冻结：
 
-- `text` 必须为 UTF-8 可表示的 Unicode 纯文本；先统一为 NFC，再把 `CRLF`/`CR` 统一为 `LF`。禁止把原始 PDF、DOCX、OCR JSON、HTML、Markdown 或 base64 放进 `text`。
+- `text` 必须为非空、非纯空白且可由 UTF-8 表示的 Unicode 纯文本；先统一为 NFC，再把 `CRLF`/`CR` 统一为 `LF`。禁止把原始 PDF、DOCX、OCR JSON、HTML、Markdown 或 base64 放进 `text`。
 - `textChecksum` 对上述规范化结果的精确 UTF-8 字节计算 SHA-256；`textLength` 与所有 offset 均按规范化字符串的 UTF-16 code unit 计数，与 JavaScript/.NET `string.length` 一致。FileService 若使用 Python/Go 等 Unicode 标量索引实现，必须在边界处显式转换。
-- `sourceMap` 必须按 `startOffset` 升序、不得重叠、不得越界。解析器无法恢复页码或段落时，对应字段使用 `null`，但 offset 仍为必填。
-- `parserVersion`、`sourceMapVersion`、`textChecksum` 是 KnowledgeService 构建幂等键的一部分；同一解析版本重试必须产生相同文本、checksum 和 source map。
+- `ownerUserId` 必须是资料真实所有者。`sourceMap` 必须非空、按 `startOffset` 升序、不得重叠或越界；页码若存在须大于 0，段落索引若存在须不小于 0。
+- `blocks` 必须非空并按来源区间有序；每个 `source` 必须与 `sourceMap` 中的一项完全相同，`text` 必须与该半开区间的原文逐字相同。解析器无法恢复页码、段落或标题级别时使用 `null`，不得虚构位置。
+- FileService 对同一资料、同一 `parserVersion` 的非强制重试必须产生相同文本、`textChecksum` 和来源映射。KnowledgeService 创建构图任务的请求幂等键固定为 `(ownerUserId, Idempotency-Key)`，并校验重复 key 的 `materialId`、切分模式、抽取器版本和学科提示均一致；读取文本后，`textChecksum` 会进入构建结果与持久化图谱指纹，`parserVersion`、`sourceMapVersion` 只作为受校验的来源契约字段，不得误称为创建任务的幂等键。
 - 资料尚未 `READY` 时返回 `409 MATERIAL_TEXT_NOT_READY`；最新解析明确失败时返回 `422 MATERIAL_TEXT_EXTRACTION_FAILED`；调用身份不是经 Gateway 注入的受信服务身份时返回 `403 FORBIDDEN`。
+- `/internal/v1/materials/{materialId}/extracted-text` 除目标服务 `X-Gateway-Key` 外，还必须要求单值 `X-Service-Name` 命中大小写不敏感的精确 allowlist；当前默认只允许 `KnowledgeService`，FileService 配置项为 `InternalAccess:ExtractedTextAllowedServices`。仅“非空服务名”不构成授权。
 - 响应可使用统一 JSON 成功信封；无论传输包装为何，`text` 字段本身只能是上述纯文本。
 - KnowledgeService 只经 Gateway 使用本端点或事件中的 `contentRef` 读取文本，不读取 FileService 数据库，也不把 PDF/DOCX 解析逻辑作为正常生产路径。
+- `enableOcr=false` 时 FileService 不得调用 OCRService；图片或没有内嵌文本的扫描 PDF 应使任务失败。`enableOcr=true` 只表示允许回退，文本型 PDF 仍优先直接提取，最终是否执行 OCR 以 `ocrUsed` 为准。逐页 `ocrProgress` 查询失败不得覆盖 FileService 自己的任务状态。
 
-本小节及 `MaterialTextReady v1` 是 KnowledgeService 开工和联调的 **URGENT（跨服务阻塞项）**；由 FileService 负责人实现，KnowledgeService 不代为实现。
+当前 standalone MongoDB 不提供跨集合事务，完成态使用可恢复的固定发布顺序：先把完整
+文本暂存在仍为 `PROCESSING` 的 Material 文档，再把 IngestionJob 写为
+`SUCCEEDED`，最后将 Material 与同一文本一起发布为 `READY`。客户端可能极短暂观察到
+`SUCCEEDED + PROCESSING`，但绝不能观察到 `READY` 早于 `SUCCEEDED`，也不能观察到
+缺失文本的 `READY`；服务重启时必须从已成功任务和暂存文本完成最后发布，不能重复解析。
+
+本小节的同步 HTTP 数据形状已经作为当前适配基线；其实现、OCR 调度和 `MaterialTextReady v1` 生产仍是 FileService / Gateway 负责的 **URGENT（跨服务义务）**，KnowledgeService 不代为实现。
 
 ### 5.3 上传 Mock
 
@@ -636,11 +723,11 @@ FileService 必须在最新 `IngestionJob.status="SUCCEEDED"` 后，将 `Materia
 }
 ```
 
-### 5.4 OWNER-TBD
+### 5.4 已决策项与 OWNER-TBD
 
-- [ ] 首批 MIME 类型；
-- [ ] 单文件大小；
-- [ ] OCR 是否进入 MVP；
+- [ √ ] 单文件上传上限为 10 MiB，超过返回 `413 FILE_TOO_LARGE`；
+- [ √ ] PDF、DOCX、Markdown、HTML 使用专用解析器；TXT，以及未知扩展名且媒体类型为 `text/*` 或 `application/octet-stream` 的输入按 UTF-8 文本兜底；JPG、JPEG、PNG 和无内嵌文字的 PDF 只有显式启用 OCR 才能解析；
+- [ ] **URGENT（FileService / OCRService）** 完成 OCR 准确率、资源上限、模型缓存和失败恢复验证；本轮端到端测试不覆盖 OCR 功能；
 - [ ] 解析器版本与失败重试策略；
 - [ ] 软删除或物理删除；
 - [ ] GridFS bucket 和备份策略。
@@ -675,32 +762,46 @@ KnowledgeService 只接收 FileService 已规范化的纯文本，先建立章�
 
 跨服务联调阻塞项（均不由 KnowledgeService 实现）：
 
-- **URGENT（FileService / Gateway）**：实现 5.2.1 的规范化纯文本读取、服务身份转发及稳定错误码；未满足时只能测试本服务的纯函数与 mock client，不能完成真实资料构图。
-- **URGENT（GalGameService）**：按 `reviewPlanId + snapshotVersion` 读取 6.3 的不可变 PlanGraph，把 `questionTarget`/学习目标转成题目和剧情；不得自行重算知识点权重。
-- **URGENT（RenderService / GalGameService）**：按 6.4 提交 `ReviewCompleted v2`/INTERNAL evidence，保留 `resultId`、`idempotencyKey`、`completedAt` 和逐知识点证据；否则 KnowledgeService 不得猜测掌握度。
-- **URGENT（Gateway）**：剥离外部伪造的 `X-User-Id`、`X-Service-Name`，完成认证后重新注入可信 Header；KnowledgeService 只消费该内部信任边界。
+- **URGENT（FileService / Gateway）**：持续满足 5.2.1 的规范化纯文本、结构块、所有者信息、服务身份转发和稳定错误码；这些适配属于对应服务，KnowledgeService 只校验和消费。
+- **URGENT（GalGameService）**：以精确服务身份按 `reviewPlanId + snapshotVersion` 读取 6.3 的不可变 PlanGraph，把 `questionTarget`/学习目标转成题目和剧情；不得自行重算知识点权重。
+- **URGENT（RenderService）**：以精确服务身份按 6.4 提交 `ReviewCompleted v2`/INTERNAL evidence，保留 `resultId`、`idempotencyKey`、`completedAt` 和逐知识点证据；否则 KnowledgeService 不得猜测掌握度。GalGameService 不能代替运行时提交用户作答证据。
+- **URGENT（Gateway）**：按 9.2 剥离外部伪造的身份头、完成令牌或服务身份认证，并按目标服务密钥重新注入可信 Header；KnowledgeService 只消费该内部信任边界。
 
 ### 6.1 接口目录
 
 | 方法 | Gateway 路由 | 用途 | 请求 | 响应 | 状态 |
 |---|---|---|---|---|---|
-| `POST` | `/api/v1/knowledge-graph-builds` | 创建图谱构建任务 | `GraphBuildRequest` | `GraphBuildJob` | `202/409` |
+| `POST` | `/api/v1/knowledge-graph-builds` | 创建图谱构建任务 | `GraphBuildRequest` | `GraphBuildJob` | `202/400/409/422` |
 | `GET` | `/api/v1/knowledge-graph-builds/{buildId}` | 查询构建任务 | - | `GraphBuildJob` | `200/404` |
 | `GET` | `/api/v1/knowledge-graphs?materialId=...` | 查询资料的图谱版本 | Query | `KnowledgeGraphPage` | `200/400` |
 | `GET` | `/api/v1/knowledge-graphs/{graphId}` | 读取图谱摘要 | - | `KnowledgeGraphSummary` | `200/404` |
 | `GET` | `/api/v1/knowledge-graphs/{graphId}/chapters` | 读取有序章节树 | - | `Chapter[]` | `200/404` |
-| `GET` | `/api/v1/knowledge-graphs/{graphId}/points` | 分页读取知识点 | Query | `KnowledgePointPage` | `200/400` |
-| `GET` | `/api/v1/knowledge-graphs/{graphId}/relations` | 分页读取关系 | Query | `KnowledgeRelationPage` | `200/400` |
+| `GET` | `/api/v1/knowledge-graphs/{graphId}/points` | 分页读取知识点 | Query | `KnowledgePointPage` | `200/400/404` |
+| `GET` | `/api/v1/knowledge-graphs/{graphId}/relations` | 分页读取关系 | Query | `KnowledgeRelationPage` | `200/400/404` |
 | `GET` | `/api/v1/knowledge-points/{pointId}` | 读取知识点详情 | - | `KnowledgePoint` | `200/404` |
-| `PATCH` | `/api/v1/knowledge-points/{pointId}` | 人工修正知识点 | `KnowledgePointPatch` | `KnowledgePoint` | `200/409/P1` |
-| `POST` | `/api/v1/assessment-plans` | 生成少题量、依赖感知的全面测试图 | `CreateAssessmentPlanRequest` | `PlanGraph` | `201/422` |
-| `POST` | `/api/v1/learning-plans` | 按上游指定章节生成加权学习图 | `CreateLearningPlanRequest` | `PlanGraph` | `201/422` |
+| `POST` | `/api/v1/assessment-plans` | 生成少题量、依赖感知的全面测试图 | `CreateAssessmentPlanRequest` | `PlanGraph` | `201/400/404/422` |
+| `POST` | `/api/v1/learning-plans` | 按上游指定章节生成加权学习图 | `CreateLearningPlanRequest` | `PlanGraph` | `201/400/404/422` |
 | `GET` | `/api/v1/review-plans/{reviewPlanId}` | 当前用户读取计划摘要与图 | - | `PlanGraph` | `200/404` |
-| `GET` | `/internal/v1/review-plans/{reviewPlanId}/graph` | GalGameService 读取不可变计划图 | `snapshotVersion` Query | `PlanGraph` | `200/403/404/409` |
-| `PUT` | `/internal/v1/review-evidence/{resultId}` | 上游幂等提交学习证据并更新掌握度 | `ReviewEvidenceSubmission` | `MasteryUpdateReceipt` | `200/403/409/422` |
-| `GET` | `/api/v1/mastery-records` | 查询当前用户掌握度 | Query | `MasteryPage` | `200/400` |
+| `GET` | `/internal/v1/review-plans/{reviewPlanId}/graph` | 仅 GalGameService 读取不可变计划图 | `snapshotVersion` Query | `PlanGraph` | `200/400/403/404/409` |
+| `PUT` | `/internal/v1/review-evidence/{resultId}` | 仅 RenderService 幂等提交学习证据并更新掌握度 | `ReviewEvidenceSubmission` | `MasteryUpdateReceipt` | `200/400/403/404/409/422` |
+| `GET` | `/api/v1/mastery-records` | 查询当前用户掌握度 | `MasteryListQuery` | `MasteryPage` | `200/400` |
 
-所有 `/api/v1` 资源均以 Gateway 注入的可信 `userId` 做 owner 校验；调用方传入的同名 JSON 字段或浏览器自造 Header 不得覆盖可信身份。INTERNAL 路由只接受 Gateway 注入的受信服务身份。
+`PATCH /api/v1/knowledge-points/{pointId}` 人工修正属于 **P1（KnowledgeService，
+未实现、未映射、未测试）**，不属于上表当前可执行接口。未来实现前必须冻结
+`KnowledgePointPatch` 的可改字段、DRAFT-only 约束、`expectedUpdatedAt` 并发语义和
+`200/404/409` 状态，再补契约测试；当前客户端不得调用。
+
+所有 `/api/v1` 与 `/internal/v1` 入口都必须先验证 Gateway 为 KnowledgeService 注入的唯一 `X-Gateway-Key`；`/`、`/healthz` 和 `/readyz` 是仅有的运维例外。用户资源随后以 Gateway 注入的可信 `X-User-Id` 做 owner 校验，INTERNAL 路由随后读取受信 `X-Service-Name`；调用方 JSON 字段或浏览器自造 Header 不得覆盖可信身份。
+
+KnowledgeService 构图时以任务中的 `ownerUserId` 调用 `IMaterialTextClient`，并对 FileService 响应执行以下边界校验：
+
+- `materialId` 必须与请求一致，`ownerUserId` 缺失或为空视为 `502 MATERIAL_TEXT_CONTRACT_INVALID`，与构图用户不一致视为 `403 MATERIAL_ACCESS_DENIED`；
+- 文本必须声明 `READY`、UTF-8、NFC、LF，不含 CR、BOM 或 NUL；`textChecksum` 必须等于规范化文本 UTF-8 字节的 SHA-256，`textLength` 必须等于 UTF-16 code unit 数量；
+- `sourceMapVersion` 只能为 `"1"`；`sourceMap` 和 `blocks` 均须非空、区间有序且不重叠，范围在文本内，页码为正数、段落索引非负；块级别若存在须在 1-6，块文本须与原文区间逐字一致，块来源须在 `sourceMap` 中；
+- 提取器给出的知识点 offset 与来源区间重叠时，`SourceRef.location` 依次采用 `sourceLabel`、页码、段落；没有这些标签时才按块类型投影“标题/列表项/表格/代码块/引用/段落”。机器定位始终使用 offset，展示位置不参与幂等；
+- FileService 的 `404/409/422` 分别映射为资料不存在、文本未就绪、提取失败；响应契约损坏为 `502`，超时或不可达为 `503 FILE_SERVICE_UNAVAILABLE`。
+
+KnowledgeService 读取文本时只向 Gateway 发送 `X-Service-Name: KnowledgeService`、对应的 `X-Service-Key` 和原链路 `X-Correlation-Id`，不直连 FileService。它不调用 OCRService，也不读取 `DSAPI` 或 `BitchSDAU`；确定性章节切分、规则抽取和 Neo4j 写入不依赖任何大模型密钥。
 
 ### 6.2 图谱构建与分层数据类型
 
@@ -712,15 +813,21 @@ type ChapterSegmentationMode =
   | "DELIMITER"
   | "FIXED_WINDOW";
 
+interface MasteryListQuery {
+  graphId: Uuid;          // required
+  cursor?: Cursor;
+  limit?: number;         // 1-100，默认 50
+}
+
 interface GraphBuildRequest {
   materialId: Uuid;
   subjectHint?: SubjectCode;
   segmentationMode?: ChapterSegmentationMode; // 默认 AUTO
   delimiter?: string;                          // DELIMITER 模式必填
-  minChapterCharacters?: number;               // 默认 120
-  maxChapterCharacters?: number;               // 默认 60000
-  fixedWindowCharacters?: number;              // 默认 8000
-  extractorVersion?: string;                   // 默认 knowledge-extractor-v1
+  minChapterCharacters?: number;               // 20-20000，默认 120
+  maxChapterCharacters?: number;               // 500-500000，默认 60000，且不小于 min
+  fixedWindowCharacters?: number;              // 500-100000，默认 8000
+  extractorVersion?: string;                   // 默认 knowledge-extractor-v2
 }
 
 type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED";
@@ -760,7 +867,7 @@ interface SourceRef {
   startOffset: number;          // int64；与 ExtractedTextDocument 相同的 UTF-16 code unit offset
   endOffset: number;            // int64；半开区间 [startOffset, endOffset)
   location: string;             // 给人阅读的页码/段落说明，不作为机器定位依据
-  quote: string | null;         // 最多 500 字符的短摘录
+  quote: string | null;         // 最多 240 字符的短摘录
 }
 
 interface Chapter {
@@ -815,14 +922,14 @@ interface KnowledgeRelation {
 
 构建与关系语义：
 
-- `AUTO` 先识别中文“第 X 章/节”、绪论、阿拉伯/罗马数字编号和强标题；显式结构不足时降级为句子/段落边界感知的固定窗口。`HEADING_RULES`、`MARKDOWN`、`DELIMITER` 可由调用方显式选择；`FIXED_WINDOW` 是确定性兜底。该多模式路由只借鉴 ReciteHelper 的“结构化/非结构化资料采用不同分支”思路，未复制其 AGPL-3.0 代码。
+- `AUTO` 先识别中文“第 X 章/节”、绪论、阿拉伯/罗马数字编号和强标题；显式结构不足时降级为句子/段落边界感知的固定窗口。`chapter-segmenter-v2` 还处理 PDF 提取器把整页保留为一行的情况，但只有“第 X 章标题后紧随题型栏”这一强结构成立时才建立内联章节；题型中的知识点只接受每栏从 `1.` 开始连续递增的顶层题号，不把页码、答案内 `(1)` 子项或普通数字当作知识点。`HEADING_RULES`、`MARKDOWN`、`DELIMITER` 可由调用方显式选择；`FIXED_WINDOW` 是确定性兜底。该多模式路由只借鉴 ReciteHelper 的“结构化/非结构化资料采用不同分支”思路，未复制其 AGPL-3.0 代码。
 - 章节必须先于知识点生成。空标题忽略；重复标题通过父章节和 ordinal 区分；过长章节可产生子章节；不得为了窗口长度把一个段落切成两个来源不明的章节。
 - `conceptKey` 在单个图版本内唯一；同一 `materialId` 的后续图版本识别为同一概念时稳定复用。它只用于版本对照和审计；首版不据此继承 mastery。
 - 当 `type="PREREQUISITE"` 时，`fromPointId` 是基础/前置知识点，`toPointId` 是依赖它的上层知识点，即 Neo4j 中 `(from)-[:PREREQUISITE_OF]->(to)`；API 领域类型仍为 `PREREQUISITE`。
 - 确定性规则抽取器只在“较早知识点标题词项被较晚知识点标题或摘要逐字提及”时提出前置边。设除候选知识点自身外共有 `N` 个文本块，其中 `df` 个提及该词项，则 `confidence = 1-(df+1)/(N+2)`；这是 Beta(1,1) 拉普拉斯平滑后的**词项特异度证据**，不是未经标注数据校准的“依赖正确概率”。标题/摘要位置、是否同章和词长不再通过任意系数混入。高频泛化词另由固定停用表排除，候选并列时按 ordinal、pointId 稳定排序，每个知识点最多保留 4 个规则候选；未来只有在独立标注集上完成校准并提升 extractorVersion 后，才可把模型概率写入该字段。
 - PREREQUISITE 子图必须为有向无环图。抽取后若出现强连通分量，构建器按最低 confidence、再按 relationId 稳定排序移除最弱边并将其降级为 `RELATED`，直到 DAG 成立。
 - `RELATED` 和 `CONTRASTS` 在领域语义上无方向；持久化时按 pointId 字典序采用唯一方向，API 不允许同一无向点对重复。
-- 创建任务使用 `(ownerUserId, Idempotency-Key)` 做请求幂等；同一 key 携带不同参数返回 `409 IDEMPOTENCY_KEY_REUSED`。图谱内容另以 `(ownerUserId, materialId, sourceTextChecksum, segmenterVersion, extractorVersion, segmentationMode)` 做指纹去重；相同指纹返回既有 graph，不创建重复版本。文本 checksum 或算法版本变化才创建递增的新图版本。
+- 创建任务使用 `(ownerUserId, Idempotency-Key)` 做请求幂等；`Idempotency-Key` 必须是非空 UUID D 格式，并按小写连字符形式存储。同一 key 携带不同 `materialId`、`subjectHint`、切分参数或抽取器版本时返回 `409 IDEMPOTENCY_KEY_REUSED`。图谱内容另以 `ownerUserId`、`materialId`、`sourceTextChecksum`、segmenter/extractor version、最终 `subjectCode`、实际切分模式，以及请求的 `segmentationMode`、`delimiter`、`minChapterCharacters`、`maxChapterCharacters`、`fixedWindowCharacters` 的长度前缀规范序列计算 SHA-256 指纹；任一语义输入变化都不得错误复用旧图，相同指纹则返回既有 graph 而不创建重复版本。
 
 ### 6.3 测试计划、学习计划与 PlanGraph
 
@@ -970,6 +1077,13 @@ interface AppliedMasteryChange {
   reason: string;
 }
 ```
+
+所有 API 枚举都只接受上表给出的 JSON 字符串 token；整数 token（包括 `0` 和未定义整数）
+返回 `400 VALIDATION_ERROR`。`ReviewEvidenceSubmission` 及每个
+`KnowledgeAnswerEvidence` 列出的字段全部 required：字段缺失或为 null 返回
+`400 REVIEW_EVIDENCE_INVALID`；required 字段均存在后，时长、耗时、提示次数、尝试次数
+或时间关系越界返回 `422 REVIEW_EVIDENCE_INVALID`。INTERNAL PlanGraph 的
+`snapshotVersion` Query 为 required，缺失返回 `400 VALIDATION_ERROR`。
 
 新图版本及首次读取的默认 mastery 固定为：
 
@@ -1223,11 +1337,11 @@ subject to:
 
 ### 6.8 已决策项与算法版本（BASELINE）
 
-- `SubjectCode` 首版不是封闭枚举，必须匹配 `^[A-Z][A-Z0-9_]{0,31}$`；无法可靠分类时使用 `GENERAL`。真实样例允许的首批值至少包括 `GENERAL`、`AGRONOMY` 和 `BOTANY`。
+- `SubjectCode` 首版不是封闭枚举。服务在输入边界执行 `Trim()` 和 invariant 大写规范化，规范化结果必须匹配 `^[A-Z][A-Z0-9_]{0,31}$`；连字符不合法，无法可靠分类时使用 `GENERAL`。所有响应与持久化值均为规范化结果。真实样例允许的首批值至少包括 `GENERAL`、`AGRONOMY` 和 `BOTANY`。
 - API 关系类型固定为 `PREREQUISITE`、`RELATED`、`CONTRASTS`；Neo4j 物理关系分别为 `PREREQUISITE_OF`、`RELATED_TO`、`CONTRASTS_WITH`，章节归属使用 `Chapter-[:HAS_POINT]->KnowledgePoint`。
 - 长度上限：Chapter title 160、KnowledgePoint title 120、summary 4000、tags 最多 20 个且每个 1-40、SourceRef quote 240。超限抽取结果必须拒绝或确定性截断并记录 warning。
-- 首版 `knowledge-extractor-v1` 为确定性规则抽取器，只接收已切分章节文本。未来若接入外部模型，也只能传当前章节、必要父标题和有限相邻上下文，不得发送其他用户资料；输出必须通过结构化 schema、offset、pointId 唯一性和 DAG 校验后才能入库。
-- 算法版本首版冻结为：`chapter-segmenter-v1`、`knowledge-extractor-v1`、`graph-weight-v1`、`assessment-planner-v1`、`learning-planner-v1`、`sm2-graph-v1`、`PlanGraph schema 1.0`。
+- 当前 `knowledge-extractor-v2` 为确定性规则抽取器，只接收已切分章节文本，并增加内联题库条目读取与通用版权页眉清理。未来若接入外部模型，也只能传当前章节、必要父标题和有限相邻上下文，不得发送其他用户资料；输出必须通过结构化 schema、offset、pointId 唯一性和 DAG 校验后才能入库。
+- 当前算法版本冻结为：`chapter-segmenter-v2`、`knowledge-extractor-v2`、`graph-weight-v1`、`assessment-planner-v1`、`learning-planner-v1`、`sm2-graph-v1`、`PlanGraph schema 1.0`。
 - READY 图内容不可变。P1 的 `PATCH /knowledge-points/{pointId}` 只允许修改 DRAFT 图并依赖 `expectedUpdatedAt` 乐观并发；READY/SUPERSEDED 图返回 `409 GRAPH_IMMUTABLE`，修正需构建新版本。READY 仅可在新版本就绪后把生命周期状态迁移为 SUPERSEDED。
 - 所有知识点必须至少有一个可回到 `ExtractedTextDocument` offset 的 `SourceRef`；章节自身保存规范化文本的半开 offset 区间。来源不完整时构建失败，不以模型幻觉补齐。
 - 新图版本不得覆盖旧版本，且 mastery 固定从 0 开始。游戏包使用的内容严格以 `PlanGraph.snapshotVersion` 为边界。
@@ -1650,20 +1764,25 @@ interface WasmAdapter {
 | `/api/v1/knowledge-*`、`/api/v1/assessment-plans`、`/api/v1/learning-plans`、`/api/v1/review-plans`、`/api/v1/mastery-records` | KnowledgeService | Browser | 用户令牌 |
 | `/api/v1/game-*` | GalGameService | Browser / Render | 用户令牌 |
 | `/api/v1/render-runtime`、`/api/v1/review-sessions` | RenderService | Browser | 用户令牌；manifest 可公开缓存 |
-| `/internal/v1/materials/*/extracted-text` | FileService | KnowledgeService | **URGENT（跨服务阻塞项）** 服务身份 |
-| `/internal/v1/review-plans/*/graph`、`/internal/v1/review-evidence/*` | KnowledgeService | GalGameService / RenderService | **URGENT（跨服务阻塞项）** 服务身份 |
+| `/internal/v1/materials/*/extracted-text` | FileService | KnowledgeService | 服务身份；维护适配为 **URGENT（FileService / Gateway）** |
+| `/internal/v1/review-plans/*/graph` | KnowledgeService | GalGameService | **URGENT（跨服务阻塞项）** 精确服务身份 |
+| `/internal/v1/review-evidence/*` | KnowledgeService | RenderService | **URGENT（跨服务阻塞项）** 精确服务身份 |
 | `/internal/v1/*` | 对应服务 | Service only | 服务身份；用户委托身份可选 |
 
-### 9.2 Gateway 行为
+### 9.2 Gateway 行为与信任头
 
-- 丢弃客户端传入的 `X-Service-Name`、`X-User-Id` 等内部身份头。
-- 从已验证令牌重新注入可信用户上下文。
+- 浏览器 `/api` 请求中的 `X-Service-Name`、`X-Service-Key`、`X-User-Id`、`X-Gateway-Key` 全部丢弃。`/internal` 请求只暂留 `X-Service-Name + X-Service-Key` 用于服务身份验证，仍先丢弃外部 `X-User-Id` 与 `X-Gateway-Key`。
+- INTERNAL 服务身份通过逐服务密钥验证后，Gateway 转发时剥离 `Authorization` 与 `X-Service-Key`，重新注入可信 `X-Service-Name` 和目标服务的 `X-Gateway-Key`。用户路由则从已验证令牌重新注入 `X-User-Id`。
+- 每个目标服务使用自己的 `*_SERVICE_KEY`；只有未配置独立密钥时才回退 `GATEWAY_KEY`。KnowledgeService 的入站 `Gateway__ServiceKey` 必须与 Gateway 的 `KNOWLEDGE_SERVICE_KEY` 一致。
+- Gateway 验证 Bearer Token 时调用 AuthService `/internal/v1/auth/introspections`，携带 AuthService 的目标密钥作为 `X-Gateway-Key`，并原样传递或生成 `X-Correlation-Id`。只有规范的 `200` `ApiSuccess<TokenIntrospection>` 响应且 `active=false` 能证明令牌无效并返回 `401`；该成功信封必须含对象 `data`、空对象 `meta` 和非空字符串 `traceId`，非空 `userId/sessionId` 必须是小写 UUID v4，非空 `expiresAt` 必须是完整 ISO 8601 UTC 时间。内省超时、连接失败、任意非 `200`（含密钥错配 `403` 和 `5xx`）、非 JSON、缺字段、信封或字段不合规，以及 `active=true` 但数据形状错误，均统一返回 `503 SERVICE_UNAVAILABLE`，不得把认证基础设施或上游契约故障伪装成令牌无效。
 - 写操作不在 Gateway 层盲目重试。
 - GET 只有在确认幂等且无副作用时才能有限重试。
 - 保持下游 `error.code`，统一响应结构和 `traceId`。
 - 不允许用 HTTP 200 包装业务失败。
 - CORS 只允许明确的前端源。
-- 限流至少区分匿名登录、上传、生成任务和普通读取。
+- 限流至少区分匿名登录、上传、生成任务和普通读取。构图路由中，只有 `POST /api/v1/knowledge-graph-builds` 使用生成任务限流；`GET /api/v1/knowledge-graph-builds/{buildId}` 是普通读取并使用 general 限流，轮询不得消耗 generation 配额。
+- `POST /api/v1/materials` 使用 `UPLOAD_TIMEOUT_MS`，默认 `120000` 毫秒；其他路由使用 `DEFAULT_TIMEOUT_MS`，默认 `30000` 毫秒。上传超时不得隐式套用到所有 FileService 路由。
+- 上传文件本体硬上限为 `10 MiB`。Gateway 和 FileService 的 multipart 整包前置上限均为 `11 MiB`，其中额外 `1 MiB` 只用于 boundary、字段和头部开销；最终仍由 FileService 按 `IFormFile.Length` 拒绝超过 `10 MiB` 的文件。不得把整包与文件本体错误地使用同一个 `10 MiB` 阈值。
 - 不在 Gateway 保存业务状态或访问服务数据库。
 
 ### 9.3 健康检查
@@ -1673,6 +1792,13 @@ interface WasmAdapter {
 | `GET` | `/healthz` | `200 HealthStatus` | Gateway 进程存活 |
 | `GET` | `/readyz` | `200/503 ReadinessStatus` | 路由配置和关键依赖就绪 |
 
+`READINESS_SERVICES` 是逗号分隔的服务 key，默认固定为
+`userService,authService,fileService,knowledgeService`。Gateway 对这些服务的
+`/healthz` 做真实探测；未参与当前闭环的 GalGameService、RenderService 和
+OCRService 不得让 `/readyz` 误报失败。配置中出现未知 key 时 Gateway 必须拒绝启动。
+KnowledgeService 在宿主机的默认目标为 `http://localhost:5080`；集成容器网络内使用
+`http://knowledge-service:8080`。
+
 ### 9.4 前端适配原则
 
 - 页面只依赖 Gateway 路由和公共响应结构。
@@ -1680,6 +1806,32 @@ interface WasmAdapter {
 - 前端不得拼接服务直连地址。
 - 前端不得根据 HTTP 500 的 message 猜测业务状态。
 - 所有稳定分支判断使用 `error.code` 或显式状态字段。
+
+### 9.5 容器化运行基线
+
+当前闭环由根目录 `compose.integration.yaml` 编排。端口和依赖边界固定如下：
+
+| 组件 | 容器监听 / 宿主暴露 | 说明 |
+|---|---|---|
+| Gateway | `5000 / 5000` | 浏览器和服务间调用的唯一入口 |
+| UserService | `5101 / 不暴露` | 集成环境可使用 `MOONSTONE_MODE=Mock` |
+| AuthService | `5102 / 不暴露` | 集成环境可使用 `MOONSTONE_MODE=Mock` |
+| FileService | `5103 / 不暴露` | 使用 MongoDB + GridFS；只由 Gateway 访问 |
+| KnowledgeService | `8080 / 5080` | 使用 Neo4j；宿主机 Gateway 默认目标为 5080 |
+| OCRService | `5110 / 不暴露` | `ocr` profile 的可选内部依赖，本轮闭环不启动 |
+| MongoDB | `27017 / 不暴露` | 只供 FileService |
+| Neo4j | `7687 / 7687`，Browser `7474 / 7474` | 只由 KnowledgeService 写图，Browser 仅供本地诊断 |
+
+容器配置只记录变量名，不在本文或镜像中写真实密钥：
+
+- Gateway 使用 `GATEWAY_KEY`、各服务 `*_SERVICE_KEY`、各服务 `*_SERVICE_URL`、`READINESS_SERVICES`、`DEFAULT_TIMEOUT_MS`、`UPLOAD_TIMEOUT_MS` 和 `CORS_ORIGINS`；
+- FileService 使用 `Gateway__ServiceKey`、`ConnectionStrings__FileDatabase`、`MongoDb__Database`、`InternalAccess__ExtractedTextAllowedServices__0`、`Ocr__BaseUrl`、`Ocr__TimeoutMinutes`；
+- KnowledgeService 使用 `Gateway__ServiceKey`、`GatewayMaterialText__BaseUrl`、`GatewayMaterialText__ServiceName`、`GatewayMaterialText__ServiceKey`、`GatewayMaterialText__Timeout` 以及 `Neo4j__Uri`、`Neo4j__Username`、`Neo4j__Password`、`Neo4j__Database`；
+- AuthService 与 UserService 分别使用自己的 `Gateway__ServiceKey`；集成环境的 Mock 和管理员占位配置不得沿用到生产；
+- `DSAPI`（DeepSeek）和 `BitchSDAU`（阿里 API）不是“注册/登录 -> 上传 -> 确定性文本提取 -> KnowledgeService 构图 -> Neo4j”链路的依赖，不能因为宿主环境已配置就把它们注入或记录到这些容器。
+
+开发默认密钥只用于本地；生产部署必须通过 secret 管理器覆盖，日志、构建参数、
+Compose 文件和接口示例均不得打印真实值。Docker Desktop 的镜像与卷数据位置属于宿主机运维配置，不由业务容器内路径决定。
 
 ## 10. 异步事件
 
@@ -1904,25 +2056,59 @@ tests/
 5. 发现差异时先修改契约与 Mock，再修改双方实现。
 6. 只有重大跨服务变更才写简短 ADR，不增加额外审批链。
 
+### 11.4 当前全流程集成验证范围
+
+本轮集成只验证一条确定性闭环：用户经 Gateway 注册并登录，上传含可直接提取文字的
+资料，FileService 生成规范化文本，KnowledgeService 经 Gateway 读取该文本并在
+Neo4j 构建章节、知识点和依赖图。解析任务请求固定为：
+
+```json
+{
+  "parserVersion": "files-text-v1",
+  "force": false,
+  "enableOcr": false,
+  "ocrMode": "standard"
+}
+```
+
+`ocrMode` 在这里仅验证兼容的数据形状；`enableOcr=false` 才是实际执行约束。
+集成脚本不得启动 OCR profile、调用 `/v1/ocr`、轮询 OCR 逐页进度或把扫描件作为
+成功样例。因此本轮结果无论成功与否，都不能表述为“OCR 已测试”或“OCR 准确率达标”。
+
+闭环通过时还必须核对：FileService 返回的 owner、checksum、UTF-16 offset、
+`sourceMap` 与 `blocks` 通过 KnowledgeService 边界校验；构图任务进入
+`SUCCEEDED`；Neo4j 中章节、知识点和关系端点可读，知识点初始 mastery 为 0，
+每个知识点至少有一个可回到原文的来源位置。注册、内省、上传、纯文本交付和 Gateway
+适配分别属于 AuthService、FileService、Gateway 负责的 **URGENT（跨服务义务）**；
+KnowledgeService 只负责从受信文本开始的校验、构图、计划和掌握度逻辑。
+
+2026-07-31 的当前可执行基线已经按上述范围完成真实 E2E：26,139 个 UTF-16 code
+unit、20 个来源区间和 20 个块通过文本契约校验，`chapter-segmenter-v2` /
+`knowledge-extractor-v2` 构建出 7 章、243 个知识点和 207 条先修关系；API 与
+Neo4j 计数一致，先修子图无环，初始 mastery 全为 0，同请求构图幂等复用及
+`IDEMPOTENCY_KEY_REUSED` 冲突码均通过。逐接口证据、命令、容器状态和未测范围见
+`docs/test_report.md`。该记录只证明本节列出的同步非 OCR 闭环，不把
+GalGameService、RenderService、消息事件或 OCR 的未来契约表述为已经集成。
+
 ## 12. 开工清单
 
 ### 12.1 负责人交付
 
 | 负责人 | 必须确认 | 最小交付物 |
 |---|---|---|
-| `@Sleexy` | 注册边界、令牌策略、文件限制、解析任务；**URGENT** 规范化纯文本与 `MaterialTextReady v1` | User/Auth/File Markdown + Mock |
+| `@Sleexy` | 注册边界、令牌策略、文件限制、OCR 可选解析任务；**URGENT** 规范化纯文本、结构块与 `MaterialTextReady v1` | User/Auth/File Markdown + Mock |
 | `@Arabidopsis` | Neo4j 分层图、章节切分、PlanGraph、hub 权重、SM-2 与结果幂等 | Knowledge Markdown + 图谱/计划 Mock |
 | `@F15EX` | game schema 1.0、生成器版本、场景与选择约束；**URGENT** PlanGraph 读取与 question 绑定 | 黄金包、错误包和校验器 |
 | `@Zopiclone` | WASM ABI、RuntimeState、会话状态和结果幂等；**URGENT** `ReviewCompleted v2` 证据 | WASM 接口说明 + 状态 Mock |
-| `@甲烷` | Gateway 路由、鉴权、CORS、超时和 JS Adapter | 路由表、API Client 和错误映射 |
+| `@甲烷` | **URGENT** Gateway 信任头、动态内省、Knowledge/File 路由、CORS、超时和 JS Adapter | 路由表、API Client 和错误映射 |
 
 ### 12.2 M0 开放项与已决策基线
 
 | 项目 | 建议默认值或当前决策 | 拍板人 |
 |---|---|---|
-| Access Token 使用 JWT 还是内省 | 首版 JWT，由 Gateway 本地验签 | `@Sleexy + @甲烷` |
+| Access Token 使用 JWT 还是内省 | 首版使用 AuthService INTERNAL 动态内省；Gateway 不本地猜测令牌状态 | `@Sleexy + @甲烷` |
 | 注册时 Auth 与 User 的一致性 | Auth 经 Gateway INTERNAL 同步创建 UserProfile | `@Sleexy` |
-| 首批文件格式和大小 | PDF + DOCX；大小以真实样例压测为准 | `@Sleexy` |
+| 首批文件格式和大小 | 10 MiB；PDF/DOCX/Markdown/HTML 使用专用解析器，未知扩展名且为 `text/*` 或 `application/octet-stream` 时按 UTF-8 文本兜底；图片和扫描 PDF 仅在显式启用 OCR 时解析 | `@Sleexy` |
 | **URGENT** FileService 纯文本交付 | 已按 5.2.1 与 `MaterialTextReady v1` 冻结 | `@Sleexy` |
 | Knowledge 图谱、关系与算法版本 | 已按 6.0-6.8 冻结，不再是 OWNER-TBD | `@Arabidopsis` |
 | 游戏包 schema 1.0 | 本文为字段下限，黄金包冻结 | `@F15EX + @Zopiclone` |
@@ -1939,8 +2125,9 @@ tests/
 - [ ] GalGameService 与 RenderService 共同通过黄金游戏包；
 - [ ] JS Adapter 可使用 Mock 完成 WASM 初始化、加载、游玩、保存和结果提交；
 - [ ] Gateway 路由表、鉴权方式和统一错误响应完成确认；
-- [ ] 所有服务确认不进行服务间直连。
-- [ ] **URGENT** FileService 可返回符合 5.2.1 的纯文本并发布 `MaterialTextReady v1`；
+- [ ] 所有领域服务确认只经 Gateway 调用；仅保留 FileService 到内部 OCR 执行依赖这一受限例外。
+- [ ] **URGENT** FileService 可返回符合 5.2.1 的纯文本与结构块；
+- [ ] **URGENT** FileService 可发布 `MaterialTextReady v1`；同步 HTTP 可用不得冒充事件生产已完成；
 - [ ] KnowledgeService 可从同一文本稳定构建章节 DAG，并生成不可变 ASSESSMENT/LEARNING PlanGraph；
 - [ ] **URGENT** GalGameService 可按 snapshot 读取 PlanGraph，RenderService 可提交 `ReviewCompleted v2`，重复结果只更新一次 mastery。
 

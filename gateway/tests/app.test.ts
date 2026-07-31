@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import request from 'supertest';
-import { createApp } from '../src/app.js';
+import {
+  createApp,
+  MAX_UPLOAD_BYTES,
+  MAX_UPLOAD_REQUEST_BYTES,
+  MULTIPART_OVERHEAD_BYTES,
+} from '../src/app.js';
 import type { GatewayConfig } from '../src/config.js';
 
 const mockConfig: GatewayConfig = {
@@ -64,6 +69,25 @@ describe('Gateway App 集成测试', () => {
       expect(res.body.error.details.unhealthy).toBeDefined();
     });
 
+    it('GET /readyz 只应探测配置的核心服务', async () => {
+      const coreOnlyApp = createApp({
+        ...mockConfig,
+        readinessServices: ['authService', 'knowledgeService'],
+      });
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response('{}', { status: 200 }),
+      );
+
+      const res = await request(coreOnlyApp).get('/readyz');
+
+      expect(res.status).toBe(200);
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(fetchSpy.mock.calls.map(([url]) => String(url))).toEqual([
+        'http://localhost:19902/healthz',
+        'http://localhost:19904/healthz',
+      ]);
+    });
+
     it('健康检查应保留自定义 X-Correlation-Id', async () => {
       const res = await request(app)
         .get('/healthz')
@@ -96,22 +120,30 @@ describe('Gateway App 集成测试', () => {
       expect(res.status).toBe(503);
     });
 
-    it('上传路由 Content-Length 超过 100MB 应返回 413', async () => {
+    it('上传路由的总请求上限应为 10MiB 文件加 1MiB multipart 开销', () => {
+      expect(MAX_UPLOAD_BYTES).toBe(10 * MB);
+      expect(MULTIPART_OVERHEAD_BYTES).toBe(1 * MB);
+      expect(MAX_UPLOAD_REQUEST_BYTES).toBe(11 * MB);
+    });
+
+    it('上传路由 Content-Length 超过有限 multipart 总上限应返回 413', async () => {
       const res = await request(app)
         .post('/api/v1/materials')
-        .set('Content-Type', 'application/octet-stream')
-        .set('Content-Length', String(150 * MB));
+        .set('Content-Type', 'multipart/form-data; boundary=test-boundary')
+        .set('Content-Length', String(MAX_UPLOAD_REQUEST_BYTES + 1));
       expect(res.status).toBe(413);
       expect(res.body.error.code).toBe('FILE_TOO_LARGE');
     });
 
-    it('上传路由 Content-Length 在 10MB-100MB 之间应通过大小检查', async () => {
+    it('上传路由应允许文件上限之外的受控 multipart 开销', async () => {
+      vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('ECONNREFUSED'));
+
       const res = await request(app)
         .post('/api/v1/materials')
-        .set('Content-Type', 'application/octet-stream')
+        .set('Content-Type', 'multipart/form-data; boundary=test-boundary')
         .set('Authorization', 'Bearer valid-token')
-        .set('Content-Length', String(9 * MB));
-      // 通过体检查 → 鉴权（但未 mock introspection → 503 unreachable）
+        .set('Content-Length', String(MAX_UPLOAD_BYTES + 1));
+      // 通过体检查 → 鉴权；mock 的 AuthService 连接故障稳定返回 503。
       expect(res.status).toBe(503);
     });
 
@@ -144,12 +176,14 @@ describe('Gateway App 集成测试', () => {
       expect(res.status).toBe(503);
     });
 
-    it('Content-Length 刚好等于上传限制 100MB 时应通过', async () => {
+    it('Content-Length 刚好等于 multipart 总上限时应通过', async () => {
+      vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('ECONNREFUSED'));
+
       const res = await request(app)
         .post('/api/v1/materials')
-        .set('Content-Type', 'application/octet-stream')
+        .set('Content-Type', 'multipart/form-data; boundary=test-boundary')
         .set('Authorization', 'Bearer valid-token')
-        .set('Content-Length', String(10 * MB));
+        .set('Content-Length', String(MAX_UPLOAD_REQUEST_BYTES));
       // 刚好等于限制不触发错误 → 被鉴权或代理处理
       expect(res.status).toBe(503);
     });

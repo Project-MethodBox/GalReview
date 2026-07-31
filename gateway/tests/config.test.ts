@@ -14,7 +14,8 @@ describe('loadConfig', () => {
     for (const key of Object.keys(process.env)) {
       if (key.startsWith('GATEWAY_') || key.startsWith('CORS_') || key.startsWith('RL_') ||
           key.endsWith('_SERVICE_URL') || key.endsWith('_SERVICE_KEY') ||
-          key === 'DEFAULT_TIMEOUT_MS' || key === 'UPLOAD_TIMEOUT_MS') {
+          key === 'DEFAULT_TIMEOUT_MS' || key === 'UPLOAD_TIMEOUT_MS' ||
+          key === 'READINESS_SERVICES') {
         delete process.env[key];
       }
     }
@@ -28,9 +29,15 @@ describe('loadConfig', () => {
     expect(cfg.services.userService.url).toBe('http://localhost:5101');
     expect(cfg.services.authService.url).toBe('http://localhost:5102');
     expect(cfg.services.fileService.url).toBe('http://localhost:5103');
-    expect(cfg.services.knowledgeService.url).toBe('http://localhost:5104');
+    expect(cfg.services.knowledgeService.url).toBe('http://localhost:5080');
     expect(cfg.services.galGameService.url).toBe('http://localhost:5105');
     expect(cfg.services.renderService.url).toBe('http://localhost:5106');
+    expect(cfg.readinessServices).toEqual([
+      'userService',
+      'authService',
+      'fileService',
+      'knowledgeService',
+    ]);
     // 每服务 key 回退到全局 gatewayKey
     expect(cfg.services.userService.serviceKey).toBe(cfg.gatewayKey);
   });
@@ -109,6 +116,19 @@ describe('loadConfig', () => {
     expect(cfg.rateLimit.upload.max).toBe(5);
     expect(cfg.rateLimit.generation.max).toBe(3);
     expect(cfg.rateLimit.general.max).toBe(200);
+  });
+
+  it('应读取核心就绪服务列表并拒绝未知服务 key', () => {
+    process.env.READINESS_SERVICES = ' authService, knowledgeService ';
+    expect(loadConfig().readinessServices).toEqual([
+      'authService',
+      'knowledgeService',
+    ]);
+
+    process.env.READINESS_SERVICES = 'authService,unknownService';
+    expect(() => loadConfig()).toThrow(
+      'READINESS_SERVICES contains unknown service keys: unknownService',
+    );
   });
 
   it('服务名应正确映射', () => {

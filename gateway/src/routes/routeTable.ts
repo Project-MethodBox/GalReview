@@ -128,7 +128,6 @@ export const ROUTE_TABLE: RouteEntry[] = [
     service: 'fileService',
     auth: 'user',
     rateLimitCategory: 'upload',
-    timeoutMs: 120_000,
     methods: ['POST'],  // 仅上传需 upload 限流和长超时
   },
   {
@@ -149,6 +148,13 @@ export const ROUTE_TABLE: RouteEntry[] = [
     service: 'knowledgeService',
     auth: 'user',
     rateLimitCategory: 'generation',
+    methods: ['POST'],
+  },
+  {
+    path: '/api/v1/knowledge-graph-builds',
+    service: 'knowledgeService',
+    auth: 'user',
+    rateLimitCategory: 'general',
   },
   {
     path: '/api/v1/knowledge-graphs',

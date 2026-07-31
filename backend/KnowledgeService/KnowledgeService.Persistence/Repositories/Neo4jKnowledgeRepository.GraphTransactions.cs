@@ -1,5 +1,6 @@
 using KnowledgeService.Domain.Builds;
 using KnowledgeService.Domain.Graphs;
+using KnowledgeService.Domain.Segmentation;
 using KnowledgeService.Persistence.Mapping;
 using Neo4j.Driver;
 
@@ -55,6 +56,7 @@ public sealed partial class Neo4jKnowledgeRepository
         ClaimFingerprintAsync(
             IAsyncQueryRunner transaction,
             KnowledgeGraph graph,
+            SegmentationOptions requestedSegmentation,
             string fingerprintKey,
             string creationToken)
     {
@@ -70,7 +72,18 @@ public sealed partial class Neo4jKnowledgeRepository
                 fingerprint.textChecksum = $textChecksum,
                 fingerprint.segmenterVersion = $segmenterVersion,
                 fingerprint.extractorVersion = $extractorVersion,
+                fingerprint.subjectCode = $subjectCode,
                 fingerprint.segmentationMode = $segmentationMode,
+                fingerprint.requestedSegmentationMode =
+                    $requestedSegmentationMode,
+                fingerprint.segmentationDelimiter =
+                    $segmentationDelimiter,
+                fingerprint.minChapterCharacters =
+                    $minChapterCharacters,
+                fingerprint.maxChapterCharacters =
+                    $maxChapterCharacters,
+                fingerprint.fixedWindowCharacters =
+                    $fixedWindowCharacters,
                 fingerprint.__creationToken = $creationToken
             WITH fingerprint,
                  coalesce(
@@ -88,7 +101,17 @@ public sealed partial class Neo4jKnowledgeRepository
                 textChecksum = graph.TextChecksum,
                 segmenterVersion = graph.SegmenterVersion,
                 extractorVersion = graph.ExtractorVersion,
+                subjectCode = graph.SubjectCode,
                 segmentationMode = graph.SegmentationMode.ToString(),
+                requestedSegmentationMode =
+                    requestedSegmentation.Mode.ToString(),
+                segmentationDelimiter = requestedSegmentation.Delimiter,
+                minChapterCharacters =
+                    requestedSegmentation.MinChapterCharacters,
+                maxChapterCharacters =
+                    requestedSegmentation.MaxChapterCharacters,
+                fixedWindowCharacters =
+                    requestedSegmentation.FixedWindowCharacters,
                 creationToken
             });
         var record = await cursor.SingleAsync();

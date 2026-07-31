@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using KnowledgeService.Application.Exceptions;
 using KnowledgeService.Application.Persistence;
 using KnowledgeService.Application.Time;
@@ -26,11 +25,10 @@ public sealed partial class CreateGraphBuildCommandHandler
         CreateGraphBuildCommand request,
         CancellationToken cancellationToken)
     {
-        Validate(request);
+        var subject = SubjectCodePolicy.NormalizeOptional(
+            request.SubjectHint);
+        var idempotencyKey = ValidateAndNormalize(request, subject);
         var now = _clock.UtcNow;
-        var subject = string.IsNullOrWhiteSpace(request.SubjectHint)
-            ? null
-            : request.SubjectHint.Trim().ToUpperInvariant();
         var extractorVersion = string.IsNullOrWhiteSpace(request.ExtractorVersion)
             ? KnowledgeAlgorithmVersions.Extractor
             : request.ExtractorVersion.Trim();
@@ -45,7 +43,7 @@ public sealed partial class CreateGraphBuildCommandHandler
             subject,
             request.Segmentation,
             extractorVersion,
-            request.IdempotencyKey.Trim(),
+            idempotencyKey,
             null,
             null,
             now,
@@ -70,26 +68,40 @@ public sealed partial class CreateGraphBuildCommandHandler
         return new GraphBuildJobCreation(result.Job, result.Created);
     }
 
-    private static void Validate(CreateGraphBuildCommand request)
+    private static string ValidateAndNormalize(
+        CreateGraphBuildCommand request,
+        string? normalizedSubject)
     {
         if (request.MaterialId == Guid.Empty ||
             request.OwnerUserId == Guid.Empty ||
             string.IsNullOrWhiteSpace(request.IdempotencyKey) ||
-            request.IdempotencyKey.Trim().Length is < 8 or > 128)
+            !Guid.TryParseExact(
+                request.IdempotencyKey.Trim(),
+                "D",
+                out var parsedIdempotencyKey) ||
+            parsedIdempotencyKey == Guid.Empty)
         {
             throw new KnowledgeServiceException(
                 400,
                 "GRAPH_BUILD_REQUEST_INVALID",
-                "materialId、用户身份或 Idempotency-Key 无效。");
+                "materialId、用户身份无效，或 Idempotency-Key 不是非空 UUID D 格式。");
         }
 
-        if (!string.IsNullOrWhiteSpace(request.SubjectHint) &&
-            !SubjectCodeRegex().IsMatch(request.SubjectHint.Trim()))
+        if (normalizedSubject is not null &&
+            !SubjectCodePolicy.IsValid(normalizedSubject))
         {
             throw new KnowledgeServiceException(
                 400,
                 "SUBJECT_CODE_INVALID",
-                "subjectHint 必须为 1-32 位字母开头的大写字母、数字、下划线或连字符。");
+                "subjectHint 规范化后必须为 1-32 位大写字母开头的字母、数字或下划线。");
+        }
+
+        if (!Enum.IsDefined(request.Segmentation.Mode))
+        {
+            throw new KnowledgeServiceException(
+                400,
+                "SEGMENTATION_MODE_INVALID",
+                "segmentationMode 不是受支持的契约枚举值。");
         }
 
         if (!string.IsNullOrWhiteSpace(request.ExtractorVersion) &&
@@ -103,10 +115,7 @@ public sealed partial class CreateGraphBuildCommandHandler
                 "EXTRACTOR_VERSION_UNSUPPORTED",
                 $"当前只支持 {KnowledgeAlgorithmVersions.Extractor}。");
         }
-    }
 
-    [GeneratedRegex(
-        @"^[A-Za-z][A-Za-z0-9_-]{0,31}$",
-        RegexOptions.CultureInvariant)]
-    private static partial Regex SubjectCodeRegex();
+        return parsedIdempotencyKey.ToString("D");
+    }
 }

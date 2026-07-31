@@ -1,29 +1,11 @@
-using System.Security.Cryptography;
-using System.Text;
-using System.Text.RegularExpressions;
 using KnowledgeService.Application.Exceptions;
+using KnowledgeService.Domain.Common;
 using KnowledgeService.Domain.Graphs;
-using KnowledgeService.Persistence.Mapping;
 
 namespace KnowledgeService.Persistence.Repositories;
 
 public sealed partial class Neo4jKnowledgeRepository
 {
-    private static string CreateGraphFingerprint(KnowledgeGraph graph)
-    {
-        var canonical = string.Join(
-            "\u001f",
-            Neo4jParameterMapper.Id(graph.OwnerUserId),
-            Neo4jParameterMapper.Id(graph.MaterialId),
-            graph.TextChecksum.ToUpperInvariant(),
-            graph.SegmenterVersion,
-            graph.ExtractorVersion,
-            graph.SegmentationMode.ToString());
-        return Convert.ToHexString(
-                SHA256.HashData(Encoding.UTF8.GetBytes(canonical)))
-            .ToLowerInvariant();
-    }
-
     private static void ValidateGraph(KnowledgeGraph graph)
     {
         var chapterIds = graph.Chapters
@@ -60,7 +42,7 @@ public sealed partial class Neo4jKnowledgeRepository
             graph.MaterialId == Guid.Empty ||
             graph.Status != KnowledgeGraphStatus.Ready ||
             !IsSha256(graph.TextChecksum) ||
-            !IsSubjectCode(graph.SubjectCode) ||
+            !SubjectCodePolicy.IsValid(graph.SubjectCode) ||
             graph.Chapters.Count == 0 ||
             graph.Points.Count == 0 ||
             chapterIds.Count != graph.Chapters.Count ||
@@ -96,7 +78,7 @@ public sealed partial class Neo4jKnowledgeRepository
                 point.Title.Length > 120 ||
                 string.IsNullOrWhiteSpace(point.Summary) ||
                 point.Summary.Length > 4_000 ||
-                !IsSubjectCode(point.SubjectCode) ||
+                !SubjectCodePolicy.IsValid(point.SubjectCode) ||
                 point.Tags.Count is < 1 or > 20 ||
                 point.Tags.Any(tag =>
                     string.IsNullOrWhiteSpace(tag) ||
@@ -169,12 +151,6 @@ public sealed partial class Neo4jKnowledgeRepository
 
         return visited != graph.Chapters.Count;
     }
-
-    private static bool IsSubjectCode(string value) =>
-        Regex.IsMatch(
-            value,
-            "^[A-Z][A-Z0-9_-]{0,31}$",
-            RegexOptions.CultureInvariant);
 
     private static bool IsSha256(string value) =>
         value.Length == 64 &&

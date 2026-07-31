@@ -1,4 +1,3 @@
-using KnowledgeService.Application.Exceptions;
 using KnowledgeService.Domain.Builds;
 using KnowledgeService.Persistence.Mapping;
 using Neo4j.Driver;
@@ -46,18 +45,6 @@ public sealed partial class Neo4jKnowledgeRepository
                 Job: Neo4jDomainMapper.BuildJob(record["job"].As<INode>()),
                 Created: record["created"].As<bool>());
         });
-
-        if (!result.Created && !HasSameBuildRequest(result.Job, job))
-        {
-            throw Conflict(
-                "BUILD_IDEMPOTENCY_CONFLICT",
-                "同一用户的构建幂等键已用于不同的构建请求。",
-                new Dictionary<string, object?>
-                {
-                    ["existingBuildId"] = result.Job.BuildId,
-                    ["idempotencyKey"] = job.IdempotencyKey
-                });
-        }
 
         return result;
     }
@@ -139,18 +126,4 @@ public sealed partial class Neo4jKnowledgeRepository
         }
     }
 
-    private static bool HasSameBuildRequest(
-        GraphBuildJob existing,
-        GraphBuildJob requested) =>
-        existing.OwnerUserId == requested.OwnerUserId &&
-        existing.MaterialId == requested.MaterialId &&
-        string.Equals(
-            existing.SubjectHint,
-            requested.SubjectHint,
-            StringComparison.Ordinal) &&
-        existing.Segmentation == requested.Segmentation &&
-        string.Equals(
-            existing.ExtractorVersion,
-            requested.ExtractorVersion,
-            StringComparison.Ordinal);
 }

@@ -95,7 +95,8 @@ internal static class ReviewPlanEndpoints
                 ISender sender,
                 CancellationToken cancellationToken) =>
             {
-                _ = RequestIdentity.RequireServiceName(context);
+                _ = InternalServiceAccessPolicy.RequirePlanGraphReader(
+                    context);
                 var plan = await sender.Send(
                     new GetReviewPlanQuery(reviewPlanId, null),
                     cancellationToken);
@@ -124,13 +125,14 @@ internal static class ReviewPlanEndpoints
                 ISender sender,
                 CancellationToken cancellationToken) =>
             {
-                _ = RequestIdentity.RequireServiceName(context);
+                _ = InternalServiceAccessPolicy.RequireEvidenceWriter(
+                    context);
                 var submission = ReviewEvidenceMapper.Map(
                     resultId,
                     request);
                 var receipt = await sender.Send(
                     new SubmitReviewResultCommand(
-                        request.ReviewPlanId,
+                        submission.ReviewPlanId,
                         submission),
                     cancellationToken);
                 return ApiResults.Success(

@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using System.Security.Cryptography;
+using System.Text.Json;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Identity;
@@ -7,6 +8,10 @@ using Microsoft.AspNetCore.Mvc;
 using MySqlConnector;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+builder.Services.Configure<Microsoft.AspNetCore.Routing.RouteHandlerOptions>(
+    options => options.ThrowOnBadRequest = true);
 var isMockMode = string.Equals(Environment.GetEnvironmentVariable("MOONSTONE_MODE"), "Mock", StringComparison.OrdinalIgnoreCase);
 var connectionString = builder.Configuration.GetConnectionString("AuthDatabase");
 if (!isMockMode && string.IsNullOrWhiteSpace(connectionString))
@@ -36,6 +41,17 @@ else
 builder.Services.AddHttpClient("gateway", client => client.BaseAddress = new Uri(gatewayBaseUrl));
 builder.Services.AddRateLimiter(options =>
 {
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (context, cancellationToken) =>
+    {
+        context.HttpContext.Response.ContentType = "application/json";
+        await context.HttpContext.Response.WriteAsJsonAsync(
+            ApiFailure.Create(
+                "RATE_LIMITED",
+                "请求过于频繁，请稍后重试",
+                context.HttpContext.TraceIdentifier),
+            cancellationToken);
+    };
     options.AddPolicy("password-reset-confirmation", context =>
         RateLimitPartition.GetFixedWindowLimiter(
             context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
@@ -60,6 +76,22 @@ app.Use(async (context, next) =>
 app.UseExceptionHandler(error => error.Run(context =>
 {
     var exception = context.Features.Get<IExceptionHandlerFeature>()?.Error;
+    if (exception is UpstreamContractException)
+    {
+        context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("AuthService")
+            .LogError(exception, "UserService returned an invalid response contract. CorrelationId: {CorrelationId}; Path: {Path}", context.TraceIdentifier, context.Request.Path);
+        return Results.Json(
+            ApiFailure.Create("UPSTREAM_CONTRACT_INVALID", "用户资料服务响应不符合契约", context.TraceIdentifier),
+            statusCode: StatusCodes.Status502BadGateway).ExecuteAsync(context);
+    }
+    if (exception is BadHttpRequestException or System.Text.Json.JsonException)
+    {
+        context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("AuthService")
+            .LogWarning(exception, "Invalid AuthService request. CorrelationId: {CorrelationId}; Path: {Path}", context.TraceIdentifier, context.Request.Path);
+        return Results.Json(
+            ApiFailure.Create("VALIDATION_ERROR", "请求 JSON、参数或字段格式错误", context.TraceIdentifier),
+            statusCode: StatusCodes.Status400BadRequest).ExecuteAsync(context);
+    }
     context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("AuthService")
         .LogError(exception, "Unhandled AuthService error. CorrelationId: {CorrelationId}; Path: {Path}", context.TraceIdentifier, context.Request.Path);
     object details = isDevelopment ? new { exception = exception?.GetType().Name, message = exception?.Message } : new { };
@@ -118,9 +150,10 @@ app.MapPost("/api/v1/auth/sessions", (LoginRequest request, HttpContext c, IAuth
 });
 app.MapPost("/api/v1/admin/sessions", (AdminLoginRequest request, HttpContext c, IAuthRepository repository) =>
 {
-    if (!FixedTimeEquals(request.Username.Trim(), adminUsername) || !FixedTimeEquals(request.Password, adminPassword))
+    if (!FixedTimeEquals(request.Username?.Trim() ?? string.Empty, adminUsername) ||
+        !FixedTimeEquals(request.Password ?? string.Empty, adminPassword))
         return Failure(c, 401, "AUTH_REQUIRED", "管理员账号或密码错误");
-    var session = repository.CreateSession("00000000-0000-0000-0000-000000000001", "MoonStone admin");
+    var session = repository.CreateSession(AdminIdentity.UserId, "MoonStone admin");
     return Results.Created($"/api/v1/auth/sessions/{session.SessionId}", ApiSuccess.Create(session.ToResponse(), c.TraceIdentifier));
 });
 app.MapGet("/api/v1/admin/users", async (HttpContext c, IAdminRepository admin, IHttpClientFactory clients) =>
@@ -169,11 +202,12 @@ app.MapPost("/api/v1/auth/password-changes", (PasswordChangeRequest request, Htt
 {
     var userId = GetGatewayUser(c, gatewayKey);
     if (userId is null) return Failure(c, 401, "AUTH_REQUIRED", "登录状态已失效");
+    if (string.IsNullOrWhiteSpace(request.CurrentPassword)) return Failure(c, 400, "VALIDATION_ERROR", "请输入当前密码");
     if (!ValidPassword(request.NewPassword)) return Failure(c, 400, "VALIDATION_ERROR", "新密码至少需要 8 个字符");
     var credential = repository.FindCredentialById(userId);
     if (credential is null) return Failure(c, 404, "RESOURCE_NOT_FOUND", "用户不存在");
     if (!PasswordMatches(hasher, credential, request.CurrentPassword)) return Failure(c, 401, "AUTH_REQUIRED", "当前密码错误");
-    repository.UpdatePassword(credential with { PasswordHash = hasher.HashPassword(credential, request.NewPassword) });
+    repository.UpdatePassword(credential with { PasswordHash = hasher.HashPassword(credential, request.NewPassword!) });
     repository.RevokeAllSessions(userId);
     return Results.NoContent();
 });
@@ -227,7 +261,12 @@ app.MapDelete("/api/v1/auth/sessions/{sessionId}", (string sessionId, HttpContex
 });
 app.MapPost("/api/v1/auth/tokens", (RefreshTokenRequest request, HttpContext c, IAuthRepository repository) =>
 {
-    var session = repository.Rotate(request.RefreshToken); return session is null ? Failure(c, 401, "AUTH_REQUIRED", "刷新令牌无效") : Results.Created("/api/v1/auth/tokens", ApiSuccess.Create(session.ToTokenPair(), c.TraceIdentifier));
+    var session = string.IsNullOrWhiteSpace(request.RefreshToken)
+        ? null
+        : repository.Rotate(request.RefreshToken);
+    return session is null
+        ? Failure(c, 401, "AUTH_REQUIRED", "刷新令牌无效")
+        : Results.Created("/api/v1/auth/tokens", ApiSuccess.Create(session.ToTokenPair(), c.TraceIdentifier));
 });
 app.MapPost("/api/v1/auth/password-reset-requests", async (PasswordResetRequest request, HttpContext c, IAuthRepository repository, PasswordResetEmailSender emailSender) =>
 {
@@ -242,13 +281,19 @@ app.MapPost("/api/v1/auth/password-reset-requests", async (PasswordResetRequest 
 app.MapPost("/api/v1/auth/password-resets", (PasswordResetConfirmation request, HttpContext c, IAuthRepository repository, IPasswordHasher<Credential> hasher) =>
 {
     if (!ValidPassword(request.NewPassword)) return Failure(c, 422, "BUSINESS_RULE_VIOLATION", "新密码不符合安全要求");
-    var credential = repository.ConsumePasswordReset(request.ResetToken); if (credential is null) return Failure(c, 422, "BUSINESS_RULE_VIOLATION", "重置令牌无效或已过期");
-    repository.UpdatePassword(credential with { PasswordHash = hasher.HashPassword(credential, request.NewPassword) }); repository.RevokeAllSessions(credential.UserId); return Results.NoContent();
+    if (string.IsNullOrWhiteSpace(request.ResetToken)) return Failure(c, 422, "BUSINESS_RULE_VIOLATION", "重置令牌无效或已过期");
+    var credential = repository.ConsumePasswordReset(request.ResetToken);
+    if (credential is null) return Failure(c, 422, "BUSINESS_RULE_VIOLATION", "重置令牌无效或已过期");
+    repository.UpdatePassword(credential with { PasswordHash = hasher.HashPassword(credential, request.NewPassword!) });
+    repository.RevokeAllSessions(credential.UserId);
+    return Results.NoContent();
 }).RequireRateLimiting("password-reset-confirmation");
 app.MapPost("/internal/v1/auth/introspections", (TokenIntrospectionRequest request, HttpContext c, IAuthRepository repository) =>
 {
     if (!IsGateway(c, gatewayKey)) return Failure(c, 403, "FORBIDDEN", "仅允许 Gateway 调用令牌内省接口");
-    var session = repository.TouchAccessToken(request.Token);
+    var session = string.IsNullOrWhiteSpace(request.Token)
+        ? null
+        : repository.TouchAccessToken(request.Token);
     var result = session is not null
         ? new TokenIntrospection(true, session.UserId, session.SessionId, ["user"], session.AccessExpiresAt)
         : new TokenIntrospection(false, null, null, [], null);
@@ -271,8 +316,10 @@ static async Task<Dictionary<string, string>?> LookupProfileDisplayNamesAsync(Ht
     {
         using var response = await client.SendAsync(request, cancellation);
         if (!response.IsSuccessStatusCode) return null;
-        var envelope = await response.Content.ReadFromJsonAsync<ApiEnvelope<AdminProfileSummary[]>>(cancellationToken: cancellation);
-        return envelope?.Data?.ToDictionary(profile => profile.UserId, profile => profile.DisplayName, StringComparer.Ordinal) ?? new Dictionary<string, string>(StringComparer.Ordinal);
+        return await AdminProfileLookupContract.ReadAsync(
+            response.Content,
+            userIds,
+            cancellation);
     }
     catch (HttpRequestException) { return null; }
 }
@@ -315,21 +362,24 @@ static bool FixedTimeEquals(string left, string right)
     rightBytes.CopyTo(paddedRight, 0);
     return CryptographicOperations.FixedTimeEquals(paddedLeft, paddedRight) && leftBytes.Length == rightBytes.Length;
 }
-static bool IsAdmin(HttpContext c, string key) => GetGatewayUser(c, key) == "00000000-0000-0000-0000-000000000001";
+static bool IsAdmin(HttpContext c, string key) => GetGatewayUser(c, key) == AdminIdentity.UserId;
 
 public sealed record RegistrationRequest(string Email, string Password, string DisplayName, string InvitationCode, string? DeviceName);
 public sealed record LoginRequest(string Email, string Password, string? DeviceName);
-public sealed record AdminLoginRequest(string Username, string Password);
+public sealed record AdminLoginRequest(string? Username, string? Password);
 public sealed record AdminResetPasswordRequest(string NewPassword);
-public sealed record PasswordChangeRequest(string CurrentPassword, string NewPassword);
+public sealed record PasswordChangeRequest(string? CurrentPassword, string? NewPassword);
 public sealed record AccountDeletionRequest(string CurrentPassword);
 public sealed record CreateInvitationRequest(string Type, int? MaxUses, DateTimeOffset? ValidFrom, DateTimeOffset? ValidTo);
 public sealed record AdminUser(string Id, string Email, string DisplayName, bool IsActive);
 public sealed record AdminInvitation(string Code, string Type, int MaxUses, int UsedCount, DateTimeOffset? ValidFrom, DateTimeOffset? ValidTo, DateTimeOffset CreatedAt);
 public sealed record AdminAccount(string Id, string Email);
 public sealed record AdminProfileSummary(string UserId, string DisplayName);
-public sealed record ApiEnvelope<T>(T Data);
-public sealed record RefreshTokenRequest(string RefreshToken); public sealed record PasswordResetRequest(string Email); public sealed record PasswordResetConfirmation(string ResetToken, string NewPassword); public sealed record TokenIntrospectionRequest(string Token);
+public sealed record ApiEnvelope<T>(
+    T? Data,
+    JsonElement Meta,
+    string? TraceId);
+public sealed record RefreshTokenRequest(string? RefreshToken); public sealed record PasswordResetRequest(string Email); public sealed record PasswordResetConfirmation(string? ResetToken, string? NewPassword); public sealed record TokenIntrospectionRequest(string? Token);
 public sealed record AuthSession(string SessionId, string UserId, string Status, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt);
 public sealed record TokenPair(string AccessToken, string RefreshToken, string TokenType, int ExpiresInSeconds);
 public sealed record AuthSessionResponse(AuthSession Session, TokenPair Tokens);
@@ -434,7 +484,7 @@ public sealed class MySqlAuthRepository(AuthDatabase database) : IAuthRepository
     public Credential? FindCredential(string email) { using var c=database.OpenConnection();using var q=c.CreateCommand();q.CommandText="SELECT CAST(user_id AS CHAR),email,password_hash FROM auth_credentials WHERE email=@email;";q.Parameters.AddWithValue("@email",email);using var r=q.ExecuteReader();return r.Read()?new Credential(DbText(r.GetValue(0)),r.GetString(1),r.GetString(2)):null; }
     public Credential? FindCredentialById(string userId) { using var c=database.OpenConnection();using var q=c.CreateCommand();q.CommandText="SELECT CAST(user_id AS CHAR),email,password_hash FROM auth_credentials WHERE user_id=@id;";q.Parameters.AddWithValue("@id",userId);using var r=q.ExecuteReader();return r.Read()?new Credential(DbText(r.GetValue(0)),r.GetString(1),r.GetString(2)):null; }
     public StoredSession CreateSession(string userId,string? deviceName) { var now=DateTimeOffset.UtcNow;var s=new StoredSession(Guid.NewGuid().ToString(),userId,Token(),Token(),now,now.AddMinutes(15),now.AddDays(7),null); InsertSession(s);return s; }
-    public StoredSession? FindSession(string id) => FindSession("session_id",id,false); public StoredSession? FindByAccessToken(string token)=>FindSession("access_hash",Hash(token),true); public StoredSession? TouchAccessToken(string token) { var session=FindByAccessToken(token); var now=DateTimeOffset.UtcNow; if(session is null||session.Status!="ACTIVE"||session.AccessExpiresAt<=now)return null; var accessExpires=now.AddMinutes(15); var refreshExpires=now.AddDays(7); using var c=database.OpenConnection();using var q=c.CreateCommand();q.CommandText="UPDATE auth_sessions SET access_expires_at=@access,refresh_expires_at=@refresh WHERE session_id=@id AND revoked_at IS NULL AND access_expires_at>UTC_TIMESTAMP(6) AND refresh_expires_at>UTC_TIMESTAMP(6);";q.Parameters.AddWithValue("@access",accessExpires.UtcDateTime);q.Parameters.AddWithValue("@refresh",refreshExpires.UtcDateTime);q.Parameters.AddWithValue("@id",session.SessionId);return q.ExecuteNonQuery()==1?session with { AccessExpiresAt=accessExpires,RefreshExpiresAt=refreshExpires }:null; }
+    public StoredSession? FindSession(string id) => FindSession("session_id",id,false); public StoredSession? FindByAccessToken(string token)=>FindSession("access_hash",Hash(token),true); public StoredSession? TouchAccessToken(string token) { var session=FindByAccessToken(token); var now=DateTimeOffset.UtcNow; return session is null||session.Status!="ACTIVE"||session.AccessExpiresAt<=now?null:session; }
     public bool RevokeSession(string sessionId,string userId) { using var c=database.OpenConnection();using var q=c.CreateCommand();q.CommandText="UPDATE auth_sessions SET revoked_at=UTC_TIMESTAMP(6) WHERE session_id=@id AND user_id=@user AND revoked_at IS NULL;";q.Parameters.AddWithValue("@id",sessionId);q.Parameters.AddWithValue("@user",userId);return q.ExecuteNonQuery()==1; }
     public StoredSession? Rotate(string refresh) { var old=FindSession("refresh_hash",Hash(refresh),true); if(old is null||old.Status!="ACTIVE")return null;using var c=database.OpenConnection();using var q=c.CreateCommand();q.CommandText="UPDATE auth_sessions SET revoked_at=UTC_TIMESTAMP(6) WHERE session_id=@id AND revoked_at IS NULL;";q.Parameters.AddWithValue("@id",old.SessionId);q.ExecuteNonQuery();return CreateSession(old.UserId,null); }
     public void RevokeAllSessions(string userId){using var c=database.OpenConnection();using var q=c.CreateCommand();q.CommandText="UPDATE auth_sessions SET revoked_at=UTC_TIMESTAMP(6) WHERE user_id=@id AND revoked_at IS NULL;";q.Parameters.AddWithValue("@id",userId);q.ExecuteNonQuery();}
@@ -495,7 +545,7 @@ public sealed class MySqlAdminRepository(AuthDatabase database) : IAdminReposito
     }
     public AdminInvitation? CreateInvitation(CreateInvitationRequest request)
     {
-        var type=request.Type?.Trim().ToLowerInvariant();if(type is not ("single-use" or "multi-use" or "time-window"))return null;var max=type=="single-use"?1:request.MaxUses.GetValueOrDefault(10);if(max is <1 or >10000||(type=="time-window"&&(!request.ValidFrom.HasValue||!request.ValidTo.HasValue||request.ValidTo<=request.ValidFrom)))return null;
+        var type=request.Type?.Trim().ToLowerInvariant();if(type is not ("single-use" or "multi-use" or "time-window")||(type=="multi-use"&&!request.MaxUses.HasValue))return null;var max=type=="single-use"?1:request.MaxUses.GetValueOrDefault(10);if(max is <1 or >10000||(type=="time-window"&&(!request.ValidFrom.HasValue||!request.ValidTo.HasValue||request.ValidTo<=request.ValidFrom)))return null;
         for(var i=0;i<3;i++){var value=new AdminInvitation("MS-"+Convert.ToHexString(RandomNumberGenerator.GetBytes(5)),type,max,0,request.ValidFrom,request.ValidTo,DateTimeOffset.UtcNow);try{using var c=database.OpenConnection();using var q=c.CreateCommand();q.CommandText="INSERT INTO admin_invitations (code,type,max_uses,used_count,valid_from,valid_to,created_at) VALUES (@code,@type,@max,0,@from,@to,@created);";q.Parameters.AddWithValue("@code",value.Code);q.Parameters.AddWithValue("@type",value.Type);q.Parameters.AddWithValue("@max",value.MaxUses);q.Parameters.AddWithValue("@from",value.ValidFrom?.UtcDateTime??(object)DBNull.Value);q.Parameters.AddWithValue("@to",value.ValidTo?.UtcDateTime??(object)DBNull.Value);q.Parameters.AddWithValue("@created",value.CreatedAt.UtcDateTime);q.ExecuteNonQuery();return value;}catch(MySqlException ex)when(ex.Number==1062){}}return null;
     }
     public bool DeleteInvitation(string code){using var c=database.OpenConnection();using var q=c.CreateCommand();q.CommandText="DELETE FROM admin_invitations WHERE code=@code;";q.Parameters.AddWithValue("@code",code);return q.ExecuteNonQuery()==1;}

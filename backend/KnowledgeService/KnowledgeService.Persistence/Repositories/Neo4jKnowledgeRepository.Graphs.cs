@@ -16,7 +16,6 @@ public sealed partial class Neo4jKnowledgeRepository
         cancellationToken.ThrowIfCancellationRequested();
         ValidateGraph(graph);
 
-        var fingerprintKey = CreateGraphFingerprint(graph);
         var creationToken = Guid.NewGuid().ToString("N");
 
         await using var session = OpenSession(AccessMode.Write);
@@ -33,9 +32,13 @@ public sealed partial class Neo4jKnowledgeRepository
                     return build.GraphId.Value;
                 }
 
+                var fingerprintKey = GraphFingerprint.Create(
+                    graph,
+                    build.Segmentation);
                 var fingerprint = await ClaimFingerprintAsync(
                     transaction,
                     graph,
+                    build.Segmentation,
                     fingerprintKey,
                     creationToken);
                 if (!fingerprint.Created)

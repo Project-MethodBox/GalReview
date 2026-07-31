@@ -42,6 +42,43 @@ public sealed class MongoFileStore : IFileStore
 
     public async Task RecoverIncompleteJobsAsync(CancellationToken cancellationToken)
     {
+        // A standalone MongoDB deployment cannot provide a multi-document transaction.
+        // If the process stopped after SUCCEEDED but before READY, the staged text lets us
+        // finish the final publication without parsing (or invoking OCR) a second time.
+        var stagedMaterials = await _materials
+            .Find(material => material.Material.Status == "PROCESSING" && material.ExtractedText != null)
+            .ToListAsync(cancellationToken);
+        foreach (var material in stagedMaterials)
+        {
+            var latestJob = GetLatestJob(material.Material.MaterialId);
+            if (latestJob?.Status != "SUCCEEDED" || material.Material.LatestIngestionJobId != latestJob.JobId)
+            {
+                continue;
+            }
+
+            var ready = material with
+            {
+                Material = material.Material with
+                {
+                    Status = "READY",
+                    UpdatedAt = DateTimeOffset.UtcNow
+                }
+            };
+            var recovered = await _materials.ReplaceOneAsync(
+                candidate => candidate.Material.MaterialId == material.Material.MaterialId
+                    && candidate.Material.Status == "PROCESSING"
+                    && candidate.Material.LatestIngestionJobId == latestJob.JobId,
+                ready,
+                cancellationToken: cancellationToken);
+            if (recovered.IsAcknowledged && recovered.MatchedCount == 1)
+            {
+                _logger.LogInformation(
+                    "Recovered READY publication for material {MaterialId} after job {JobId} had succeeded.",
+                    material.Material.MaterialId,
+                    latestJob.JobId);
+            }
+        }
+
         var activeJobs = await _jobs.Find(job => job.Status == "QUEUED" || job.Status == "RUNNING").ToListAsync(cancellationToken);
         foreach (var job in activeJobs)
         {
@@ -82,7 +119,7 @@ public sealed class MongoFileStore : IFileStore
     public bool TryDelete(string materialId, string ownerUserId, out Material? material)
     {
         material = null; var stored = FindMaterial(materialId); if (stored is null || stored.Material.OwnerUserId != ownerUserId || stored.Material.Status == "DELETED") return false;
-        if (GetLatestJob(materialId)?.Status is "QUEUED" or "RUNNING") return false;
+        if (stored.Material.Status == "PROCESSING" || GetLatestJob(materialId)?.Status is "QUEUED" or "RUNNING") return false;
         var deleted = stored.Material with { Status = "DELETED", UpdatedAt = DateTimeOffset.UtcNow };
         _materials.ReplaceOne(x => x.Material.MaterialId == materialId, stored with { Material = deleted }); material = deleted;
         if (ObjectId.TryParse(stored.GridFsId, out var gridFsId)) _files.Delete(gridFsId); return true;
@@ -98,25 +135,112 @@ public sealed class MongoFileStore : IFileStore
     {
         var job = GetJob(jobId); if (job is null) return; var stored = FindMaterial(job.MaterialId); if (stored is null) return;
         _jobs.ReplaceOne(x => x.JobId == jobId, job = job with { Status = "RUNNING", Progress = 10, UpdatedAt = DateTimeOffset.UtcNow });
+        ExtractedTextDocument? pendingDocument = null;
+        var pendingOcrUsed = false;
         try
         {
-            if (!IsSupportedParserInput(stored.Material)) throw new InvalidOperationException("Only TXT, Markdown, HTML, DOCX, PDF, JPG and PNG extraction is available.");
+            if (!ParserInputPolicy.IsSupported(stored.Material)) throw new InvalidOperationException("Only structured document formats or UTF-8 text fallback inputs are available.");
             if (!ObjectId.TryParse(stored.GridFsId, out var gridFsId)) throw new InvalidOperationException("Invalid GridFS file ID.");
             await using var bytes = new MemoryStream(); await _files.DownloadToStreamAsync(gridFsId, bytes, cancellationToken: cancellationToken); bytes.Position = 0;
             var extraction = await ExtractAsync(stored.Material, bytes, _httpClientFactory.CreateClient("ocr"), job.EnableOcr, job.OcrMode, job.JobId, cancellationToken);
-            var text = extraction.Text; if (string.IsNullOrWhiteSpace(text)) throw new InvalidOperationException("No extractable text was found. Scanned PDFs require an OCR parser.");
+            pendingOcrUsed = extraction.OcrUsed;
+            FileTextContractValidator.Validate(extraction);
+            var text = extraction.Text;
             var checksum = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
             var sourceMap = extraction.SourceMap; var now = DateTimeOffset.UtcNow;
-            var document = new ExtractedTextDocument(job.MaterialId, stored.Material.OwnerUserId, "READY", text, "utf-8", "NFC", "LF", checksum, text.Length, job.ParserVersion, "1", sourceMap, extraction.Blocks, now);
-            // Text and READY status reside in one Mongo document, so READY cannot be observed without a complete text document.
-            _materials.ReplaceOne(x => x.Material.MaterialId == job.MaterialId, stored with { ExtractedText = document, Material = stored.Material with { Status = "READY", LatestIngestionJobId = jobId, UpdatedAt = now } });
-            _jobs.ReplaceOne(x => x.JobId == jobId, job with { Status = "SUCCEEDED", Progress = 100, OcrUsed = extraction.OcrUsed, UpdatedAt = now });
+            pendingDocument = new ExtractedTextDocument(job.MaterialId, stored.Material.OwnerUserId, "READY", text, "utf-8", "NFC", "LF", checksum, text.Length, job.ParserVersion, "1", sourceMap, extraction.Blocks, now);
+
+            // Standalone MongoDB cannot atomically commit the job and material documents.
+            // The observable order is therefore deliberate:
+            //   1. stage text while the material remains PROCESSING;
+            //   2. publish the job as SUCCEEDED;
+            //   3. publish READY together with the already-complete text document.
+            // Readers can briefly see SUCCEEDED + PROCESSING, but never READY without text
+            // and never READY before SUCCEEDED.
+            var staged = stored with
+            {
+                ExtractedText = pendingDocument,
+                Material = stored.Material with
+                {
+                    Status = "PROCESSING",
+                    LatestIngestionJobId = jobId,
+                    UpdatedAt = now
+                }
+            };
+            EnsureMatched(
+                await _materials.ReplaceOneAsync(
+                    candidate => candidate.Material.MaterialId == job.MaterialId
+                        && candidate.Material.Status == "PROCESSING"
+                        && candidate.Material.LatestIngestionJobId == jobId,
+                    staged,
+                    cancellationToken: cancellationToken),
+                "stage extracted text");
+
+            var succeeded = job with { Status = "SUCCEEDED", Progress = 100, OcrUsed = pendingOcrUsed, UpdatedAt = now };
+            EnsureMatched(
+                await _jobs.ReplaceOneAsync(
+                    candidate => candidate.JobId == jobId && candidate.Status == "RUNNING",
+                    succeeded,
+                    cancellationToken: cancellationToken),
+                "publish ingestion success");
+
+            var ready = staged with
+            {
+                Material = staged.Material with
+                {
+                    Status = "READY",
+                    UpdatedAt = now
+                }
+            };
+            EnsureMatched(
+                await _materials.ReplaceOneAsync(
+                    candidate => candidate.Material.MaterialId == job.MaterialId
+                        && candidate.Material.Status == "PROCESSING"
+                        && candidate.Material.LatestIngestionJobId == jobId,
+                    ready,
+                    cancellationToken: cancellationToken),
+                "publish material readiness");
         }
         catch (Exception exception)
         {
+            var current = FindMaterial(job.MaterialId);
+            if (current?.Material.Status == "READY"
+                && current.Material.LatestIngestionJobId == jobId
+                && pendingDocument is not null
+                && current.ExtractedText?.TextChecksum == pendingDocument.TextChecksum)
+            {
+                // A network error can make an acknowledged write look failed to the client.
+                // If READY and the exact staged text are already durable, preserve the valid
+                // terminal pair instead of compensating it back to FAILED.
+                _jobs.ReplaceOne(
+                    candidate => candidate.JobId == jobId,
+                    job with
+                    {
+                        Status = "SUCCEEDED",
+                        Progress = 100,
+                        OcrUsed = pendingOcrUsed,
+                        UpdatedAt = current.Material.UpdatedAt
+                    });
+                _logger.LogWarning(
+                    exception,
+                    "Completion acknowledgement failed for material {MaterialId}, but the READY document was verified.",
+                    job.MaterialId);
+                return;
+            }
+
             var now = DateTimeOffset.UtcNow; var error = new ApiError("MATERIAL_TEXT_EXTRACTION_FAILED", "Text extraction failed.", new Dictionary<string, string>());
             _jobs.ReplaceOne(x => x.JobId == jobId, job with { Status = "FAILED", Progress = 100, Error = error, UpdatedAt = now });
-            _materials.UpdateOne(x => x.Material.MaterialId == job.MaterialId, Builders<MaterialDocument>.Update.Set(x => x.Material, stored.Material with { Status = "FAILED", UpdatedAt = now }));
+            current ??= FindMaterial(job.MaterialId);
+            if (current is not null)
+            {
+                _materials.UpdateOne(
+                    candidate => candidate.Material.MaterialId == job.MaterialId
+                        && candidate.Material.Status == "PROCESSING"
+                        && candidate.Material.LatestIngestionJobId == jobId,
+                    Builders<MaterialDocument>.Update.Set(
+                        candidate => candidate.Material,
+                        current.Material with { Status = "FAILED", UpdatedAt = now }));
+            }
             _logger.LogWarning(exception, "Extraction failed for material {MaterialId}", job.MaterialId);
         }
     }
@@ -127,7 +251,13 @@ public sealed class MongoFileStore : IFileStore
     }
     public ExtractedTextDocument? GetExtractedText(string materialId) => FindMaterial(materialId)?.ExtractedText;
     private MaterialDocument? FindMaterial(string materialId) => _materials.Find(x => x.Material.MaterialId == materialId).FirstOrDefault();
-    private static bool IsSupportedParserInput(Material material) => material.MediaType.StartsWith("text/", StringComparison.OrdinalIgnoreCase) || material.MediaType.Equals("image/jpeg", StringComparison.OrdinalIgnoreCase) || material.MediaType.Equals("image/png", StringComparison.OrdinalIgnoreCase) || material.MediaType.Equals("application/pdf", StringComparison.OrdinalIgnoreCase) || material.MediaType.Equals("application/vnd.openxmlformats-officedocument.wordprocessingml.document", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(material.OriginalFileName).Equals(".txt", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(material.OriginalFileName).Equals(".md", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(material.OriginalFileName).Equals(".html", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(material.OriginalFileName).Equals(".htm", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(material.OriginalFileName).Equals(".pdf", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(material.OriginalFileName).Equals(".docx", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(material.OriginalFileName).Equals(".jpg", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(material.OriginalFileName).Equals(".jpeg", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(material.OriginalFileName).Equals(".png", StringComparison.OrdinalIgnoreCase);
+    private static void EnsureMatched(ReplaceOneResult result, string operation)
+    {
+        if (!result.IsAcknowledged || result.MatchedCount != 1)
+        {
+            throw new InvalidOperationException($"MongoDB could not {operation}; the expected document state was not found.");
+        }
+    }
     private static string DetectMediaType(string fileName, string? submittedType) => Path.GetExtension(fileName).ToLowerInvariant() switch
     {
         ".txt" when string.IsNullOrWhiteSpace(submittedType) || submittedType.Equals("application/octet-stream", StringComparison.OrdinalIgnoreCase) => "text/plain",
@@ -140,24 +270,26 @@ public sealed class MongoFileStore : IFileStore
     private static async Task<ExtractionResult> ExtractAsync(Material material, Stream content, HttpClient ocrClient, bool enableOcr, string ocrMode, string ocrJobId, CancellationToken cancellationToken)
     {
         content.Position = 0;
-        var extension = Path.GetExtension(material.OriginalFileName).ToLowerInvariant();
-        if (extension is ".jpg" or ".jpeg" or ".png")
+        var parserKind = ParserInputPolicy.ResolveParserKind(
+            material.OriginalFileName,
+            material.MediaType);
+        if (parserKind == ParserInputKind.Image)
         {
             if (!enableOcr) throw new InvalidOperationException("OCR is disabled. Enable OCR before parsing image files.");
             return await ExtractOcrAsync(material, content, ocrClient, ocrMode, ocrJobId, cancellationToken);
         }
-        if (extension == ".pdf")
+        if (parserKind == ParserInputKind.Pdf)
         {
             var pdf = ExtractStructuredPdf(content);
             if (!string.IsNullOrWhiteSpace(pdf.Text)) return pdf;
             if (!enableOcr) throw new InvalidOperationException("No embedded PDF text was found. Enable OCR to parse a scanned PDF.");
             return await ExtractOcrAsync(material, content, ocrClient, ocrMode, ocrJobId, cancellationToken);
         }
-        return extension switch
+        return parserKind switch
         {
-            ".docx" => ExtractStructuredDocx(content),
-            ".md" => await ExtractMarkdownAsync(content, cancellationToken),
-            ".html" or ".htm" => await ExtractHtmlAsync(content, cancellationToken),
+            ParserInputKind.Docx => ExtractStructuredDocx(content),
+            ParserInputKind.Markdown => await ExtractMarkdownAsync(content, cancellationToken),
+            ParserInputKind.Html => await ExtractHtmlAsync(content, cancellationToken),
             _ => await ExtractTextAsync(content, cancellationToken)
         };
     }
