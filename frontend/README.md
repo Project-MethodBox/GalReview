@@ -1,44 +1,43 @@
 # GalReview 前端
 
-基于 React、TypeScript、React Router 和 Vite 的前端实现，视觉依据 Pixso 中的浅色与深色页面设计，并与仓库现有 Gateway 认证契约连接。
+React、TypeScript 与 Vite 实现的浏览器端。页面通过同源 `/api/v1` 访问 Gateway，覆盖登录、资料上传、非 OCR 文本提取、知识图谱、复习计划、GalGame 生成和 Render 基础壳体验。
 
-## 启动
+## 本地开发
 
 ```powershell
-npm install
+npm ci
 npm run dev
 ```
 
-打开 `http://127.0.0.1:5173`。生产构建使用：
+开发服务器打开 `http://127.0.0.1:5173`，默认把 `/api` 转发到 `http://localhost:5000`。如 Gateway 使用其他地址，可在 `vite.config.ts` 中调整开发代理；浏览器代码不保存任何业务服务直连地址。
+
+提交前检查：
 
 ```powershell
 npm run typecheck
 npm run build
 ```
 
-开发服务器默认把 `/api` 代理到 `http://localhost:5000`。如需修改 API 地址，复制 `.env.example` 为 `.env.local` 并调整：
+## 页面
 
-```dotenv
-VITE_API_BASE_URL=/api/v1
-VITE_ENABLE_DEMO_FALLBACK=true
+| 路径 | 功能 |
+| --- | --- |
+| `/login`、`/register` | 登录与邀请码注册 |
+| `/forgot-password` | 密码重置 |
+| `/home` | 功能入口 |
+| `/materials` | 上传、解析、构图和创建复习计划 |
+| `/knowledge-graph` | 查看章节、知识点和关系 |
+| `/review` | 生成 GalGame 并加载 C++ / JS 运行时基础壳；当前只保留本地进度，不提交结果 |
+
+接口字段和状态均以 `docs/contract.md` 为准。本地不再伪造登录或成功结果，Gateway 不可用时会显示真实错误。
+
+## 容器
+
+```powershell
+docker build -t galreview-frontend ./frontend
+docker run --rm -p 8080:8080 -e GATEWAY_UPSTREAM=http://host.docker.internal:5000 galreview-frontend
 ```
 
-`VITE_ENABLE_DEMO_FALLBACK` 只在 Vite 开发模式生效。当 Gateway 未启动时，登录、注册和密码重置会进入可见的本地测试流程，方便独立验证页面和路由；生产构建始终使用真实服务。
-
-## 页面与预留路由
-
-| 路径 | 说明 |
-| --- | --- |
-| `/login` | 登录，连接 `POST /auth/sessions` |
-| `/register` | 注册，连接 `POST /auth/registrations`；设计稿中的“验证码”映射为后端邀请码字段 |
-| `/forgot-password` | 发送重置请求并提交新密码 |
-| `/home` | Pixso 主页与功能入口 |
-| `/review` | “继续”预留页 |
-| `/knowledge` | “知识点”预留页 |
-| `/materials` | “资料上传”预留页 |
-| `/knowledge-graph` | “知识图谱”预留页 |
-| `/settings` | 用户资料预留页 |
-
-所有功能卡片、工具栏入口、个人资料、返回、退出和认证页切换控件都已连接到可测试路由。主页同时提供全屏和明暗主题切换。
-
-认证页用户名输入框的尾部图标可清空当前内容并把焦点送回输入框；密码输入框统一使用应用内的显示/隐藏按钮，浏览器原生密码按钮会被隐藏。页面切换根据前进或返回方向提供轻量过渡，并在系统开启“减少动态效果”时自动禁用动画。
+容器由非 root Node 进程在 `8080` 提供静态页面和 `/healthz`，并将同源 `/api` 转发至
+`GATEWAY_UPSTREAM`。在 Compose 网络中该值应使用 Gateway 的服务名和容器端口，例如
+`http://gateway:5000`。

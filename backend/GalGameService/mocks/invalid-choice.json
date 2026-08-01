@@ -17,7 +17,9 @@
                     "text": "唯一正确选项",
                     "nextSceneId": null,
                     "scoreDelta": 1,
-                    "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"
+                    "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",
+                    "answerKind": "CHOICE",
+                    "correct": true
                 },
                 {
                     "choiceId": "c1",

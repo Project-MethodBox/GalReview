@@ -171,6 +171,50 @@ public class GalGameServiceIntegrationTests : IClassFixture<WebApplicationFactor
     }
 
     [Fact]
+    public async Task GetInternalPackage_AsRenderServiceAndOwner_ReturnsAuthoritativePackage()
+    {
+        var client = CreateClientWithAuth(serviceName: "RenderService");
+        var response = await client.GetAsync(
+            $"/internal/v1/game-packages/{GoldenPackageId}?ownerUserId={UserId}");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(GoldenPackageId.ToString("D"),
+            json.GetProperty("data").GetProperty("packageId").GetString());
+        Assert.Equal(MockSnapshotVersion,
+            json.GetProperty("data").GetProperty("snapshotVersion").GetString());
+    }
+
+    [Fact]
+    public async Task GetInternalPackage_ForDifferentOwner_Returns404()
+    {
+        var client = CreateClientWithAuth(serviceName: "RenderService");
+        var response = await client.GetAsync(
+            $"/internal/v1/game-packages/{GoldenPackageId}?ownerUserId=4bb2a8b6-17b7-4b3b-a106-41ed23a5c763");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetInternalPackage_FromUntrustedService_Returns403()
+    {
+        var client = CreateClientWithAuth(serviceName: "KnowledgeService");
+        var response = await client.GetAsync(
+            $"/internal/v1/game-packages/{GoldenPackageId}?ownerUserId={UserId}");
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetInternalPackage_WithoutOwnerUserId_Returns400()
+    {
+        var client = CreateClientWithAuth(serviceName: "RenderService");
+        var response = await client.GetAsync($"/internal/v1/game-packages/{GoldenPackageId}");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
     public async Task PostGeneration_ValidRequest_Returns202()
     {
         var client = CreateClientWithAuth();

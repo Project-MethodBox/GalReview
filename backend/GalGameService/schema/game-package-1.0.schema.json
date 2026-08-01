@@ -2,7 +2,7 @@
     "$schema": "http://json-schema.org/draft-07/schema#",
     "$id": "https://galreview.dev/schemas/game-package-1.0.schema.json",
     "title": "game-package-1.0",
-    "description": "千知万理 GalGameService 游戏包 schema 1.0 结构契约。对应 docs/contract.md §7.3。本 Schema 只冻结结构与字段级约束（数量上限、枚举、UUID 格式、必填字段、additionalProperties=false）；跨字段语义规则（每题恰一个正确选项、孤儿绑定、questionId 跨场景一致性、nextSceneId 引用有效性、entrySceneId 存在性）由 GamePackageValidator 在运行时强制，二者互补。",
+    "description": "千知万理 GalGameService 游戏包 schema 1.0 结构契约。对应 docs/contract.md §7.3。本 Schema 只冻结结构与字段级约束（数量上限、枚举、UUID 格式、必填字段、additionalProperties=false）；跨字段语义规则（每题至少一个正确选项、孤儿绑定、questionId 跨场景一致性、nextSceneId 引用有效性、entrySceneId 存在性）由 GamePackageValidator 在运行时强制，二者互补。",
     "type": "object",
     "required": [
         "schemaVersion",
@@ -138,15 +138,22 @@
                     "description": "目标 sceneId；null 表示结束。非空时必须指向存在场景，由校验器强制。"
                 },
                 "scoreDelta": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 1,
-                    "description": "计分增量：0（错误/干扰）或 1（正确）；负数或 >1 由校验器拒绝（INVALID_SCORE_DELTA）。"
+                    "type": "number",
+                    "description": "游戏计分增量；与答案是否正确相互独立，不得用于推断 correct。"
                 },
                 "knowledgePointId": {
                     "type": "string",
                     "format": "uuid",
                     "description": "绑定知识点；空 GUID 由校验器拒绝。"
+                },
+                "answerKind": {
+                    "type": ["string", "null"],
+                    "enum": ["CHOICE", null],
+                    "description": "同场景存在 QUESTION binding 时必须为 CHOICE；其他场景省略或为 null。"
+                },
+                "correct": {
+                    "type": ["boolean", "null"],
+                    "description": "同场景存在 QUESTION binding 时必填；校验器不会从 scoreDelta 推断该字段。"
                 }
             }
         },

@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router'
 import HomeFeatureCard from '../components/HomeFeatureCard'
 import { BookIcon, ClockIcon, FullscreenIcon, SettingsIcon } from '../components/icons'
-import { clearSession, readProfile, readSession } from '../lib/session'
+import { api } from '../lib/api'
+import { clearSession, readProfile, readSession, saveProfile } from '../lib/session'
+import { resetWorkflow } from '../lib/workflow'
 
 export default function HomePage() {
   const location = useLocation()
   const navigate = useNavigate()
-  const profile = readProfile()
+  const [profile, setProfile] = useState(readProfile())
   const session = readSession()
   const [message, setMessage] = useState((location.state as { message?: string } | null)?.message || '')
   const [dark, setDark] = useState(document.documentElement.dataset.theme === 'dark')
@@ -18,6 +20,16 @@ export default function HomePage() {
     return () => window.clearTimeout(id)
   }, [message])
 
+  useEffect(() => {
+    if (profile) return
+    void api.getCurrentUser().then((value) => {
+      saveProfile(value)
+      setProfile(value)
+    }).catch((error: unknown) => {
+      setMessage(error instanceof Error ? error.message : '暂时无法读取用户资料。')
+    })
+  }, [profile])
+
   function toggleTheme() {
     const next = !dark
     setDark(next)
@@ -27,6 +39,16 @@ export default function HomePage() {
   async function toggleFullscreen() {
     if (document.fullscreenElement) await document.exitFullscreen()
     else await document.documentElement.requestFullscreen()
+  }
+
+  async function logout() {
+    try {
+      if (session) await api.logout(session.session.sessionId)
+    } finally {
+      clearSession()
+      resetWorkflow()
+      navigate('/login')
+    }
   }
 
   return (
@@ -46,7 +68,7 @@ export default function HomePage() {
             <button type="button" aria-label="切换明暗主题" onClick={toggleTheme}><SettingsIcon /></button>
           </nav>
           <Link className="profile-pill" to="/settings">
-            <span><strong>{profile?.displayName || 'UserNametest'}</strong><small>{session?.demo ? '测试会话' : 'Level 1'}</small></span>
+            <span><strong>{profile?.displayName || '学习者'}</strong><small>Level 1</small></span>
             <span><strong>学习档案</strong><small>{profile?.preferredSubjectCodes[0] || '待完善'}</small></span>
             <img src="/profile-avatar.svg" alt="用户头像" />
           </Link>
@@ -62,7 +84,7 @@ export default function HomePage() {
         <HomeFeatureCard title="知识图谱" to="/knowledge-graph" icon="graph" wide />
       </section>
 
-      <button className="home-logout" type="button" onClick={() => { clearSession(); navigate('/login') }}>退出登录</button>
+      <button className="home-logout" type="button" onClick={() => void logout()}>退出登录</button>
     </main>
   )
 }

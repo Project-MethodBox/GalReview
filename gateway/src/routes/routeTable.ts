@@ -45,6 +45,13 @@ export const ROUTE_TABLE: RouteEntry[] = [
     auth: 'service',
     rateLimitCategory: 'general',
   },
+  {
+    path: '/internal/v1/game-packages/:packageId',
+    service: 'galGameService',
+    auth: 'service',
+    rateLimitCategory: 'general',
+    methods: ['GET'],
+  },
 
   // ===== 浏览器公开路由（无需令牌，精确方法匹配） =====
   {
@@ -91,6 +98,20 @@ export const ROUTE_TABLE: RouteEntry[] = [
   },
   {
     path: '/api/v1/render-runtime/manifest',
+    service: 'renderService',
+    auth: 'public',
+    rateLimitCategory: 'general',
+    methods: ['GET'],
+  },
+  {
+    path: '/api/v1/render-runtime/runtime.wasm',
+    service: 'renderService',
+    auth: 'public',
+    rateLimitCategory: 'general',
+    methods: ['GET'],
+  },
+  {
+    path: '/api/v1/render-runtime/adapter.js',
     service: 'renderService',
     auth: 'public',
     rateLimitCategory: 'general',

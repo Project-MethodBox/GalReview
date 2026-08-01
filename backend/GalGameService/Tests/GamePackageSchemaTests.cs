@@ -90,12 +90,18 @@ public class GamePackageSchemaTests
         var choices = Prop(sceneProps, "choices");
         Assert.Equal(GamePackageValidator.MaxChoicesPerScene, Prop(choices, "maxItems").GetInt32());
 
-        // choice.scoreDelta: integer, min 0, max 1
+        // choice.scoreDelta: number；正确性由独立 correct 字段表达
         var choiceDef = Prop(defs, "choice");
-        var scoreDelta = Prop(Prop(choiceDef, "properties"), "scoreDelta");
-        Assert.Equal("integer", Prop(scoreDelta, "type").GetString());
-        Assert.Equal(0, Prop(scoreDelta, "minimum").GetInt32());
-        Assert.Equal(1, Prop(scoreDelta, "maximum").GetInt32());
+        var choiceProperties = Prop(choiceDef, "properties");
+        var scoreDelta = Prop(choiceProperties, "scoreDelta");
+        Assert.Equal("number", Prop(scoreDelta, "type").GetString());
+
+        var answerKind = Prop(choiceProperties, "answerKind");
+        Assert.Contains("CHOICE",
+            Prop(answerKind, "enum").EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.String)
+                .Select(item => item.GetString()));
+        _ = Prop(choiceProperties, "correct");
     }
 
     [Fact]

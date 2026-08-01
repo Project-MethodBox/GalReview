@@ -18,9 +18,18 @@ describe('当前服务接口路由适配', () => {
     ['GET', '/api/v1/game-generations/0957574f', 'galGameService', 'user'],
     ['GET', '/api/v1/game-packages/3a7f', 'galGameService', 'user'],
     ['GET', '/api/v1/game-packages/3a7f/content', 'galGameService', 'user'],
+    ['GET', '/api/v1/render-runtime/manifest', 'renderService', 'public'],
+    ['GET', '/api/v1/render-runtime/runtime.wasm', 'renderService', 'public'],
+    ['GET', '/api/v1/render-runtime/adapter.js', 'renderService', 'public'],
     [
       'POST',
       '/internal/v1/game-package-validations',
+      'galGameService',
+      'service',
+    ],
+    [
+      'GET',
+      '/internal/v1/game-packages/3a7f',
       'galGameService',
       'service',
     ],
@@ -78,8 +87,16 @@ function resolveRoute(method: string, path: string): RouteEntry | undefined {
     if (!methodMatches) return false;
 
     // methods 条目由 Express 的 app[verb](path) 精确注册；app.use 条目按前缀注册。
-    return route.methods ? route.path === path : isPrefix(route.path, path);
+    return route.methods ? isMethodRouteMatch(route.path, path) : isPrefix(route.path, path);
   });
+}
+
+function isMethodRouteMatch(pattern: string, path: string): boolean {
+  const patternParts = pattern.split('/');
+  const pathParts = path.split('/');
+  return patternParts.length === pathParts.length && patternParts.every(
+    (part, index) => part.startsWith(':') || part === pathParts[index],
+  );
 }
 
 function isPrefix(prefix: string, path: string): boolean {
