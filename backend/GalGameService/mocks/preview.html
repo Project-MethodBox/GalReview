@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GalGameService 游戏包渲染预览</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg-primary:#1a1a2e;--bg-secondary:#16213e;--bg-dialogue:rgba(0,0,0,.75);
+  --text-primary:#eee;--text-secondary:#999;--accent:#e94560;
+  --choice-border:#333;--choice-hover:#2a2a4a;
+  --speaker-color:#e94560;--emotion-color:#888;
+  --scene-title-bg:rgba(233,69,96,.15);
+}
+body{
+  font-family:'Segoe UI','Noto Sans SC',sans-serif;
+  background:var(--bg-primary);color:var(--text-primary);
+  height:100vh;display:flex;flex-direction:column;overflow:hidden;
+}
+/* ========== 顶部栏 ========== */
+.topbar{
+  display:flex;align-items:center;gap:12px;padding:10px 20px;
+  background:var(--bg-secondary);border-bottom:1px solid #ffffff15;
+  flex-shrink:0;z-index:10;
+}
+.topbar h1{font-size:16px;font-weight:600;white-space:nowrap}
+.topbar select{
+  background:#2a2a4a;color:var(--text-primary);border:1px solid #444;
+  padding:6px 12px;border-radius:6px;font-size:13px;cursor:pointer;
+}
+.topbar select:hover{border-color:var(--accent)}
+.topbar .info{margin-left:auto;font-size:12px;color:var(--text-secondary);display:flex;gap:16px}
+.topbar .info span b{color:var(--accent)}
+.topbar .restart{
+  background:#2a2a4a;color:var(--text-primary);border:1px solid #444;
+  padding:6px 14px;border-radius:6px;font-size:13px;cursor:pointer;
+}
+.topbar .restart:hover{border-color:var(--accent);background:#333}
+/* ========== 游戏区域 ========== */
+.game-area{
+  flex:1;display:flex;flex-direction:column;position:relative;overflow:hidden;
+  transition:background .8s ease;
+}
+/* 风格主题 */
+.theme-campus{background:linear-gradient(135deg,#0f3a0f 0%,#1a4a1a 30%,#0a2a1a 100%)}
+.theme-fantasy{background:linear-gradient(135deg,#1a0a2e 0%,#2d1b4e 30%,#0a0a1e 100%)}
+.theme-science{background:linear-gradient(135deg,#0a1a2e 0%,#162b4e 30%,#050a1e 100%)}
+.theme-golden{background:linear-gradient(135deg,#2e1a0a 0%,#4e3520 30%,#1e1505 100%)}
+/* 场景标题 */
+.scene-title{
+  text-align:center;padding:12px;margin-top:20px;
+  font-size:18px;font-weight:600;letter-spacing:2px;
+  background:var(--scene-title-bg);color:var(--accent);
+  border-top:1px solid #ffffff20;border-bottom:1px solid #ffffff20;
+  text-shadow:0 0 20px rgba(233,69,96,.3);
+  flex-shrink:0;
+}
+/* 对话区域 */
+.dialogue-area{
+  flex:1;display:flex;align-items:flex-end;justify-content:center;
+  padding:20px 40px 200px;position:relative;
+}
+/* 角色立绘占位 */
+.character-placeholder{
+  position:absolute;bottom:180px;left:50%;transform:translateX(-50%);
+  width:200px;height:300px;display:flex;align-items:center;justify-content:center;
+  font-size:64px;opacity:.3;filter:grayscale(.5);
+  transition:opacity .3s;
+}
+/* 对话框 */
+.dialogue-box{
+  position:absolute;bottom:20px;left:50%;transform:translateX(-50%);
+  width:min(720px,90%);background:var(--bg-dialogue);
+  border:2px solid var(--accent);border-radius:12px;
+  padding:20px 24px;backdrop-filter:blur(8px);
+  box-shadow:0 0 30px rgba(0,0,0,.5),0 0 60px rgba(233,69,96,.1);
+  cursor:pointer;user-select:none;
+}
+.dialogue-box::before{
+  content:'▼ 点击继续';position:absolute;bottom:8px;right:16px;
+  font-size:11px;color:var(--accent);animation:blink 1.5s infinite;
+}
+@keyframes blink{0%,100%{opacity:.3}50%{opacity:1}}
+.speaker-name{
+  font-size:15px;font-weight:700;color:var(--speaker-color);
+  margin-bottom:8px;display:flex;align-items:center;gap:8px;
+}
+.emotion-tag{
+  font-size:11px;background:#ffffff15;padding:2px 8px;border-radius:10px;
+  color:var(--emotion-color);font-weight:400;
+}
+.dialogue-text{
+  font-size:16px;line-height:1.8;color:var(--text-primary);
+  min-height:48px;
+}
+/* 选项区域 */
+.choices-container{
+  position:absolute;bottom:20px;left:50%;transform:translateX(-50%);
+  width:min(720px,90%);display:flex;flex-direction:column;gap:10px;
+}
+.choice-btn{
+  background:var(--bg-dialogue);border:2px solid var(--choice-border);
+  border-radius:10px;padding:14px 20px;color:var(--text-primary);
+  font-size:15px;cursor:pointer;text-align:left;
+  transition:all .2s;backdrop-filter:blur(8px);
+}
+.choice-btn:hover{
+  border-color:var(--accent);background:var(--choice-hover);
+  transform:translateX(4px);
+}
+.choice-btn:active{transform:translateX(2px) scale(.99)}
+.choice-btn.correct{
+  border-color:#4caf50;background:rgba(76,175,80,.15);
+}
+.choice-btn.wrong{
+  border-color:#f44336;background:rgba(244,67,54,.15);
+  opacity:.6;
+}
+.choice-btn .choice-result{
+  float:right;font-size:12px;font-weight:600;
+}
+.choice-btn.correct .choice-result{color:#4caf50}
+.choice-btn.wrong .choice-result{color:#f44336}
+/* 结束画面 */
+.ending-screen{
+  flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  text-align:center;padding:40px;
+}
+.ending-screen h2{font-size:28px;color:var(--accent);margin-bottom:16px;text-shadow:0 0 30px rgba(233,69,96,.4)}
+.ending-screen .score-display{font-size:48px;font-weight:700;margin:20px 0}
+.ending-screen .score-display span{color:var(--accent)}
+.ending-screen p{color:var(--text-secondary);font-size:15px;line-height:1.8}
+.ending-screen .restart-btn{
+  margin-top:30px;background:var(--accent);color:#fff;border:none;
+  padding:12px 32px;border-radius:8px;font-size:15px;cursor:pointer;
+  font-weight:600;transition:transform .2s;
+}
+.ending-screen .restart-btn:hover{transform:scale(1.05)}
+/* 进度条 */
+.progress-bar{
+  position:absolute;top:0;left:0;height:3px;background:var(--accent);
+  transition:width .4s ease;z-index:5;
+}
+/* 知识点提示 */
+.knowledge-hint{
+  position:absolute;top:60px;right:20px;
+  background:rgba(0,0,0,.6);border:1px solid #ffffff20;
+  border-radius:8px;padding:8px 12px;font-size:12px;
+  color:var(--text-secondary);max-width:250px;
+}
+.knowledge-hint b{color:var(--accent)}
+/* 响应式 */
+@media(max-width:768px){
+  .topbar{flex-wrap:wrap;gap:8px}
+  .topbar h1{font-size:14px}
+  .topbar .info{font-size:11px;gap:10px}
+  .dialogue-box{padding:16px}
+  .dialogue-text{font-size:14px}
+  .choice-btn{padding:12px 16px;font-size:14px}
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>🎮 GalGameService 渲染预览</h1>
+  <select id="packageSelect">
+    <option value="golden">黄金游戏包（最小化）</option>
+    <option value="campus" selected>校园风格 · STANDARD</option>
+    <option value="fantasy">奇幻风格 · ADVANCED</option>
+    <option value="science">科幻风格 · BASIC</option>
+  </select>
+  <button class="restart" onclick="restart()">↻ 重新开始</button>
+  <div class="info">
+    <span>场景 <b id="sceneIdx">0</b>/<b id="sceneTotal">0</b></span>
+    <span>得分 <b id="score">0</b>/<b id="scoreTotal">0</b></span>
+  </div>
+</div>
+
+<div class="game-area theme-campus" id="gameArea">
+  <div class="progress-bar" id="progressBar" style="width:0%"></div>
+  <div class="scene-title" id="sceneTitle"></div>
+  <div class="knowledge-hint" id="knowledgeHint" style="display:none"></div>
+  <div class="character-placeholder" id="charPlaceholder">🎭</div>
+  <div class="dialogue-area" id="dialogueArea">
+    <div class="dialogue-box" id="dialogueBox" onclick="advanceDialogue()">
+      <div class="speaker-name" id="speakerName"></div>
+      <div class="dialogue-text" id="dialogueText"></div>
+    </div>
+    <div class="choices-container" id="choicesContainer" style="display:none"></div>
+  </div>
+</div>
+
+<script>
+// ========== Mock 游戏包数据 ==========
+
+const PACKAGES = {
+  golden: {
+    schemaVersion:"1.0",packageId:"f2561bb2-b88c-47ef-b0ae-8f283ff64f1b",
+    generatorVersion:"gala-0.1.0",reviewPlanId:"8e812950-3311-40a7-93ab-636409df8cc2",
+    snapshotVersion:"plan-graph-1.0:3da5f48f",entrySceneId:"scene-001",
+    scenes:[{
+      sceneId:"scene-001",title:null,
+      dialogue:[{speakerId:"heroine",text:"水稻分蘖期最关键的管理目标是什么？",emotion:"curious"}],
+      choices:[{choiceId:"c1",questionId:"6428a20a-66dd-44c9-944f-d7b36fa9c95a",text:"协调群体数量与个体生长",nextSceneId:null,scoreDelta:1,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"}],
+      knowledgeBindings:[{knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",questionId:"6428a20a-66dd-44c9-944f-d7b36fa9c95a",purpose:"QUESTION"}]
+    }],assets:[]
+  },
+  campus: {
+    schemaVersion:"1.0",packageId:"6a21ca47-a7c1-4eac-b8cf-a4a5d8d63784",
+    generatorVersion:"gala-0.1.0",reviewPlanId:"8e812950-3311-40a7-93ab-636409df8cc2",
+    snapshotVersion:"plan-graph-1.0:3da5f48f",entrySceneId:"scene-001",
+    scenes:[
+      {sceneId:"scene-001",title:"图书馆的自习时光",
+        dialogue:[
+          {speakerId:"林学姐",text:"嘿，学弟！今天学姐陪你一起复习农业知识吧。",emotion:"cheerful"},
+          {speakerId:"林学姐",text:"今天我们要复习的主题是：水稻·生长周期",emotion:"encouraging"}],
+        choices:[{choiceId:"c-scene-001-1",questionId:"c3bd304f-dc44-df55-8608-64c20672e90a",text:"准备好了，开始吧！",nextSceneId:"scene-002",scoreDelta:0,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"}],
+        knowledgeBindings:[{knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",questionId:"c3bd304f-dc44-df55-8608-64c20672e90a",purpose:"FEEDBACK"}]},
+      {sceneId:"scene-002",title:"知识点讲解：水稻基本生长周期",
+        dialogue:[
+          {speakerId:"林学姐",text:"在正式提问之前，先回顾一下「水稻基本生长周期」。",emotion:"thoughtful"},
+          {speakerId:"林学姐",text:"水稻从播种到成熟的完整生长周期，包括幼苗期、分蘖期、拔节期、抽穗期和成熟期。",emotion:"explaining"}],
+        choices:[{choiceId:"c-scene-002-1",questionId:"b8a4c1be-db80-1759-9ecf-8f4ad0cfcfd5",text:"了解了，继续。",nextSceneId:"scene-003",scoreDelta:0,knowledgePointId:"84f7d873-e573-4689-b18d-6f82c745d1bf"}],
+        knowledgeBindings:[{knowledgePointId:"84f7d873-e573-4689-b18d-6f82c745d1bf",questionId:"b8a4c1be-db80-1759-9ecf-8f4ad0cfcfd5",purpose:"EXPLAIN"}]},
+      {sceneId:"scene-003",title:"复习题：水稻分蘖期管理",
+        dialogue:[
+          {speakerId:"林学姐",text:"来，看看这道题你掌握得怎么样？",emotion:"challenging"},
+          {speakerId:"林学姐",text:"水稻分蘖期管理——根据所学内容，关于「水稻分蘖期管理」最准确的描述是？",emotion:"questioning"}],
+        choices:[
+          {choiceId:"c-scene-003-d1",questionId:"0aeb0c5d-4e43-885e-9af0-79e0ddc902a0",text:"水稻基本生长周期",nextSceneId:"scene-004",scoreDelta:0,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"},
+          {choiceId:"c-scene-003-d2",questionId:"0aeb0c5d-4e43-885e-9af0-79e0ddc902a0",text:"部分正确但不完整",nextSceneId:"scene-004",scoreDelta:0,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"},
+          {choiceId:"c-scene-003-correct",questionId:"0aeb0c5d-4e43-885e-9af0-79e0ddc902a0",text:"水稻分蘖期最关键的管理目标是协调群体数量与个体生长，通过水肥调控促进有效分蘖",nextSceneId:"scene-004",scoreDelta:1,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"},
+          {choiceId:"c-scene-003-d3",questionId:"0aeb0c5d-4e43-885e-9af0-79e0ddc902a0",text:"方向相反的结论",nextSceneId:"scene-004",scoreDelta:0,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"}],
+        knowledgeBindings:[{knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",questionId:"0aeb0c5d-4e43-885e-9af0-79e0ddc902a0",purpose:"QUESTION"}]},
+      {sceneId:"scene-004",title:"复习结束",
+        dialogue:[
+          {speakerId:"林学姐",text:"做得不错！看来这些知识点你已经掌握了。",emotion:"proud"},
+          {speakerId:"林学姐",text:"本次复习共完成 1 道题目，辛苦了！",emotion:"warm"}],
+        choices:[],knowledgeBindings:[]}
+    ],assets:[]
+  },
+  fantasy: {
+    schemaVersion:"1.0",packageId:"868d08a0-3ffd-4966-bff6-7422aad6a648",
+    generatorVersion:"gala-0.1.0",reviewPlanId:"8e812950-3311-40a7-93ab-636409df8cc2",
+    snapshotVersion:"plan-graph-1.0:3da5f48f",entrySceneId:"scene-001",
+    scenes:[
+      {sceneId:"scene-001",title:"魔法学院的试炼",
+        dialogue:[
+          {speakerId:"精灵导师艾莉娅",text:"勇敢的冒险者，欢迎来到知识之塔。今天我们将一同探索自然法则的奥秘。",emotion:"mystical"},
+          {speakerId:"精灵导师艾莉娅",text:"今天我们要复习的主题是：水稻·生长周期",emotion:"encouraging"}],
+        choices:[{choiceId:"c-scene-001-1",questionId:"c3bd304f-dc44-df55-8608-64c20672e90a",text:"准备好了，开始吧！",nextSceneId:"scene-002",scoreDelta:0,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"}],
+        knowledgeBindings:[{knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",questionId:"c3bd304f-dc44-df55-8608-64c20672e90a",purpose:"FEEDBACK"}]},
+      {sceneId:"scene-002",title:"知识点讲解：水稻基本生长周期",
+        dialogue:[
+          {speakerId:"精灵导师艾莉娅",text:"在正式提问之前，先回顾一下「水稻基本生长周期」。",emotion:"thoughtful"},
+          {speakerId:"精灵导师艾莉娅",text:"水稻从播种到成熟的完整生长周期，包括幼苗期、分蘖期、拔节期、抽穗期和成熟期。",emotion:"explaining"}],
+        choices:[{choiceId:"c-scene-002-1",questionId:"b8a4c1be-db80-1759-9ecf-8f4ad0cfcfd5",text:"了解了，继续。",nextSceneId:"scene-003",scoreDelta:0,knowledgePointId:"84f7d873-e573-4689-b18d-6f82c745d1bf"}],
+        knowledgeBindings:[{knowledgePointId:"84f7d873-e573-4689-b18d-6f82c745d1bf",questionId:"b8a4c1be-db80-1759-9ecf-8f4ad0cfcfd5",purpose:"EXPLAIN"}]},
+      {sceneId:"scene-003",title:"复习题：水稻分蘖期管理",
+        dialogue:[
+          {speakerId:"精灵导师艾莉娅",text:"魔法的试炼开始了，请回答这个问题：",emotion:"challenging"},
+          {speakerId:"精灵导师艾莉娅",text:"水稻分蘖期管理——在深入理解「水稻分蘖期管理」的基础上，以下哪个选项最符合实际？",emotion:"questioning"}],
+        choices:[
+          {choiceId:"c-scene-003-d1",questionId:"c3a94adf-7a32-2853-bbcf-50ef9da77458",text:"水稻基本生长周期",nextSceneId:"scene-004",scoreDelta:0,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"},
+          {choiceId:"c-scene-003-correct",questionId:"c3a94adf-7a32-2853-bbcf-50ef9da77458",text:"水稻分蘖期最关键的管理目标是协调群体数量与个体生长，通过水肥调控促进有效分蘖",nextSceneId:"scene-004",scoreDelta:1,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"},
+          {choiceId:"c-scene-003-d2",questionId:"c3a94adf-7a32-2853-bbcf-50ef9da77458",text:"看似合理但存在关键缺陷",nextSceneId:"scene-004",scoreDelta:0,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"}],
+        knowledgeBindings:[{knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",questionId:"c3a94adf-7a32-2853-bbcf-50ef9da77458",purpose:"QUESTION"}]},
+      {sceneId:"scene-004",title:"试炼完成",
+        dialogue:[
+          {speakerId:"精灵导师艾莉娅",text:"你的智慧之光闪耀夺目，试炼圆满完成！",emotion:"proud"},
+          {speakerId:"精灵导师艾莉娅",text:"本次复习共完成 1 道题目，辛苦了！",emotion:"warm"}],
+        choices:[],knowledgeBindings:[]}
+    ],assets:[]
+  },
+  science: {
+    schemaVersion:"1.0",packageId:"60689f72-6589-49c9-b74a-633d2b5af1e0",
+    generatorVersion:"gala-0.1.0",reviewPlanId:"8e812950-3311-40a7-93ab-636409df8cc2",
+    snapshotVersion:"plan-graph-1.0:3da5f48f",entrySceneId:"scene-001",
+    scenes:[
+      {sceneId:"scene-001",title:"空间站知识模块",
+        dialogue:[
+          {speakerId:"NEXUS",text:"研究员，欢迎接入 NEXUS 知识系统。今日学习模块已加载完毕。",emotion:"calm"},
+          {speakerId:"NEXUS",text:"今天我们要复习的主题是：水稻·生长周期",emotion:"encouraging"}],
+        choices:[{choiceId:"c-scene-001-1",questionId:"c3bd304f-dc44-df55-8608-64c20672e90a",text:"准备好了，开始吧！",nextSceneId:"scene-002",scoreDelta:0,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"}],
+        knowledgeBindings:[{knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",questionId:"c3bd304f-dc44-df55-8608-64c20672e90a",purpose:"FEEDBACK"}]},
+      {sceneId:"scene-002",title:"知识点讲解：水稻基本生长周期",
+        dialogue:[
+          {speakerId:"NEXUS",text:"在正式提问之前，先回顾一下「水稻基本生长周期」。",emotion:"thoughtful"},
+          {speakerId:"NEXUS",text:"水稻从播种到成熟的完整生长周期，包括幼苗期、分蘖期、拔节期、抽穗期和成熟期。",emotion:"explaining"}],
+        choices:[{choiceId:"c-scene-002-1",questionId:"b8a4c1be-db80-1759-9ecf-8f4ad0cfcfd5",text:"了解了，继续。",nextSceneId:"scene-003",scoreDelta:0,knowledgePointId:"84f7d873-e573-4689-b18d-6f82c745d1bf"}],
+        knowledgeBindings:[{knowledgePointId:"84f7d873-e573-4689-b18d-6f82c745d1bf",questionId:"b8a4c1be-db80-1759-9ecf-8f4ad0cfcfd5",purpose:"EXPLAIN"}]},
+      {sceneId:"scene-003",title:"复习题：水稻分蘖期管理",
+        dialogue:[
+          {speakerId:"NEXUS",text:"系统已生成评估问题，请作答：",emotion:"challenging"},
+          {speakerId:"NEXUS",text:"水稻分蘖期管理——关于「水稻分蘖期管理」，以下哪个说法是正确的？",emotion:"questioning"}],
+        choices:[
+          {choiceId:"c-scene-003-d3",questionId:"25c0c346-081e-e95a-9e76-41d3f78c799d",text:"与题目无关的选项",nextSceneId:"scene-004",scoreDelta:0,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"},
+          {choiceId:"c-scene-003-d1",questionId:"25c0c346-081e-e95a-9e76-41d3f78c799d",text:"水稻基本生长周期",nextSceneId:"scene-004",scoreDelta:0,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"},
+          {choiceId:"c-scene-003-d2",questionId:"25c0c346-081e-e95a-9e76-41d3f78c799d",text:"以上都不对",nextSceneId:"scene-004",scoreDelta:0,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"},
+          {choiceId:"c-scene-003-correct",questionId:"25c0c346-081e-e95a-9e76-41d3f78c799d",text:"水稻分蘖期最关键的管理目标是协调群体数量与个体生长，通过水肥调控促进有效分蘖",nextSceneId:"scene-004",scoreDelta:1,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"}],
+        knowledgeBindings:[{knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",questionId:"25c0c346-081e-e95a-9e76-41d3f78c799d",purpose:"QUESTION"}]},
+      {sceneId:"scene-004",title:"学习模块结束",
+        dialogue:[
+          {speakerId:"NEXUS",text:"学习数据已记录。你的知识掌握度持续提升中。",emotion:"proud"},
+          {speakerId:"NEXUS",text:"本次复习共完成 1 道题目，辛苦了！",emotion:"warm"}],
+        choices:[],knowledgeBindings:[]}
+    ],assets:[]
+  }
+};
+
+// ========== 风格主题映射 ==========
+
+const THEMES = {
+  golden:{class:"theme-golden",emoji:"⭐",accent:"#e94560"},
+  campus:{class:"theme-campus",emoji:"📚",accent:"#4caf50"},
+  fantasy:{class:"theme-fantasy",emoji:"🔮",accent:"#b388ff"},
+  science:{class:"theme-science",emoji:"🔬",accent:"#42a5f5"}
+};
+
+const EMOTION_EMOJI = {
+  cheerful:"😊",encouraging:"💪",thoughtful:"🤔",explaining:"📖",
+  challenging:"⚡",questioning:"❓",proud:"🎉",warm:"🤗",
+  curious:"🤔",mystical:"✨",calm:"😌"
+};
+
+const PURPOSE_LABEL = {
+  FEEDBACK:"导航",EXPLAIN:"讲解",QUESTION:"计分题"
+};
+
+// ========== 游戏状态 ==========
+
+let currentPackage = null;
+let currentScene = null;
+let dialogueIndex = 0;
+let score = 0;
+let totalScore = 0;
+let answeredQuestions = new Set();
+let isShowingChoices = false;
+
+// ========== 核心逻辑 ==========
+
+function loadPackage(key) {
+  currentPackage = PACKAGES[key];
+  const theme = THEMES[key];
+
+  // 应用主题
+  const area = document.getElementById('gameArea');
+  area.className = 'game-area ' + theme.class;
+
+  // 设置 CSS 变量
+  document.documentElement.style.setProperty('--accent', theme.accent);
+  document.documentElement.style.setProperty('--speaker-color', theme.accent);
+  document.documentElement.style.setProperty('--scene-title-bg', theme.accent + '22');
+
+  // 计算总分
+  totalScore = 0;
+  currentPackage.scenes.forEach(scene => {
+    if (scene.choices) {
+      scene.choices.forEach(c => {
+        if (c.scoreDelta > 0) totalScore += c.scoreDelta;
+      });
+    }
+  });
+
+  document.getElementById('sceneTotal').textContent = currentPackage.scenes.length;
+  document.getElementById('scoreTotal').textContent = totalScore;
+
+  // 重置状态
+  score = 0;
+  answeredQuestions.clear();
+  document.getElementById('score').textContent = '0';
+
+  // 进入入口场景
+  enterScene(currentPackage.entrySceneId);
+}
+
+function enterScene(sceneId) {
+  currentScene = currentPackage.scenes.find(s => s.sceneId === sceneId);
+  if (!currentScene) return;
+
+  dialogueIndex = 0;
+  isShowingChoices = false;
+
+  // 更新进度
+  const idx = currentPackage.scenes.indexOf(currentScene);
+  document.getElementById('sceneIdx').textContent = idx + 1;
+  document.getElementById('progressBar').style.width =
+    ((idx + 1) / currentPackage.scenes.length * 100) + '%';
+
+  // 场景标题
+  document.getElementById('sceneTitle').textContent =
+    currentScene.title || '—';
+
+  // 知识绑定提示
+  const hint = document.getElementById('knowledgeHint');
+  if (currentScene.knowledgeBindings && currentScene.knowledgeBindings.length > 0) {
+    const purposes = [...new Set(currentScene.knowledgeBindings.map(b => b.purpose))];
+    const purposeLabels = purposes.map(p => PURPOSE_LABEL[p] || p).join(' · ');
+    hint.innerHTML = `📌 ${purposeLabels}`;
+    hint.style.display = 'block';
+  } else {
+    hint.style.display = 'none';
+  }
+
+  // 角色占位
+  const firstSpeaker = currentScene.dialogue[0]?.speakerId || '';
+  const theme = THEMES[document.getElementById('packageSelect').value];
+  document.getElementById('charPlaceholder').textContent = theme.emoji;
+
+  // 隐藏选项区，显示对话框
+  document.getElementById('choicesContainer').style.display = 'none';
+  document.getElementById('dialogueBox').style.display = 'block';
+
+  showDialogue();
+}
+
+function showDialogue() {
+  if (dialogueIndex >= currentScene.dialogue.length) {
+    // 对话结束，显示选项或结束场景
+    if (currentScene.choices && currentScene.choices.length > 0) {
+      showChoices();
+    } else {
+      showEnding();
+    }
+    return;
+  }
+
+  const line = currentScene.dialogue[dialogueIndex];
+  const emoji = EMOTION_EMOJI[line.emotion] || '💬';
+
+  document.getElementById('speakerName').innerHTML =
+    `${line.speakerId} <span class="emotion-tag">${emoji} ${line.emotion}</span>`;
+
+  // 打字机效果
+  const textEl = document.getElementById('dialogueText');
+  textEl.textContent = '';
+  let i = 0;
+  const fullText = line.text;
+
+  function typeChar() {
+    if (i < fullText.length && dialogueIndex < currentScene.dialogue.length) {
+      textEl.textContent += fullText[i];
+      i++;
+      setTimeout(typeChar, 30);
+    }
+  }
+  typeChar();
+}
+
+function advanceDialogue() {
+  if (isShowingChoices) return;
+
+  // 如果打字机还在进行，直接显示完整文本
+  const textEl = document.getElementById('dialogueText');
+  const line = currentScene.dialogue[dialogueIndex];
+  if (line && textEl.textContent.length < line.text.length) {
+    textEl.textContent = line.text;
+    return;
+  }
+
+  dialogueIndex++;
+  showDialogue();
+}
+
+function showChoices() {
+  isShowingChoices = true;
+  document.getElementById('dialogueBox').style.display = 'none';
+
+  const container = document.getElementById('choicesContainer');
+  container.innerHTML = '';
+  container.style.display = 'flex';
+
+  // 检查是否是计分题
+  const isQuestion = currentScene.knowledgeBindings &&
+    currentScene.knowledgeBindings.some(b => b.purpose === 'QUESTION');
+  const questionId = isQuestion ?
+    currentScene.knowledgeBindings.find(b => b.purpose === 'QUESTION').questionId : null;
+  const alreadyAnswered = questionId && answeredQuestions.has(questionId);
+
+  currentScene.choices.forEach((choice, idx) => {
+    const btn = document.createElement('button');
+    btn.className = 'choice-btn';
+    btn.textContent = choice.text;
+
+    if (isQuestion && alreadyAnswered) {
+      // 已回答，显示结果
+      if (choice.scoreDelta > 0) {
+        btn.classList.add('correct');
+        btn.innerHTML = choice.text + ' <span class="choice-result">✓ 正确</span>';
+      } else {
+        btn.classList.add('wrong');
+        btn.innerHTML = choice.text + ' <span class="choice-result">✗</span>';
+      }
+      btn.disabled = true;
+    } else if (isQuestion) {
+      // 计分题：选择后显示对错
+      btn.onclick = () => {
+        // 标记所有选项
+        currentScene.choices.forEach((c, i) => {
+          const b = container.children[i];
+          b.disabled = true;
+          if (c.scoreDelta > 0) {
+            b.classList.add('correct');
+            b.innerHTML = c.text + ' <span class="choice-result">✓ 正确</span>';
+          } else if (c === choice) {
+            b.classList.add('wrong');
+            b.innerHTML = c.text + ' <span class="choice-result">✗ 错误</span>';
+          } else {
+            b.classList.add('wrong');
+          }
+        });
+
+        if (choice.scoreDelta > 0) {
+          score += choice.scoreDelta;
+          document.getElementById('score').textContent = score;
+        }
+        if (questionId) answeredQuestions.add(questionId);
+
+        // 2 秒后跳转
+        setTimeout(() => {
+          if (choice.nextSceneId) {
+            isShowingChoices = false;
+            enterScene(choice.nextSceneId);
+          } else {
+            showEnding();
+          }
+        }, 2000);
+      };
+    } else {
+      // 非计分选项：直接跳转
+      btn.onclick = () => {
+        if (choice.nextSceneId) {
+          isShowingChoices = false;
+          enterScene(choice.nextSceneId);
+        } else {
+          showEnding();
+        }
+      };
+    }
+
+    container.appendChild(btn);
+  });
+}
+
+function showEnding() {
+  const area = document.getElementById('gameArea');
+  const theme = THEMES[document.getElementById('packageSelect').value];
+  const isPerfect = score === totalScore && totalScore > 0;
+  const titleText = currentScene.title || '复习结束';
+  const endingDialogue = currentScene.dialogue && currentScene.dialogue.length > 0
+    ? currentScene.dialogue.map(d => d.text).join('<br>')
+    : '';
+
+  area.innerHTML = `
+    <div class="progress-bar" id="progressBar" style="width:100%"></div>
+    <div class="ending-screen">
+      <h2>${isPerfect ? '🎉 ' : ''}${titleText}</h2>
+      <div class="score-display">
+        <span>${score}</span> / ${totalScore}
+      </div>
+      <p>${endingDialogue}</p>
+      <button class="restart-btn" onclick="restart()">再来一次</button>
+    </div>
+  `;
+}
+
+// 重建游戏区域 DOM（供 restart 与切换包共用）
+function rebuildGameArea() {
+  const gameArea = document.getElementById('gameArea');
+  gameArea.className = 'game-area';
+  gameArea.innerHTML = `
+    <div class="progress-bar" id="progressBar" style="width:0%"></div>
+    <div class="scene-title" id="sceneTitle"></div>
+    <div class="knowledge-hint" id="knowledgeHint" style="display:none"></div>
+    <div class="character-placeholder" id="charPlaceholder">🎭</div>
+    <div class="dialogue-area" id="dialogueArea">
+      <div class="dialogue-box" id="dialogueBox" onclick="advanceDialogue()">
+        <div class="speaker-name" id="speakerName"></div>
+        <div class="dialogue-text" id="dialogueText"></div>
+      </div>
+      <div class="choices-container" id="choicesContainer" style="display:none"></div>
+    </div>
+  `;
+}
+
+function restart() {
+  const key = document.getElementById('packageSelect').value;
+  rebuildGameArea();
+  loadPackage(key);
+}
+
+// ========== 事件绑定 ==========
+
+document.getElementById('packageSelect').addEventListener('change', function() {
+  rebuildGameArea();
+  loadPackage(this.value);
+});
+
+// ========== 初始化 ==========
+
+loadPackage('campus');
+</script>
+
+</body>
+</html>

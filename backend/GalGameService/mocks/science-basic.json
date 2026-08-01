@@ -1,0 +1,158 @@
+{
+    "schemaVersion":  "1.0",
+    "packageId":  "60689f72-6589-49c9-b74a-633d2b5af1e0",
+    "generatorVersion":  "gala-0.1.0",
+    "reviewPlanId":  "8e812950-3311-40a7-93ab-636409df8cc2",
+    "snapshotVersion":  "plan-graph-1.0:3da5f48f",
+    "entrySceneId":  "scene-001",
+    "scenes":  [
+                   {
+                       "sceneId":  "scene-001",
+                       "title":  "空间站知识模块",
+                       "dialogue":  [
+                                        {
+                                            "speakerId":  "NEXUS",
+                                            "text":  "研究员，欢迎接入 NEXUS 知识系统。今日学习模块已加载完毕。",
+                                            "emotion":  "calm"
+                                        },
+                                        {
+                                            "speakerId":  "NEXUS",
+                                            "text":  "今天我们要复习的主题是：水稻·生长周期",
+                                            "emotion":  "encouraging"
+                                        }
+                                    ],
+                       "choices":  [
+                                       {
+                                           "choiceId":  "c-scene-001-1",
+                                           "questionId":  "c3bd304f-dc44-df55-8608-64c20672e90a",
+                                           "text":  "准备好了，开始吧！",
+                                           "nextSceneId":  "scene-002",
+                                           "scoreDelta":  0,
+                                           "knowledgePointId":  "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"
+                                       }
+                                   ],
+                       "knowledgeBindings":  [
+                                                 {
+                                                     "knowledgePointId":  "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",
+                                                     "questionId":  "c3bd304f-dc44-df55-8608-64c20672e90a",
+                                                     "purpose":  "FEEDBACK"
+                                                 }
+                                             ]
+                   },
+                   {
+                       "sceneId":  "scene-002",
+                       "title":  "知识点讲解：水稻基本生长周期",
+                       "dialogue":  [
+                                        {
+                                            "speakerId":  "NEXUS",
+                                            "text":  "在正式提问之前，先回顾一下「水稻基本生长周期」。",
+                                            "emotion":  "thoughtful"
+                                        },
+                                        {
+                                            "speakerId":  "NEXUS",
+                                            "text":  "水稻从播种到成熟的完整生长周期，包括幼苗期、分蘖期、拔节期、抽穗期和成熟期。",
+                                            "emotion":  "explaining"
+                                        }
+                                    ],
+                       "choices":  [
+                                       {
+                                           "choiceId":  "c-scene-002-1",
+                                           "questionId":  "b8a4c1be-db80-1759-9ecf-8f4ad0cfcfd5",
+                                           "text":  "了解了，继续。",
+                                           "nextSceneId":  "scene-003",
+                                           "scoreDelta":  0,
+                                           "knowledgePointId":  "84f7d873-e573-4689-b18d-6f82c745d1bf"
+                                       }
+                                   ],
+                       "knowledgeBindings":  [
+                                                 {
+                                                     "knowledgePointId":  "84f7d873-e573-4689-b18d-6f82c745d1bf",
+                                                     "questionId":  "b8a4c1be-db80-1759-9ecf-8f4ad0cfcfd5",
+                                                     "purpose":  "EXPLAIN"
+                                                 }
+                                             ]
+                   },
+                   {
+                       "sceneId":  "scene-003",
+                       "title":  "复习题：水稻分蘖期管理",
+                       "dialogue":  [
+                                        {
+                                            "speakerId":  "NEXUS",
+                                            "text":  "系统已生成评估问题，请作答：",
+                                            "emotion":  "challenging"
+                                        },
+                                        {
+                                            "speakerId":  "NEXUS",
+                                            "text":  "水稻分蘖期管理——关于「水稻分蘖期管理」，以下哪个说法是正确的？",
+                                            "emotion":  "questioning"
+                                        }
+                                    ],
+                       "choices":  [
+                                       {
+                                           "choiceId":  "c-scene-003-d3",
+                                           "questionId":  "25c0c346-081e-e95a-9e76-41d3f78c799d",
+                                           "text":  "与题目无关的选项",
+                                           "nextSceneId":  "scene-004",
+                                           "scoreDelta":  0,
+                                           "knowledgePointId":  "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"
+                                       },
+                                       {
+                                           "choiceId":  "c-scene-003-d1",
+                                           "questionId":  "25c0c346-081e-e95a-9e76-41d3f78c799d",
+                                           "text":  "水稻基本生长周期",
+                                           "nextSceneId":  "scene-004",
+                                           "scoreDelta":  0,
+                                           "knowledgePointId":  "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"
+                                       },
+                                       {
+                                           "choiceId":  "c-scene-003-d2",
+                                           "questionId":  "25c0c346-081e-e95a-9e76-41d3f78c799d",
+                                           "text":  "以上都不对",
+                                           "nextSceneId":  "scene-004",
+                                           "scoreDelta":  0,
+                                           "knowledgePointId":  "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"
+                                       },
+                                       {
+                                           "choiceId":  "c-scene-003-correct",
+                                           "questionId":  "25c0c346-081e-e95a-9e76-41d3f78c799d",
+                                           "text":  "水稻分蘖期最关键的管理目标是协调群体数量与个体生长，通过水肥调控促进有效分蘖",
+                                           "nextSceneId":  "scene-004",
+                                           "scoreDelta":  1,
+                                           "knowledgePointId":  "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"
+                                       }
+                                   ],
+                       "knowledgeBindings":  [
+                                                 {
+                                                     "knowledgePointId":  "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",
+                                                     "questionId":  "25c0c346-081e-e95a-9e76-41d3f78c799d",
+                                                     "purpose":  "QUESTION"
+                                                 }
+                                             ]
+                   },
+                   {
+                       "sceneId":  "scene-004",
+                       "title":  "学习模块结束",
+                       "dialogue":  [
+                                        {
+                                            "speakerId":  "NEXUS",
+                                            "text":  "学习数据已记录。你的知识掌握度持续提升中。",
+                                            "emotion":  "proud"
+                                        },
+                                        {
+                                            "speakerId":  "NEXUS",
+                                            "text":  "本次复习共完成 1 道题目，辛苦了！",
+                                            "emotion":  "warm"
+                                        }
+                                    ],
+                       "choices":  [
+
+                                   ],
+                       "knowledgeBindings":  [
+
+                                             ]
+                   }
+               ],
+    "assets":  [
+
+               ]
+}
