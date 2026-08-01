@@ -101,6 +101,12 @@ export function createApp(config: GatewayConfig): express.Express {
     const proxy = createProxyForRoute(route, config);
     middlewares.push(proxy as unknown as express.RequestHandler);
 
+    if (route.methods && route.methods.length > 0) {
+      console.log(`[Gateway Route] ${route.methods.join(',')} ${route.path} -> ${route.service} (auth: ${route.auth})`);
+    } else {
+      console.log(`[Gateway Route] ANY ${route.path} -> ${route.service} (auth: ${route.auth})`);
+    }
+
     // 有 methods 约束时按精确方法注册，否则前缀匹配
     if (route.methods && route.methods.length > 0) {
       for (const method of route.methods) {
