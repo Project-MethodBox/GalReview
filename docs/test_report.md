@@ -1,6 +1,10 @@
 # GalReview 当前全流程集成测试报告
 
-## 1. 结论
+## 1. 2026-07-31 基线结论
+
+本节至第 9 节保留 2026-07-31 非 OCR 链路的原始测试记录。2026-08-01 新增的
+GalGameService 集成结果见第 10 节；其中已完成的 GalGame 流程结论取代第 8 节对应的
+历史待办状态。
 
 本轮规定的非 OCR 全流程已经通过：
 
@@ -290,9 +294,10 @@ Gateway 契约测试还验证：
 ## 8. 明确未覆盖与 URGENT 项
 
 - **OCR 未测试**：仅证明 Dockerfile 可构建；未启动、未调用、未评估准确率。
-- **GalGameService / RenderService 未参加全流程**：本轮只验证 KnowledgeService 的
+- **GalGameService / RenderService 未参加全流程（截至 2026-07-31）**：本轮只验证 KnowledgeService 的
   INTERNAL allowlist 和进程内计划/掌握度测试。题目生成、剧情生成、运行时会话和真实
-  evidence 回传仍为对应负责人的 **URGENT** 集成项。
+  evidence 回传仍为对应负责人的 **URGENT** 集成项。GalGameService 后续集成结果见
+  第 10 节；RenderService 与真实游玩回传仍未覆盖。
 - **异步事件未测试**：当前闭环使用同步 INTERNAL HTTP；消息 broker、重试和 DLQ
   仍是后续统一基础设施契约。
 - **File access grant 未测试且不属于当前可执行契约**：现有占位映射没有 grant token
@@ -320,3 +325,82 @@ docker compose -f compose.integration.yaml ps
 `codex/stash-backup-20260731`（`96d4d24d2c9ecfb97408f73a3b5e72810923def0`），
 便于需要时审计。`git diff --name-only --diff-filter=U` 和 stash 列表均为空；
 Compose 配置校验为 0，七个默认组件全部 healthy，OCR 运行数为 0。
+
+## 10. 2026-08-01 GalGame 全流程补充测试
+
+### 10.1 结论与环境
+
+在保留前一轮注册、登录、上传、非 OCR 提取和 KnowledgeService 构图能力的基础上，
+本轮完成了复习计划到 GalGame 游戏包的本地集成验证。Assessment 与 Learning 两条计划
+均可经 Gateway 提交生成任务、取得清单及内容，并通过游戏包校验接口。
+
+由于 Windows 排除端口范围包含默认主机端口，本轮使用以下仅限主机侧的端口覆盖：
+
+| 入口 | 本轮地址 |
+|---|---|
+| Gateway | `http://127.0.0.1:15000` |
+| KnowledgeService 诊断入口 | `http://127.0.0.1:15080` |
+
+默认主机端口 `5000` 和 `5080` 在本机无法绑定；容器内部端口和服务间调用地址不受影响。
+最终 `auth`、`file`、`user`、`knowledge`、`galgame`、`gateway`、`mongo`、`neo4j`
+八个容器均为 `healthy`。
+
+最终自动化回归结果：GalGameService Release 测试 `258/258` 通过，Gateway 的
+`12/12` 个测试文件、`172/172` 个用例通过，Gateway TypeScript 构建退出码为 0。
+Compose 已成功构建全部应用镜像并启动上述八个组件。
+
+Docker Desktop 数据盘已核对为
+`D:\DockerData\DockerDesktopWSL\disk\docker_data.vhdx`，本轮镜像和卷未落回 C 盘默认
+数据位置。
+
+### 10.2 真实资料桥接结果
+
+真实输入为 `D:\AppData\test\农业生态学题库.pdf`，本轮明确关闭 OCR。注册与登录成功，
+随后经 Gateway 完成文件处理和知识图谱构建：
+
+| 项目 | 观测值 |
+|---|---|
+| IngestionJob | `SUCCEEDED` |
+| `ocrRequested` / `ocrUsed` | `false` / `false` |
+| parser | `files-text-v1` |
+| 规范化文本长度 | 26,139 |
+| 文本 SHA-256 | `5b233c1cb5ea7e7cd0cc37a4958bd9eb7ee8593ef39603a4cc72adeacc86ae1b` |
+| source spans / blocks | 20 / 20 |
+| 图谱规模 | 7 章、243 个知识点、207 条关系 |
+| `PREREQUISITE` 关系 | 207 |
+| 图性质 | DAG |
+| 初始掌握度 | 全部为 0 |
+| Neo4j 对账 | 章节、知识点和关系计数均与 API 一致 |
+
+### 10.3 Assessment 游戏包
+
+Assessment 计划包含 9 个节点，其中 3 个为 `questionTarget`，观测覆盖率为 `0.0354`；
+生成结果包含 11 个场景。任务生成、manifest 和 content 获取均成功，并验证：
+
+- 游戏包中的 `reviewPlanId` 与完整 `snapshotVersion` 和输入计划一致；
+- 每个 `QUESTION` 的知识点绑定与选项处于同一场景；
+- 题目选项显式包含 `answerKind` 和 `correct`，题目标识均为 UUID v4；
+- 响应内容字节、manifest checksum 与 ETag 的 SHA-256 均为
+  `770ebcfc90e2fbacdcadeffe24d31e5379fdcb10a34f1c8772a0bca061172913`；
+- 携带对应 `If-None-Match` 再次获取内容返回 `304`；
+- 原始游戏包校验返回 `200`；将一个选项的 `correct` 故意置为 `null` 后，校验返回
+  `422`。
+
+### 10.4 Learning 游戏包
+
+Learning 计划包含 5 个节点，5 个均为 `questionTarget`，生成结果包含 7 个场景。任务生成
+和内部游戏包校验成功。响应内容、manifest 与 ETag 对应的 SHA-256 为
+`d7f560452f2573469fd1514b30eff0a8c266314bb70b20ddfd212d9452a8d318`，条件请求返回
+`304`。
+
+### 10.5 范围与部署限制
+
+- OCR 不在本轮测试范围内，不能据此判断 OCR 识别效果。
+- RenderService 和实际 GalGame runtime 不在当前仓库及 Compose 栈中。本轮仅使用契约中
+  可信的 `RenderService` 服务身份调用游戏包校验接口，未执行真实游玩，也未验证最终
+  掌握度 evidence 回传闭环。
+- GalGameService 当前存储标识为 `ephemeral-memory`；容器重启会丢失生成任务和游戏包，
+  只适用于本地集成与预发布环境。
+- 远程服务器的 SSH 端口可达，但提供的凭据认证失败；为避免触发锁定已停止重试，远程
+  部署未执行。仓库保留 `.env.deploy.example` 与 Compose 配置，可在凭据可用后快速部署。
+  本报告不记录服务器地址、账号密码或服务密钥。

@@ -42,7 +42,7 @@ public class BoundaryTests
             PackageId: PkgId,
             GeneratorVersion: "gala-0.1.0",
             ReviewPlanId: PlanId,
-            SnapshotVersion: "plan-graph-1.0:3da5f48f",
+            SnapshotVersion: "plan-graph-1.0:3da5f48f37ac57c91b49ee747c11e45f1a9e9e73d8e892fcd1bd1f9f3f50c620",
             EntrySceneId: "scene-001",
             Scenes: new Scene[]
             {
@@ -55,7 +55,8 @@ public class BoundaryTests
                     },
                     Choices: new Choice[]
                     {
-                        new("c1", QId, "协调群体数量与个体生长", null, 1, PointId),
+                        new("c1", QId, "协调群体数量与个体生长", null, 1, PointId,
+                            AnswerKind.CHOICE, Correct: true),
                     },
                     KnowledgeBindings: new KnowledgeBinding[]
                     {
@@ -302,7 +303,7 @@ public class BoundaryTests
             PackageId: PkgId,
             GeneratorVersion: "gala-0.1.0",
             ReviewPlanId: PlanId,
-            SnapshotVersion: "plan-graph-1.0:3da5f48f",
+            SnapshotVersion: "plan-graph-1.0:3da5f48f37ac57c91b49ee747c11e45f1a9e9e73d8e892fcd1bd1f9f3f50c620",
             EntrySceneId: "scene-001",
             Scenes: new Scene[]
             {
@@ -315,9 +316,12 @@ public class BoundaryTests
                     },
                     Choices: new Choice[]
                     {
-                        new("c1", QId, "选项含 <b>HTML</b> 和 '; DROP TABLE--", null, 1, PointId),
-                        new("c2", QId, "🌾 正确选项", null, 0, PointId),
-                        new("c3", QId, "Unicode: 日本語한국어", null, 0, PointId),
+                        new("c1", QId, "选项含 <b>HTML</b> 和 '; DROP TABLE--", null, 1, PointId,
+                            AnswerKind.CHOICE, Correct: true),
+                        new("c2", QId, "🌾 正确选项", null, 0, PointId,
+                            AnswerKind.CHOICE, Correct: false),
+                        new("c3", QId, "Unicode: 日本語한국어", null, 0, PointId,
+                            AnswerKind.CHOICE, Correct: false),
                     },
                     KnowledgeBindings: new KnowledgeBinding[]
                     {

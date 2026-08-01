@@ -274,7 +274,7 @@ public class UserInteractionSimulationTests
         var root = doc.RootElement;
 
         Assert.Equal(result.Completed, root.GetProperty("completed").GetBoolean());
-        Assert.Equal(result.FinalScore, root.GetProperty("finalScore").GetInt32());
+        Assert.Equal(result.FinalScore, root.GetProperty("finalScore").GetDouble());
         Assert.Equal(result.QuestionsAnswered, root.GetProperty("questionsAnswered").GetInt32());
         Assert.Equal(result.CorrectAnswers, root.GetProperty("correctAnswers").GetInt32());
 
@@ -359,10 +359,10 @@ public enum PlaythroughState
 /// <summary>选项选择策略</summary>
 public abstract class ChoiceStrategy
 {
-    /// <summary>始终选正确答案（scoreDelta > 0）</summary>
+    /// <summary>始终选标记为正确的答案</summary>
     public static readonly ChoiceStrategy AlwaysCorrect = new AlwaysCorrectStrategy();
 
-    /// <summary>始终选错误答案（scoreDelta = 0）</summary>
+    /// <summary>始终选标记为错误的答案</summary>
     public static readonly ChoiceStrategy AlwaysWrong = new AlwaysWrongStrategy();
 
     /// <summary>始终选第一个选项</summary>
@@ -379,13 +379,13 @@ public abstract class ChoiceStrategy
     private sealed class AlwaysCorrectStrategy : ChoiceStrategy
     {
         public override Choice Select(Choice[] choices, int questionIndex) =>
-            choices.FirstOrDefault(c => c.ScoreDelta > 0) ?? choices[0];
+            choices.FirstOrDefault(c => c.Correct is true) ?? choices[0];
     }
 
     private sealed class AlwaysWrongStrategy : ChoiceStrategy
     {
         public override Choice Select(Choice[] choices, int questionIndex) =>
-            choices.FirstOrDefault(c => c.ScoreDelta == 0) ?? choices[0];
+            choices.FirstOrDefault(c => c.Correct is false) ?? choices[0];
     }
 
     private sealed class PickFirstStrategy : ChoiceStrategy
@@ -401,8 +401,8 @@ public abstract class ChoiceStrategy
         public override Choice Select(Choice[] choices, int questionIndex)
         {
             if (questionIndex == _targetIndex)
-                return choices.FirstOrDefault(c => c.ScoreDelta > 0) ?? choices[0];
-            return choices.FirstOrDefault(c => c.ScoreDelta == 0) ?? choices[0];
+                return choices.FirstOrDefault(c => c.Correct is true) ?? choices[0];
+            return choices.FirstOrDefault(c => c.Correct is false) ?? choices[0];
         }
     }
 }
@@ -421,7 +421,7 @@ public sealed record ChoiceLogEntry(
     int QuestionIndex,      // 计分题序号（导航场景为 -1）
     string ChoiceId,
     string ChoiceText,
-    int ScoreDelta,
+    double ScoreDelta,
     bool IsCorrect,
     string? NextSceneId);
 
@@ -429,7 +429,7 @@ public sealed record ChoiceLogEntry(
 public class PlaythroughResult
 {
     public bool Completed { get; init; }
-    public int FinalScore { get; init; }
+    public double FinalScore { get; init; }
     public int QuestionsAnswered { get; init; }
     public int CorrectAnswers { get; init; }
     public List<string> VisitedScenes { get; init; } = new();
@@ -462,7 +462,7 @@ public static class GamePlaythroughSimulator
         var visitedScenes = new List<string>();
         var dialogueLog = new List<DialogueLogEntry>();
         var choiceLog = new List<ChoiceLogEntry>();
-        var score = 0;
+        var score = 0d;
         var questionsAnswered = 0;
         var correctAnswers = 0;
         var questionIndex = 0;
@@ -525,14 +525,14 @@ public static class GamePlaythroughSimulator
                         ChoiceId: choice.ChoiceId,
                         ChoiceText: choice.Text,
                         ScoreDelta: choice.ScoreDelta,
-                        IsCorrect: choice.ScoreDelta > 0,
+                        IsCorrect: choice.Correct is true,
                         NextSceneId: choice.NextSceneId));
 
                     if (isQuestion)
                     {
                         questionsAnswered++;
                         questionIndex++;
-                        if (choice.ScoreDelta > 0)
+                        if (choice.Correct is true)
                         {
                             score += choice.ScoreDelta;
                             correctAnswers++;

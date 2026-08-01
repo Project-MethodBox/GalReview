@@ -3,7 +3,7 @@
     "packageId":  "f2561bb2-b88c-47ef-b0ae-8f283ff64f1b",
     "generatorVersion":  "gala-0.1.0",
     "reviewPlanId":  "8e812950-3311-40a7-93ab-636409df8cc2",
-    "snapshotVersion":  "plan-graph-1.0:3da5f48f",
+    "snapshotVersion":  "plan-graph-1.0:3da5f48f37ac57c91b49ee747c11e45f1a9e9e73d8e892fcd1bd1f9f3f50c620",
     "entrySceneId":  "scene-001",
     "scenes":  [
                    {
@@ -23,6 +23,8 @@
                                            "text":  "协调群体数量与个体生长",
                                            "nextSceneId":  null,
                                            "scoreDelta":  1,
+                                           "answerKind":  "CHOICE",
+                                           "correct":  true,
                                            "knowledgePointId":  "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"
                                        }
                                    ],

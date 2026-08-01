@@ -17,12 +17,6 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 
-// 请求体大小限制：防止异常大请求导致 OOM（2 MB 足以容纳任何合法游戏包）
-builder.WebHost.ConfigureKestrel(options =>
-{
-    options.Limits.MaxRequestBodySize = 2 * 1024 * 1024; // 2 MB
-});
-
 builder.Services.Configure<Microsoft.AspNetCore.Routing.RouteHandlerOptions>(
     options => options.ThrowOnBadRequest = true);
 
@@ -38,7 +32,10 @@ var gatewayKey = builder.Configuration["Gateway:ServiceKey"]
 var isMockMode = string.Equals(
     builder.Configuration["MOONSTONE_MODE"] ?? Environment.GetEnvironmentVariable("MOONSTONE_MODE"),
     "Mock", StringComparison.OrdinalIgnoreCase);
-var storageName = isMockMode ? "memory" : "persistent";
+var storageName = isMockMode ? "mock-memory" : "ephemeral-memory";
+var validationAllowedServices = InternalServiceAccessPolicy.CreateAllowlist(
+    builder.Configuration.GetSection("InternalAccess:ValidationAllowedServices"),
+    "RenderService");
 
 // HttpClient：经 Gateway 调用 KnowledgeService
 builder.Services.AddHttpClient("gateway", client =>
@@ -49,7 +46,7 @@ builder.Services.AddHttpClient("gateway", client =>
 
 // DI 注册
 builder.Services.AddSingleton<GamePackageValidator>();
-builder.Services.AddSingleton<IGameStore, InMemoryGameStore>();
+builder.Services.AddSingleton<IGameStore>(_ => new InMemoryGameStore(isMockMode));
 builder.Services.AddSingleton<PlanGraphClient>(sp => new PlanGraphClient(
     sp.GetRequiredService<IHttpClientFactory>(),
     sp.GetRequiredService<ILoggerFactory>().CreateLogger<PlanGraphClient>(),
@@ -147,12 +144,7 @@ app.MapGet("/readyz", (HttpContext c) =>
 //   - reviewPlan 不存在 → 422 REVIEW_PLAN_NOT_FOUND
 //   - 上游不可用 → 503 SERVICE_UNAVAILABLE
 //   - 校验通过 → 202 Accepted，后台异步生成
-// 幂等性：Idempotency-Key 相同时返回同一 job（§2.1 契约要求）
 // ============================================================================
-
-// 幂等键缓存：Idempotency-Key → GenerationId（Mock 内存模式）
-var idempotencyCache = new Dictionary<string, Guid>(StringComparer.Ordinal);
-var idempotencyLock = new object();
 
 app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, HttpContext c, IGameStore store, PlanGraphClient planClient, GameGenerator generator) =>
 {
@@ -160,31 +152,12 @@ app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, Ht
     if (userId is null) return Failure(c, 401, "AUTH_REQUIRED", "需要网关认证的用户身份。");
 
     // 请求验证
-    if (request.ReviewPlanId == Guid.Empty)
-        return Failure(c, 400, "VALIDATION_ERROR", "reviewPlanId 不能为空。");
+    if (!IsUuidV4(request.ReviewPlanId))
+        return Failure(c, 400, "VALIDATION_ERROR", "reviewPlanId 必须为 UUID v4。");
     if (string.IsNullOrWhiteSpace(request.SnapshotVersion))
         return Failure(c, 400, "VALIDATION_ERROR", "snapshotVersion 不能为空。");
     if (string.IsNullOrWhiteSpace(request.Locale))
         return Failure(c, 400, "VALIDATION_ERROR", "locale 不能为空。");
-
-    // 幂等性检查：相同 Idempotency-Key 返回同一 job
-    var idempotencyKey = c.Request.Headers["Idempotency-Key"].FirstOrDefault();
-    if (!string.IsNullOrWhiteSpace(idempotencyKey))
-    {
-        lock (idempotencyLock)
-        {
-            if (idempotencyCache.TryGetValue(idempotencyKey, out var existingGenId))
-            {
-                var existingJob = store.GetJob(existingGenId);
-                if (existingJob is not null)
-                {
-                    return Results.Accepted(
-                        $"/api/v1/game-generations/{existingJob.GenerationId}",
-                        ApiSuccess.Create(existingJob, c.TraceIdentifier));
-                }
-            }
-        }
-    }
 
     var traceId = c.TraceIdentifier;
     var logger = c.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("GalGameService.Generation");
@@ -205,25 +178,25 @@ app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, Ht
         return Failure(c, 422, "REVIEW_PLAN_SNAPSHOT_MISMATCH", fetchResult.Detail ?? "snapshot 不匹配");
     if (fetchResult.Status == PlanGraphFetchStatus.NotFound)
         return Failure(c, 422, "REVIEW_PLAN_NOT_FOUND", fetchResult.Detail ?? "复习计划不存在");
-    if (fetchResult.Status != PlanGraphFetchStatus.Success || fetchResult.Graph is null)
+    if (fetchResult.Status == PlanGraphFetchStatus.InvalidRequest)
+        return Failure(c, 400, "VALIDATION_ERROR", fetchResult.Detail ?? "复习计划图请求不符合契约");
+    if (fetchResult.Status == PlanGraphFetchStatus.UpstreamContractInvalid)
+        throw new UpstreamContractException(fetchResult.Detail ?? "KnowledgeService 响应不符合契约");
+    if (fetchResult.Status == PlanGraphFetchStatus.Unavailable)
         return Failure(c, 503, "SERVICE_UNAVAILABLE", fetchResult.Detail ?? "知识图谱服务不可用");
+    if (fetchResult.Status != PlanGraphFetchStatus.Success || fetchResult.Graph is null)
+        throw new UpstreamContractException("PlanGraph 读取结果状态不完整");
 
-    // PlanGraph 已校验通过，创建生成任务
-    var job = store.CreateJob(userId, request);
     var graph = fetchResult.Graph;
+    if (!Guid.TryParse(userId, out var ownerUserId) || graph.OwnerUserId != ownerUserId)
+        return Failure(c, 422, "REVIEW_PLAN_NOT_FOUND", "复习计划不存在或不可用于当前用户。");
 
-    // 记录幂等键
-    if (!string.IsNullOrWhiteSpace(idempotencyKey))
-    {
-        lock (idempotencyLock)
-        {
-            idempotencyCache[idempotencyKey] = job.GenerationId;
-        }
-    }
+    // PlanGraph 已校验且属于当前用户，创建生成任务
+    var job = store.CreateJob(userId, request);
 
     // 后台异步生成（PlanGraph 已确认可用，不再重复获取）
     // 使用 _ = 丢弃 Task 但内部有完整异常处理，不会静默吞异常
-    _ = Task.Run(async () =>
+    _ = Task.Run(() =>
     {
         try
         {
@@ -276,8 +249,8 @@ app.MapGet("/api/v1/game-generations/{generationId}", (string generationId, Http
 {
     var userId = GatewayUser(c, gatewayKey);
     if (userId is null) return Failure(c, 401, "AUTH_REQUIRED", "需要网关认证的用户身份。");
-    if (!Guid.TryParse(generationId, out var id))
-        return Failure(c, 400, "VALIDATION_ERROR", "generationId 格式不正确。");
+    if (!TryParseUuidV4(generationId, out var id))
+        return Failure(c, 400, "VALIDATION_ERROR", "generationId 必须为 UUID v4。");
     var job = store.GetJob(id);
     if (job is null || job.OwnerUserId != userId)
         return Failure(c, 404, "RESOURCE_NOT_FOUND", "生成任务不存在。");
@@ -292,8 +265,8 @@ app.MapGet("/api/v1/game-packages/{packageId}", (string packageId, HttpContext c
 {
     var userId = GatewayUser(c, gatewayKey);
     if (userId is null) return Failure(c, 401, "AUTH_REQUIRED", "需要网关认证的用户身份。");
-    if (!Guid.TryParse(packageId, out var id))
-        return Failure(c, 400, "VALIDATION_ERROR", "packageId 格式不正确。");
+    if (!TryParseUuidV4(packageId, out var id))
+        return Failure(c, 400, "VALIDATION_ERROR", "packageId 必须为 UUID v4。");
     var manifest = store.GetManifest(id);
     if (manifest is null || manifest.OwnerUserId != userId)
         return Failure(c, 404, "RESOURCE_NOT_FOUND", "游戏包不存在。");
@@ -309,8 +282,8 @@ app.MapGet("/api/v1/game-packages/{packageId}/content", (string packageId, HttpC
 {
     var userId = GatewayUser(c, gatewayKey);
     if (userId is null) return Failure(c, 401, "AUTH_REQUIRED", "需要网关认证的用户身份。");
-    if (!Guid.TryParse(packageId, out var id))
-        return Failure(c, 400, "VALIDATION_ERROR", "packageId 格式不正确。");
+    if (!TryParseUuidV4(packageId, out var id))
+        return Failure(c, 400, "VALIDATION_ERROR", "packageId 必须为 UUID v4。");
 
     var owner = store.GetPackageOwner(id);
     if (owner is null || owner != userId)
@@ -323,15 +296,16 @@ app.MapGet("/api/v1/game-packages/{packageId}/content", (string packageId, HttpC
 
     // ETag / 304 协商缓存
     var etag = $"\"{manifest.Checksum}\"";
-    if (c.Request.Headers.IfNoneMatch == etag)
-        return Results.StatusCode(304);
-
     c.Response.Headers.ETag = etag;
     // 游戏包是用户私有的，禁止共享缓存
     c.Response.Headers.CacheControl = "private, no-cache";
     c.Response.Headers.XContentTypeOptions = "nosniff";
-    c.Response.ContentType = "application/json; charset=utf-8";
-    return Results.Json(package);
+    if (IfNoneMatchMatches(c.Request.Headers.IfNoneMatch, etag))
+        return Results.StatusCode(304);
+
+    return Results.Text(
+        GamePackageValidator.SerializeCanonical(package),
+        "application/json; charset=utf-8");
 });
 
 // ============================================================================
@@ -341,14 +315,17 @@ app.MapGet("/api/v1/game-packages/{packageId}/content", (string packageId, HttpC
 app.MapPost("/internal/v1/game-package-validations", (GamePackageValidationRequest request, HttpContext c, GamePackageValidator validator) =>
 {
     // 服务身份验证：X-Gateway-Key + X-Service-Name
-    if (!InternalServiceAccessPolicy.IsTrusted(c.Request.Headers, gatewayKey))
+    if (!InternalServiceAccessPolicy.IsTrusted(
+            c.Request.Headers, gatewayKey, validationAllowedServices))
         return Failure(c, 403, "FORBIDDEN", "需要经 Gateway 转发的可信服务身份。");
 
     if (request.Package is null)
         return Failure(c, 400, "VALIDATION_ERROR", "package 不能为空。");
 
     var result = validator.Validate(request.Package);
-    return Results.Ok(ApiSuccess.Create(result, c.TraceIdentifier));
+    return Results.Json(
+        ApiSuccess.Create(result, c.TraceIdentifier),
+        statusCode: result.Valid ? StatusCodes.Status200OK : StatusCodes.Status422UnprocessableEntity);
 });
 
 app.Run();
@@ -371,7 +348,7 @@ static string? GatewayUser(HttpContext context, string key)
 
     if (!context.Request.Headers.TryGetValue("X-User-Id", out var userIdValues)
         || userIdValues.Count != 1
-        || !Guid.TryParse(userIdValues[0], out _))
+        || !TryParseUuidV4(userIdValues[0], out _))
         return null;
 
     return userIdValues[0];
@@ -379,6 +356,34 @@ static string? GatewayUser(HttpContext context, string key)
 
 static IResult Failure(HttpContext context, int status, string code, string message)
     => Results.Json(ApiFailure.Create(code, message, context.TraceIdentifier), statusCode: status);
+
+static bool TryParseUuidV4(string? value, out Guid id)
+    => Guid.TryParse(value, out id) && IsUuidV4(id);
+
+static bool IsUuidV4(Guid id)
+{
+    if (id == Guid.Empty) return false;
+    var value = id.ToString("D");
+    return value[14] == '4' && value[19] is '8' or '9' or 'a' or 'b';
+}
+
+static bool IfNoneMatchMatches(Microsoft.Extensions.Primitives.StringValues values, string currentEtag)
+{
+    foreach (var rawValue in values)
+    {
+        if (rawValue is null) continue;
+        foreach (var rawTag in rawValue.Split(','))
+        {
+            var tag = rawTag.Trim();
+            if (tag == "*") return true;
+            if (tag.StartsWith("W/", StringComparison.OrdinalIgnoreCase))
+                tag = tag[2..].TrimStart();
+            if (string.Equals(tag, currentEtag, StringComparison.Ordinal))
+                return true;
+        }
+    }
+    return false;
+}
 
 // 暴露 partial class 供 WebApplicationFactory 集成测试使用
 public partial class Program { }

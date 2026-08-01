@@ -197,6 +197,13 @@ export const ROUTE_TABLE: RouteEntry[] = [
     service: 'galGameService',
     auth: 'user',
     rateLimitCategory: 'generation',
+    methods: ['POST'],
+  },
+  {
+    path: '/api/v1/game-generations',
+    service: 'galGameService',
+    auth: 'user',
+    rateLimitCategory: 'general',
   },
   {
     path: '/api/v1/game-packages',

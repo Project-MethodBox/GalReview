@@ -3,7 +3,7 @@
 > 版本：v0.1  
 > 状态：Draft / 各服务负责人待确认  
 > 总负责人：PM & TL `@Arabidopsis`  
-> 更新时间：2026-07-31
+> 更新时间：2026-08-01
 > 依据：《千知万理 产品需求与技术方案》v0.2
 
 ## 0. 文档定位
@@ -46,6 +46,7 @@
 - 同一业务事实只能由一个服务及其权威数据库写入；禁止 AuthService 与 UserService 互相直连或读写对方的 MySQL 数据表。
 - **FileService 的数据库为 MongoDB + GridFS**：文件二进制、资料元数据、解析任务和规范化文本只由 FileService 写入。
 - **KnowledgeService 的数据库为 Neo4j**：章节、知识点、关系、计划和掌握度只由 KnowledgeService 写入。
+- **GalGameService 当前使用进程内临时存储**：集成 Compose 使用 `ephemeral-memory`，容器重启后生成任务与游戏包会丢失；该实现只用于当前联调，不是生产持久化方案。
 - 不得将同一事实跨 MySQL、MongoDB、Neo4j 双写为多个权威来源。
 
 ## 1. 架构级调用约束
@@ -150,7 +151,7 @@ interface ApiFailure {
 }
 ```
 
-AuthService、UserService、FileService 与 KnowledgeService 的 JSON/路由绑定失败均必须返回
+AuthService、UserService、FileService、KnowledgeService 与 GalGameService 的 JSON/路由绑定失败均必须返回
 上述 `ApiFailure`：畸形 JSON、字段类型错误、缺失 required 标量、非法 Guid 或无法解析的
 查询参数统一为 `400 VALIDATION_ERROR`，不得返回框架默认空体或落入 500。唯一的传输级
 例外是明确声明为 Binary stream 的
@@ -1356,11 +1357,23 @@ subject to:
 
 | 方法 | Gateway 路由 | 用途 | 请求 | 响应 | 状态 |
 |---|---|---|---|---|---|
-| `POST` | `/api/v1/game-generations` | 创建游戏包生成任务 | `GameGenerationRequest` | `GameGenerationJob` | `202/422` |
-| `GET` | `/api/v1/game-generations/{generationId}` | 查询生成任务 | - | `GameGenerationJob` | `200/404` |
-| `GET` | `/api/v1/game-packages/{packageId}` | 读取游戏包清单 | - | `GamePackageManifest` | `200/404` |
-| `GET` | `/api/v1/game-packages/{packageId}/content` | 下载完整 JSON 游戏包 | `If-None-Match?` | JSON | `200/304/404` |
-| `POST` | `/internal/v1/game-package-validations` | 校验游戏包 | `GamePackageValidationRequest` | `ValidationResult` | `200/422` |
+| `POST` | `/api/v1/game-generations` | 读取并校验 PlanGraph 后创建游戏包生成任务 | `GameGenerationRequest` | `GameGenerationJob` | `202/400/401/422/502/503` |
+| `GET` | `/api/v1/game-generations/{generationId}` | 查询生成任务 | - | `GameGenerationJob` | `200/400/401/404` |
+| `GET` | `/api/v1/game-packages/{packageId}` | 读取游戏包清单 | - | `GamePackageManifest` | `200/400/401/404` |
+| `GET` | `/api/v1/game-packages/{packageId}/content` | 下载完整 JSON 游戏包 | `If-None-Match?` | JSON | `200/304/400/401/404` |
+| `POST` | `/internal/v1/game-package-validations` | 由受信服务校验游戏包 | `GamePackageValidationRequest` | `ValidationResult` | `200/400/403/422` |
+
+`POST /api/v1/game-generations` 在返回 `202` 前同步经 Gateway 读取并校验 PlanGraph。计划
+不存在或不属于当前用户返回 `422 REVIEW_PLAN_NOT_FOUND`，快照不一致返回
+`422 REVIEW_PLAN_SNAPSHOT_MISMATCH`，KnowledgeService 返回违反契约的数据时返回
+`502 UPSTREAM_CONTRACT_INVALID`，依赖不可用时返回 `503 SERVICE_UNAVAILABLE`。任务接受后
+按 `QUEUED -> RUNNING -> SUCCEEDED | FAILED` 迁移；异步生成失败记录在
+`GameGenerationJob.error`，不把已接受任务改写成另一个 HTTP 响应。
+
+游戏包内容端点返回规范化 JSON 字节；`GamePackageManifest.checksum` 与响应 `ETag` 均为
+这些字节的 SHA-256，匹配 `If-None-Match` 时返回 `304`。INTERNAL 校验请求只有 JSON
+绑定失败或缺少 `package` 时返回 `400 ApiFailure`；包可解析但违反 schema 约束时返回
+`422 ApiSuccess<ValidationResult>`，其中 `valid=false` 并列出 `errors`。
 
 ### 7.2 生成任务数据类型
 
@@ -1435,8 +1448,10 @@ interface Choice {
   questionId: Uuid;
   text: string;
   nextSceneId: string | null;
-  scoreDelta: number;
+  scoreDelta: number;            // 必填；只用于游戏计分，不表示答案正确性或 mastery
   knowledgePointId: Uuid;
+  answerKind?: AnswerKind | null; // 同场景存在 QUESTION binding 时必填且固定为 CHOICE
+  correct?: boolean | null;       // 同场景存在 QUESTION binding 时必填；与 scoreDelta 相互独立
 }
 
 type KnowledgePurpose = "EXPLAIN" | "QUESTION" | "FEEDBACK";
@@ -1479,7 +1494,10 @@ GalGameService 在接受 `GameGenerationRequest` 后必须经 Gateway 调用
 - 不得仅凭 `KnowledgeGraphReady` 事件、客户端提交的 pointIds 或旧缓存生成游戏；缓存键至少包含 `reviewPlanId + snapshotVersion`。
 - 请求中的 `snapshotVersion` 与 PlanGraph 不一致时停止生成并返回 `422 REVIEW_PLAN_SNAPSHOT_MISMATCH`。
 - 只允许为 `PlanNode.questionTarget=true` 的节点生成计分题目；`PREREQUISITE` 和 `CONTEXT` 节点可以用于讲解，但不得在没有显式 question target 时伪造成掌握度证据。
-- 每个可作答题必须生成稳定且在包内唯一的 `questionId`，同时绑定准确的 `knowledgePointId`；同一题的所有 Choice 使用相同 `questionId`。
+- 没有任何 `questionTarget` 的纯学习 PlanGraph 是合法输入；此时生成只含讲解和导航的游戏包，不生成 `QUESTION` binding，也不产生可回传的作答证据。
+- 每个可作答题必须生成稳定且在包内唯一的 `questionId`，同时绑定准确的 `knowledgePointId`。一个场景至多声明一个 `QUESTION` binding；该 binding 与题目所有 Choice 必须位于同一 Scene，且这些 Choice 使用相同的 `questionId` 和 `knowledgePointId`。
+- 含 `QUESTION` binding 的场景必须能从 `entrySceneId` 到达；每题至少有一个 `correct=true` 的选项。该题所有 Choice 必须显式携带 `answerKind="CHOICE"` 与 `correct`；非 QUESTION 场景的 Choice 必须省略这两个字段或使用 `null`。
+- `correct` 是作答正确性的唯一游戏包字段，`scoreDelta` 只控制游戏分数，两者不得互相推导。RenderService 也不得用 `scoreDelta` 生成 mastery 证据。
 - `GamePackageManifest` 和 `GamePackage` 必须保存 `reviewPlanId + snapshotVersion`。RenderService 回传的 questionId、pointId 和 snapshot 必须能据此校验。
 - GalGameService 可以设计题面、选项和剧情，但不得修改 PlanNode.weight、依赖边、mastery snapshot 或 KnowledgeService 的知识事实。
 
@@ -1493,7 +1511,7 @@ GalGameService 在接受 `GameGenerationRequest` 后必须经 Gateway 调用
   "packageId": "f2561bb2-b88c-47ef-b0ae-8f283ff64f1b",
   "generatorVersion": "gala-0.1.0",
   "reviewPlanId": "8e812950-3311-40a7-93ab-636409df8cc2",
-  "snapshotVersion": "plan-graph-1.0:3da5f48f",
+  "snapshotVersion": "plan-graph-1.0:3da5f48f37ac57c91b49ee747c11e45f1a9e9e73d8e892fcd1bd1f9f3f50c620",
   "entrySceneId": "scene-001",
   "scenes": [
     {
@@ -1512,7 +1530,9 @@ GalGameService 在接受 `GameGenerationRequest` 后必须经 Gateway 调用
           "text": "协调群体数量与个体生长",
           "nextSceneId": null,
           "scoreDelta": 1,
-          "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"
+          "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",
+          "answerKind": "CHOICE",
+          "correct": true
         }
       ],
       "knowledgeBindings": [
@@ -1536,6 +1556,14 @@ GalGameService 在接受 `GameGenerationRequest` 后必须经 Gateway 调用
 - [ ] 生成失败和部分成功语义；
 - [ ] `generatorVersion` 与 seed 的可复现范围；
 - [ ] 游戏包保存位置和清理策略。
+
+当前 `InMemoryGameStore` 在普通模式与 Mock 模式都只使用进程内存；Mock 模式额外装载固定
+样例，集成 Compose 使用普通模式，不预置任务或游戏包。服务或容器重启后数据不可恢复，
+因此生产持久化、跨副本一致性和清理策略仍为 `OWNER-TBD`。
+
+当前 INTERNAL 校验端点及 `RenderService` 服务身份允许名单已经存在，但 RenderService
+实现、WASM 运行时、会话结果提交与 mastery 更新的全链路仍由 `@Zopiclone` 负责并保持
+`OWNER-TBD`；仅通过游戏包校验不能视为该闭环已经完成。
 
 `@F15EX` 需要交付：
 
@@ -1718,7 +1746,7 @@ interface WasmAdapter {
   "expectedProgressVersion": 4,
   "idempotencyKey": "eac9acb9-b96c-43a9-a6ff-6e7dfa885b09",
   "reviewPlanId": "8e812950-3311-40a7-93ab-636409df8cc2",
-  "snapshotVersion": "plan-graph-1.0:3da5f48f",
+  "snapshotVersion": "plan-graph-1.0:3da5f48f37ac57c91b49ee747c11e45f1a9e9e73d8e892fcd1bd1f9f3f50c620",
   "answerResults": [
     {
       "attemptId": "36924035-ec0a-46aa-aa7e-25b86edfa259",
@@ -1767,20 +1795,21 @@ interface WasmAdapter {
 | `/internal/v1/materials/*/extracted-text` | FileService | KnowledgeService | 服务身份；维护适配为 **URGENT（FileService / Gateway）** |
 | `/internal/v1/review-plans/*/graph` | KnowledgeService | GalGameService | **URGENT（跨服务阻塞项）** 精确服务身份 |
 | `/internal/v1/review-evidence/*` | KnowledgeService | RenderService | **URGENT（跨服务阻塞项）** 精确服务身份 |
+| `/internal/v1/game-package-validations` | GalGameService | RenderService | 服务身份；当前默认只允许 `RenderService` |
 | `/internal/v1/*` | 对应服务 | Service only | 服务身份；用户委托身份可选 |
 
 ### 9.2 Gateway 行为与信任头
 
 - 浏览器 `/api` 请求中的 `X-Service-Name`、`X-Service-Key`、`X-User-Id`、`X-Gateway-Key` 全部丢弃。`/internal` 请求只暂留 `X-Service-Name + X-Service-Key` 用于服务身份验证，仍先丢弃外部 `X-User-Id` 与 `X-Gateway-Key`。
 - INTERNAL 服务身份通过逐服务密钥验证后，Gateway 转发时剥离 `Authorization` 与 `X-Service-Key`，重新注入可信 `X-Service-Name` 和目标服务的 `X-Gateway-Key`。用户路由则从已验证令牌重新注入 `X-User-Id`。
-- 每个目标服务使用自己的 `*_SERVICE_KEY`；只有未配置独立密钥时才回退 `GATEWAY_KEY`。KnowledgeService 的入站 `Gateway__ServiceKey` 必须与 Gateway 的 `KNOWLEDGE_SERVICE_KEY` 一致。
+- 每个目标服务使用自己的 `*_SERVICE_KEY`；只有未配置独立密钥时才回退 `GATEWAY_KEY`。KnowledgeService 的入站 `Gateway__ServiceKey` 必须与 Gateway 的 `KNOWLEDGE_SERVICE_KEY` 一致；GalGameService 对应 `GALGAME_SERVICE_URL`、`GALGAME_SERVICE_KEY`，其入站 `Gateway__ServiceKey` 必须与后者一致。
 - Gateway 验证 Bearer Token 时调用 AuthService `/internal/v1/auth/introspections`，携带 AuthService 的目标密钥作为 `X-Gateway-Key`，并原样传递或生成 `X-Correlation-Id`。只有规范的 `200` `ApiSuccess<TokenIntrospection>` 响应且 `active=false` 能证明令牌无效并返回 `401`；该成功信封必须含对象 `data`、空对象 `meta` 和非空字符串 `traceId`，非空 `userId/sessionId` 必须是小写 UUID v4，非空 `expiresAt` 必须是完整 ISO 8601 UTC 时间。内省超时、连接失败、任意非 `200`（含密钥错配 `403` 和 `5xx`）、非 JSON、缺字段、信封或字段不合规，以及 `active=true` 但数据形状错误，均统一返回 `503 SERVICE_UNAVAILABLE`，不得把认证基础设施或上游契约故障伪装成令牌无效。
 - 写操作不在 Gateway 层盲目重试。
 - GET 只有在确认幂等且无副作用时才能有限重试。
 - 保持下游 `error.code`，统一响应结构和 `traceId`。
 - 不允许用 HTTP 200 包装业务失败。
 - CORS 只允许明确的前端源。
-- 限流至少区分匿名登录、上传、生成任务和普通读取。构图路由中，只有 `POST /api/v1/knowledge-graph-builds` 使用生成任务限流；`GET /api/v1/knowledge-graph-builds/{buildId}` 是普通读取并使用 general 限流，轮询不得消耗 generation 配额。
+- 限流至少区分匿名登录、上传、生成任务和普通读取。只有创建型长任务 `POST /api/v1/knowledge-graph-builds` 与 `POST /api/v1/game-generations` 使用 generation 限流；构图/游戏生成轮询、游戏包读取和 INTERNAL 游戏包校验使用 general 限流，轮询不得消耗 generation 配额。
 - `POST /api/v1/materials` 使用 `UPLOAD_TIMEOUT_MS`，默认 `120000` 毫秒；其他路由使用 `DEFAULT_TIMEOUT_MS`，默认 `30000` 毫秒。上传超时不得隐式套用到所有 FileService 路由。
 - 上传文件本体硬上限为 `10 MiB`。Gateway 和 FileService 的 multipart 整包前置上限均为 `11 MiB`，其中额外 `1 MiB` 只用于 boundary、字段和头部开销；最终仍由 FileService 按 `IFormFile.Length` 拒绝超过 `10 MiB` 的文件。不得把整包与文件本体错误地使用同一个 `10 MiB` 阈值。
 - 不在 Gateway 保存业务状态或访问服务数据库。
@@ -1792,10 +1821,11 @@ interface WasmAdapter {
 | `GET` | `/healthz` | `200 HealthStatus` | Gateway 进程存活 |
 | `GET` | `/readyz` | `200/503 ReadinessStatus` | 路由配置和关键依赖就绪 |
 
-`READINESS_SERVICES` 是逗号分隔的服务 key，默认固定为
-`userService,authService,fileService,knowledgeService`。Gateway 对这些服务的
-`/healthz` 做真实探测；未参与当前闭环的 GalGameService、RenderService 和
-OCRService 不得让 `/readyz` 误报失败。配置中出现未知 key 时 Gateway 必须拒绝启动。
+`READINESS_SERVICES` 是逗号分隔的服务 key。Gateway 应用默认值为
+`userService,authService,fileService,knowledgeService`；根目录集成 Compose 显式追加
+`galGameService`，因此当前完整本地闭环会真实探测五个服务的 `/healthz`。尚未加入该
+Compose 的 RenderService 和可选 OCRService 不进入本轮 readiness。配置中出现未知 key
+时 Gateway 必须拒绝启动。
 KnowledgeService 在宿主机的默认目标为 `http://localhost:5080`；集成容器网络内使用
 `http://knowledge-service:8080`。
 
@@ -1813,25 +1843,33 @@ KnowledgeService 在宿主机的默认目标为 `http://localhost:5080`；集成
 
 | 组件 | 容器监听 / 宿主暴露 | 说明 |
 |---|---|---|
-| Gateway | `5000 / 5000` | 浏览器和服务间调用的唯一入口 |
+| Gateway | `5000 / ${GATEWAY_HOST_PORT:-5000}` | 浏览器和服务间调用的唯一入口；绑定地址由 `GATEWAY_BIND_ADDRESS` 配置 |
 | UserService | `5101 / 不暴露` | 集成环境可使用 `MOONSTONE_MODE=Mock` |
 | AuthService | `5102 / 不暴露` | 集成环境可使用 `MOONSTONE_MODE=Mock` |
 | FileService | `5103 / 不暴露` | 使用 MongoDB + GridFS；只由 Gateway 访问 |
-| KnowledgeService | `8080 / 5080` | 使用 Neo4j；宿主机 Gateway 默认目标为 5080 |
+| KnowledgeService | `8080 / ${KNOWLEDGE_HOST_PORT:-5080}` | 使用 Neo4j；仅诊断端口，绑定地址由 `DIAGNOSTIC_BIND_ADDRESS` 配置 |
+| GalGameService | `5105 / 不暴露` | 只由 Gateway 访问；当前使用进程内临时存储 |
 | OCRService | `5110 / 不暴露` | `ocr` profile 的可选内部依赖，本轮闭环不启动 |
 | MongoDB | `27017 / 不暴露` | 只供 FileService |
 | Neo4j | `7687 / 7687`，Browser `7474 / 7474` | 只由 KnowledgeService 写图，Browser 仅供本地诊断 |
 
 容器配置只记录变量名，不在本文或镜像中写真实密钥：
 
-- Gateway 使用 `GATEWAY_KEY`、各服务 `*_SERVICE_KEY`、各服务 `*_SERVICE_URL`、`READINESS_SERVICES`、`DEFAULT_TIMEOUT_MS`、`UPLOAD_TIMEOUT_MS` 和 `CORS_ORIGINS`；
+- Gateway 使用 `GATEWAY_KEY`、各服务 `*_SERVICE_KEY`、各服务 `*_SERVICE_URL`、`READINESS_SERVICES`、`DEFAULT_TIMEOUT_MS`、`UPLOAD_TIMEOUT_MS` 和 `CORS_ORIGINS`；GalGameService 的目标配置明确为 `GALGAME_SERVICE_URL` 与 `GALGAME_SERVICE_KEY`；
 - FileService 使用 `Gateway__ServiceKey`、`ConnectionStrings__FileDatabase`、`MongoDb__Database`、`InternalAccess__ExtractedTextAllowedServices__0`、`Ocr__BaseUrl`、`Ocr__TimeoutMinutes`；
 - KnowledgeService 使用 `Gateway__ServiceKey`、`GatewayMaterialText__BaseUrl`、`GatewayMaterialText__ServiceName`、`GatewayMaterialText__ServiceKey`、`GatewayMaterialText__Timeout` 以及 `Neo4j__Uri`、`Neo4j__Username`、`Neo4j__Password`、`Neo4j__Database`；
+- GalGameService 使用 `Gateway__BaseUrl`、`Gateway__ServiceKey` 和 `InternalAccess__ValidationAllowedServices__0`；集成 Compose 的 INTERNAL 校验调用方默认只允许 `RenderService`；
 - AuthService 与 UserService 分别使用自己的 `Gateway__ServiceKey`；集成环境的 Mock 和管理员占位配置不得沿用到生产；
 - `DSAPI`（DeepSeek）和 `BitchSDAU`（阿里 API）不是“注册/登录 -> 上传 -> 确定性文本提取 -> KnowledgeService 构图 -> Neo4j”链路的依赖，不能因为宿主环境已配置就把它们注入或记录到这些容器。
 
 开发默认密钥只用于本地；生产部署必须通过 secret 管理器覆盖，日志、构建参数、
 Compose 文件和接口示例均不得打印真实值。Docker Desktop 的镜像与卷数据位置属于宿主机运维配置，不由业务容器内路径决定。
+
+仓库根目录已有 `.env.deploy.example`，只保存变量名和 `CHANGE_ME` 占位值。未来部署时在
+目标主机复制为不提交版本库的 `.env`，替换服务密钥、Neo4j 密码、管理员占位凭据、绑定
+地址、宿主端口和 CORS 源后，再由同一 `compose.integration.yaml` 启动。当前只完成本地
+集成容器环境，尚未执行远程部署；模板保留快速远程启动能力，但 AuthService/UserService
+仍使用已测试的 Mock 模式，GalGameService 仍是临时内存存储，不能据此宣称生产就绪。
 
 ## 10. 异步事件
 
@@ -1981,7 +2019,7 @@ interface ReviewCompletedDataV2 {
     "userId": "7bc4918a-9079-4ea2-9e8e-369ad79a9f20",
     "packageId": "f2561bb2-b88c-47ef-b0ae-8f283ff64f1b",
     "reviewPlanId": "8e812950-3311-40a7-93ab-636409df8cc2",
-    "snapshotVersion": "plan-graph-1.0:3da5f48f",
+    "snapshotVersion": "plan-graph-1.0:3da5f48f37ac57c91b49ee747c11e45f1a9e9e73d8e892fcd1bd1f9f3f50c620",
     "completedAt": "2026-07-27T09:03:06Z",
     "durationSeconds": 186,
     "answerResults": [
@@ -2087,8 +2125,10 @@ unit、20 个来源区间和 20 个块通过文本契约校验，`chapter-segmen
 `knowledge-extractor-v2` 构建出 7 章、243 个知识点和 207 条先修关系；API 与
 Neo4j 计数一致，先修子图无环，初始 mastery 全为 0，同请求构图幂等复用及
 `IDEMPOTENCY_KEY_REUSED` 冲突码均通过。逐接口证据、命令、容器状态和未测范围见
-`docs/test_report.md`。该记录只证明本节列出的同步非 OCR 闭环，不把
-GalGameService、RenderService、消息事件或 OCR 的未来契约表述为已经集成。
+`docs/test_report.md`。该 2026-07-31 记录只证明本节列出的同步非 OCR 闭环；
+GalGameService 的 PlanGraph 客户端、生成器、校验器、Gateway 路由和容器适配在
+2026-08-01 已具备独立测试覆盖，进一步的真实串联结果以测试报告为准。RenderService、
+WASM 运行时、游戏结束后的 mastery 回传、消息事件和 OCR 仍不得表述为已经完成集成。
 
 ## 12. 开工清单
 

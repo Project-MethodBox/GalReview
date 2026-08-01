@@ -1,4 +1,4 @@
-name: galreview-integration
+name: ${COMPOSE_PROJECT_NAME:-galreview-integration}
 
 services:
   mongo:
@@ -23,8 +23,8 @@ services:
       NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-knowledge-dev-password}
       HEALTHCHECK_PASSWORD: ${NEO4J_PASSWORD:-knowledge-dev-password}
     ports:
-      - "7474:7474"
-      - "7687:7687"
+      - "${DIAGNOSTIC_BIND_ADDRESS:-127.0.0.1}:${NEO4J_BROWSER_HOST_PORT:-7474}:7474"
+      - "${DIAGNOSTIC_BIND_ADDRESS:-127.0.0.1}:${NEO4J_BOLT_HOST_PORT:-7687}:7687"
     volumes:
       - knowledge-neo4j-data:/data
     healthcheck:
@@ -44,7 +44,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:5101
-      MOONSTONE_MODE: Mock
+      MOONSTONE_MODE: ${USER_SERVICE_MODE:-Mock}
       Gateway__ServiceKey: ${USER_SERVICE_KEY:-moonstone-local-gateway-key}
     depends_on:
       mongo:
@@ -57,7 +57,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:5102
-      MOONSTONE_MODE: Mock
+      MOONSTONE_MODE: ${AUTH_SERVICE_MODE:-Mock}
       Gateway__BaseUrl: http://gateway:5000
       Gateway__ServiceKey: ${AUTH_SERVICE_KEY:-moonstone-local-gateway-key}
       Admin__Username: ${GALREVIEW_ADMIN_USERNAME:-integration-admin}
@@ -103,7 +103,21 @@ services:
       neo4j:
         condition: service_healthy
     ports:
-      - "5080:8080"
+      - "${DIAGNOSTIC_BIND_ADDRESS:-127.0.0.1}:${KNOWLEDGE_HOST_PORT:-5080}:8080"
+    restart: unless-stopped
+
+  galgame-service:
+    build:
+      context: ./backend/GalGameService
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:5105
+      Gateway__BaseUrl: http://gateway:5000
+      Gateway__ServiceKey: ${GALGAME_SERVICE_KEY:-moonstone-local-gateway-key}
+      InternalAccess__ValidationAllowedServices__0: RenderService
+    depends_on:
+      knowledge-service:
+        condition: service_healthy
     restart: unless-stopped
 
   gateway:
@@ -125,10 +139,10 @@ services:
       KNOWLEDGE_SERVICE_URL: http://knowledge-service:8080
       GALGAME_SERVICE_URL: http://galgame-service:5105
       RENDER_SERVICE_URL: http://render-service:5106
-      READINESS_SERVICES: userService,authService,fileService,knowledgeService
+      READINESS_SERVICES: userService,authService,fileService,knowledgeService,galGameService
       DEFAULT_TIMEOUT_MS: 30000
       UPLOAD_TIMEOUT_MS: 120000
-      CORS_ORIGINS: http://localhost:5173,http://localhost:5174
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:5174}
     depends_on:
       user-service:
         condition: service_healthy
@@ -138,8 +152,10 @@ services:
         condition: service_healthy
       knowledge-service:
         condition: service_healthy
+      galgame-service:
+        condition: service_healthy
     ports:
-      - "5000:5000"
+      - "${GATEWAY_BIND_ADDRESS:-0.0.0.0}:${GATEWAY_HOST_PORT:-5000}:5000"
     restart: unless-stopped
 
   ocr-service:

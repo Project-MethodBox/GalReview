@@ -47,9 +47,10 @@ public sealed class InMemoryGameStore : IGameStore
     private const int MaxJobs = 10_000;
     private int _jobCount;
 
-    public InMemoryGameStore()
+    public InMemoryGameStore(bool seedGoldenPackage = false)
     {
-        SeedGoldenPackage();
+        if (seedGoldenPackage)
+            SeedGoldenPackage();
     }
 
     /// <summary>预置黄金游戏包（contract.md §7.4 Mock 数据）</summary>
@@ -66,7 +67,7 @@ public sealed class InMemoryGameStore : IGameStore
             PackageId: goldenPackageId,
             GeneratorVersion: "gala-0.1.0",
             ReviewPlanId: reviewPlanId,
-            SnapshotVersion: "plan-graph-1.0:3da5f48f",
+            SnapshotVersion: PlanGraphClient.MockSnapshotVersion,
             EntrySceneId: "scene-001",
             Scenes: new Scene[]
             {
@@ -85,7 +86,9 @@ public sealed class InMemoryGameStore : IGameStore
                             Text: "协调群体数量与个体生长",
                             NextSceneId: null,
                             ScoreDelta: 1,
-                            KnowledgePointId: knowledgePointId),
+                            KnowledgePointId: knowledgePointId,
+                            AnswerKind: AnswerKind.CHOICE,
+                            Correct: true),
                     },
                     KnowledgeBindings: new KnowledgeBinding[]
                     {
@@ -100,7 +103,7 @@ public sealed class InMemoryGameStore : IGameStore
             SchemaVersion: "1.0",
             GeneratorVersion: "gala-0.1.0",
             ReviewPlanId: reviewPlanId,
-            SnapshotVersion: "plan-graph-1.0:3da5f48f",
+            SnapshotVersion: PlanGraphClient.MockSnapshotVersion,
             EntrySceneId: "scene-001",
             SceneCount: 1,
             Checksum: checksum,

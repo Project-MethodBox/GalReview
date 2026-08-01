@@ -26,7 +26,7 @@ public class GamePackageValidatorTests
         PackageId: GoldenPackageId,
         GeneratorVersion: "gala-0.1.0",
         ReviewPlanId: GoldenReviewPlanId,
-        SnapshotVersion: "plan-graph-1.0:3da5f48f",
+        SnapshotVersion: "plan-graph-1.0:3da5f48f37ac57c91b49ee747c11e45f1a9e9e73d8e892fcd1bd1f9f3f50c620",
         EntrySceneId: "scene-001",
         Scenes: new Scene[]
         {
@@ -39,7 +39,8 @@ public class GamePackageValidatorTests
                 },
                 Choices: new Choice[]
                 {
-                    new("c1", GoldenQuestionId, "协调群体数量与个体生长", null, 1, GoldenPointId),
+                    new("c1", GoldenQuestionId, "协调群体数量与个体生长", null, 1, GoldenPointId,
+                        AnswerKind.CHOICE, Correct: true),
                 },
                 KnowledgeBindings: new KnowledgeBinding[]
                 {
@@ -57,7 +58,7 @@ public class GamePackageValidatorTests
         PackageId: GoldenPackageId,
         GeneratorVersion: "gala-0.1.0",
         ReviewPlanId: GoldenReviewPlanId,
-        SnapshotVersion: "plan-graph-1.0:3da5f48f",
+        SnapshotVersion: "plan-graph-1.0:3da5f48f37ac57c91b49ee747c11e45f1a9e9e73d8e892fcd1bd1f9f3f50c620",
         EntrySceneId: "non-existent-scene", // 违规 2：entrySceneId 不存在
         Scenes: new Scene[]
         {
@@ -70,8 +71,11 @@ public class GamePackageValidatorTests
                 },
                 Choices: new Choice[]
                 {
-                    new("c1", GoldenQuestionId, "选项A", null, 1, GoldenPointId),
-                    new("c2", GoldenQuestionId, "选项B", null, 0, Guid.Parse("00000000-0000-0000-0000-0000000000aa")), // 违规 4：同 questionId 不同 knowledgePointId
+                    new("c1", GoldenQuestionId, "选项A", null, 1, GoldenPointId,
+                        AnswerKind.CHOICE, Correct: true),
+                    new("c2", GoldenQuestionId, "选项B", null, 0,
+                        Guid.Parse("00000000-0000-4000-8000-0000000000aa"),
+                        AnswerKind.CHOICE, Correct: false), // 违规 4：同 questionId 不同 knowledgePointId
                 },
                 KnowledgeBindings: new KnowledgeBinding[]
                 {
@@ -167,14 +171,15 @@ public class GamePackageValidatorTests
     [Fact]
     public void QuestionPointMismatch_Detected()
     {
-        var otherPointId = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+        var otherPointId = Guid.Parse("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
         var pkg = CreateGoldenPackage();
         var firstScene = pkg.Scenes[0];
         // 两个 choice 用相同 questionId 但不同 knowledgePointId
         var badChoices = new[]
         {
             firstScene.Choices[0],
-            new Choice("c2", GoldenQuestionId, "选项B", null, 0, otherPointId),
+            new Choice("c2", GoldenQuestionId, "选项B", null, 0, otherPointId,
+                AnswerKind.CHOICE, Correct: false),
         };
         var badScene = firstScene with { Choices = badChoices };
         var badPkg = pkg with { Scenes = new[] { badScene } };
@@ -199,7 +204,7 @@ public class GamePackageValidatorTests
     [Fact]
     public void OrphanQuestionBinding_Detected()
     {
-        var orphanQuestionId = Guid.Parse("11111111-2222-3333-4444-555555555555");
+        var orphanQuestionId = Guid.Parse("11111111-2222-4333-8444-555555555555");
         var pkg = CreateGoldenPackage();
         var firstScene = pkg.Scenes[0];
         // 添加一个 QUESTION 绑定，但其 questionId 不在任何 choice 中
@@ -261,47 +266,42 @@ public class GamePackageValidatorTests
     }
 
     [Fact]
-    public void NegativeScoreDelta_Detected()
+    public void NegativeScoreDelta_DoesNotDetermineCorrectness()
     {
         var pkg = CreateGoldenPackage();
         var firstScene = pkg.Scenes[0];
-        var badChoice = firstScene.Choices[0] with { ScoreDelta = -1 };
-        var badScene = firstScene with { Choices = new[] { badChoice } };
-        var badPkg = pkg with { Scenes = new[] { badScene } };
-        var result = _validator.Validate(badPkg);
-        Assert.False(result.Valid);
-        Assert.Contains(result.Errors, e => e.Code == "INVALID_SCORE_DELTA");
+        var gameChoice = firstScene.Choices[0] with { ScoreDelta = -1, Correct = true };
+        var scene = firstScene with { Choices = new[] { gameChoice } };
+        var result = _validator.Validate(pkg with { Scenes = new[] { scene } });
+        Assert.True(result.Valid, formatErrors(result));
     }
 
     [Fact]
-    public void ExcessiveScoreDelta_Detected()
+    public void LargeScoreDelta_DoesNotDetermineCorrectness()
     {
         var pkg = CreateGoldenPackage();
         var firstScene = pkg.Scenes[0];
-        var badChoice = firstScene.Choices[0] with { ScoreDelta = 2 };
-        var badScene = firstScene with { Choices = new[] { badChoice } };
-        var badPkg = pkg with { Scenes = new[] { badScene } };
-        var result = _validator.Validate(badPkg);
-        Assert.False(result.Valid);
-        Assert.Contains(result.Errors, e => e.Code == "INVALID_SCORE_DELTA");
+        var gameChoice = firstScene.Choices[0] with { ScoreDelta = 100, Correct = true };
+        var scene = firstScene with { Choices = new[] { gameChoice } };
+        var result = _validator.Validate(pkg with { Scenes = new[] { scene } });
+        Assert.True(result.Valid, formatErrors(result));
     }
 
     [Fact]
-    public void MultipleCorrectChoices_Detected()
+    public void MultipleCorrectChoices_AreRepresentableWithoutScoreInference()
     {
         var pkg = CreateGoldenPackage();
         var firstScene = pkg.Scenes[0];
-        // 两个 choice 都 ScoreDelta=1，同一 questionId
+        // correctness 明确标记两个正确选项；scoreDelta 不参与判定。
         var badChoices = new[]
         {
-            firstScene.Choices[0] with { ScoreDelta = 1 },
-            new Choice("c2", GoldenQuestionId, "另一个正确选项", null, 1, GoldenPointId),
+            firstScene.Choices[0] with { ScoreDelta = -10, Correct = true },
+            new Choice("c2", GoldenQuestionId, "另一个正确选项", null, 0, GoldenPointId,
+                AnswerKind.CHOICE, Correct: true),
         };
-        var badScene = firstScene with { Choices = badChoices };
-        var badPkg = pkg with { Scenes = new[] { badScene } };
-        var result = _validator.Validate(badPkg);
-        Assert.False(result.Valid);
-        Assert.Contains(result.Errors, e => e.Code == "MULTIPLE_CORRECT_CHOICES");
+        var scene = firstScene with { Choices = badChoices };
+        var result = _validator.Validate(pkg with { Scenes = new[] { scene } });
+        Assert.True(result.Valid, formatErrors(result));
     }
 
     [Fact]
@@ -309,8 +309,8 @@ public class GamePackageValidatorTests
     {
         var pkg = CreateGoldenPackage();
         var firstScene = pkg.Scenes[0];
-        // 唯一的 choice ScoreDelta=0，没有正确选项
-        var badChoice = firstScene.Choices[0] with { ScoreDelta = 0 };
+        // 即便游戏分数为正，只要 correct=false，仍然没有正确答案。
+        var badChoice = firstScene.Choices[0] with { ScoreDelta = 100, Correct = false };
         var badScene = firstScene with { Choices = new[] { badChoice } };
         var badPkg = pkg with { Scenes = new[] { badScene } };
         var result = _validator.Validate(badPkg);
@@ -327,7 +327,8 @@ public class GamePackageValidatorTests
         var badChoices = new[]
         {
             firstScene.Choices[0],
-            new Choice("c1", GoldenQuestionId, "重复 ID 的选项", null, 0, GoldenPointId),
+            new Choice("c1", GoldenQuestionId, "重复 ID 的选项", null, 0, GoldenPointId,
+                AnswerKind.CHOICE, Correct: false),
         };
         var badScene = firstScene with { Choices = badChoices };
         var badPkg = pkg with { Scenes = new[] { badScene } };
@@ -346,6 +347,70 @@ public class GamePackageValidatorTests
         var result = _validator.Validate(badPkg);
         Assert.False(result.Valid);
         Assert.Contains(result.Errors, e => e.Code == "DIALOGUE_COUNT_OUT_OF_RANGE");
+    }
+
+    [Fact]
+    public void QuestionBindingAndChoicesInDifferentScenes_Detected()
+    {
+        var pkg = CreateGoldenPackage();
+        var questionScene = pkg.Scenes[0] with { Choices = Array.Empty<Choice>() };
+        var detachedChoiceScene = pkg.Scenes[0] with
+        {
+            SceneId = "scene-002",
+            Choices = pkg.Scenes[0].Choices,
+            KnowledgeBindings = Array.Empty<KnowledgeBinding>()
+        };
+
+        var result = _validator.Validate(pkg with { Scenes = new[] { questionScene, detachedChoiceScene } });
+        Assert.False(result.Valid);
+        Assert.Contains(result.Errors, issue => issue.Code == "ORPHAN_QUESTION_BINDING");
+    }
+
+    [Fact]
+    public void MultipleQuestionBindingsInOneScene_Detected()
+    {
+        var pkg = CreateGoldenPackage();
+        var secondQuestionId = Guid.Parse("e83ad3b6-d00f-47ee-a930-38735714c93f");
+        var scene = pkg.Scenes[0] with
+        {
+            Choices = pkg.Scenes[0].Choices.Append(
+                new Choice("c2", secondQuestionId, "第二题选项", null, 0, GoldenPointId,
+                    AnswerKind.CHOICE, Correct: true)).ToArray(),
+            KnowledgeBindings = pkg.Scenes[0].KnowledgeBindings.Append(
+                new KnowledgeBinding(GoldenPointId, secondQuestionId, KnowledgePurpose.QUESTION)).ToArray()
+        };
+
+        var result = _validator.Validate(pkg with { Scenes = new[] { scene } });
+        Assert.False(result.Valid);
+        Assert.Contains(result.Errors, issue => issue.Code == "MULTIPLE_QUESTIONS_IN_SCENE");
+    }
+
+    [Fact]
+    public void UnreachableQuestionScene_Detected()
+    {
+        var pkg = CreateGoldenPackage();
+        var navigationQuestionId = Guid.Parse("f9b43f17-4b97-45c1-ae5a-3506b8889012");
+        var entryScene = pkg.Scenes[0] with
+        {
+            SceneId = "entry",
+            Choices = new[]
+            {
+                new Choice("continue", navigationQuestionId, "结束", null, 0, GoldenPointId)
+            },
+            KnowledgeBindings = new[]
+            {
+                new KnowledgeBinding(GoldenPointId, navigationQuestionId, KnowledgePurpose.FEEDBACK)
+            }
+        };
+        var questionScene = pkg.Scenes[0] with { SceneId = "question" };
+
+        var result = _validator.Validate(pkg with
+        {
+            EntrySceneId = entryScene.SceneId,
+            Scenes = new[] { entryScene, questionScene }
+        });
+        Assert.False(result.Valid);
+        Assert.Contains(result.Errors, issue => issue.Code == "UNREACHABLE_QUESTION_SCENE");
     }
 
     [Fact]

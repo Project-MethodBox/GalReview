@@ -194,23 +194,24 @@ body{
 
 <script>
 // ========== Mock 游戏包数据 ==========
+// QUESTION 选项以 correct 判定对错；scoreDelta 只表示游戏内分数，不表示掌握度。
 
 const PACKAGES = {
   golden: {
     schemaVersion:"1.0",packageId:"f2561bb2-b88c-47ef-b0ae-8f283ff64f1b",
     generatorVersion:"gala-0.1.0",reviewPlanId:"8e812950-3311-40a7-93ab-636409df8cc2",
-    snapshotVersion:"plan-graph-1.0:3da5f48f",entrySceneId:"scene-001",
+    snapshotVersion:"plan-graph-1.0:3da5f48f37ac57c91b49ee747c11e45f1a9e9e73d8e892fcd1bd1f9f3f50c620",entrySceneId:"scene-001",
     scenes:[{
       sceneId:"scene-001",title:null,
       dialogue:[{speakerId:"heroine",text:"水稻分蘖期最关键的管理目标是什么？",emotion:"curious"}],
-      choices:[{choiceId:"c1",questionId:"6428a20a-66dd-44c9-944f-d7b36fa9c95a",text:"协调群体数量与个体生长",nextSceneId:null,scoreDelta:1,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"}],
+      choices:[{choiceId:"c1",questionId:"6428a20a-66dd-44c9-944f-d7b36fa9c95a",text:"协调群体数量与个体生长",nextSceneId:null,answerKind:"CHOICE",correct:true,scoreDelta:1,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"}],
       knowledgeBindings:[{knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",questionId:"6428a20a-66dd-44c9-944f-d7b36fa9c95a",purpose:"QUESTION"}]
     }],assets:[]
   },
   campus: {
     schemaVersion:"1.0",packageId:"6a21ca47-a7c1-4eac-b8cf-a4a5d8d63784",
     generatorVersion:"gala-0.1.0",reviewPlanId:"8e812950-3311-40a7-93ab-636409df8cc2",
-    snapshotVersion:"plan-graph-1.0:3da5f48f",entrySceneId:"scene-001",
+    snapshotVersion:"plan-graph-1.0:3da5f48f37ac57c91b49ee747c11e45f1a9e9e73d8e892fcd1bd1f9f3f50c620",entrySceneId:"scene-001",
     scenes:[
       {sceneId:"scene-001",title:"图书馆的自习时光",
         dialogue:[
@@ -229,10 +230,10 @@ const PACKAGES = {
           {speakerId:"林学姐",text:"来，看看这道题你掌握得怎么样？",emotion:"challenging"},
           {speakerId:"林学姐",text:"水稻分蘖期管理——根据所学内容，关于「水稻分蘖期管理」最准确的描述是？",emotion:"questioning"}],
         choices:[
-          {choiceId:"c-scene-003-d1",questionId:"0aeb0c5d-4e43-885e-9af0-79e0ddc902a0",text:"水稻基本生长周期",nextSceneId:"scene-004",scoreDelta:0,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"},
-          {choiceId:"c-scene-003-d2",questionId:"0aeb0c5d-4e43-885e-9af0-79e0ddc902a0",text:"部分正确但不完整",nextSceneId:"scene-004",scoreDelta:0,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"},
-          {choiceId:"c-scene-003-correct",questionId:"0aeb0c5d-4e43-885e-9af0-79e0ddc902a0",text:"水稻分蘖期最关键的管理目标是协调群体数量与个体生长，通过水肥调控促进有效分蘖",nextSceneId:"scene-004",scoreDelta:1,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"},
-          {choiceId:"c-scene-003-d3",questionId:"0aeb0c5d-4e43-885e-9af0-79e0ddc902a0",text:"方向相反的结论",nextSceneId:"scene-004",scoreDelta:0,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"}],
+          {choiceId:"c-scene-003-d1",questionId:"0aeb0c5d-4e43-885e-9af0-79e0ddc902a0",text:"水稻基本生长周期",nextSceneId:"scene-004",answerKind:"CHOICE",correct:false,scoreDelta:0,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"},
+          {choiceId:"c-scene-003-d2",questionId:"0aeb0c5d-4e43-885e-9af0-79e0ddc902a0",text:"部分正确但不完整",nextSceneId:"scene-004",answerKind:"CHOICE",correct:false,scoreDelta:0,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"},
+          {choiceId:"c-scene-003-correct",questionId:"0aeb0c5d-4e43-885e-9af0-79e0ddc902a0",text:"水稻分蘖期最关键的管理目标是协调群体数量与个体生长，通过水肥调控促进有效分蘖",nextSceneId:"scene-004",answerKind:"CHOICE",correct:true,scoreDelta:1,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"},
+          {choiceId:"c-scene-003-d3",questionId:"0aeb0c5d-4e43-885e-9af0-79e0ddc902a0",text:"方向相反的结论",nextSceneId:"scene-004",answerKind:"CHOICE",correct:false,scoreDelta:0,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"}],
         knowledgeBindings:[{knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",questionId:"0aeb0c5d-4e43-885e-9af0-79e0ddc902a0",purpose:"QUESTION"}]},
       {sceneId:"scene-004",title:"复习结束",
         dialogue:[
@@ -244,7 +245,7 @@ const PACKAGES = {
   fantasy: {
     schemaVersion:"1.0",packageId:"868d08a0-3ffd-4966-bff6-7422aad6a648",
     generatorVersion:"gala-0.1.0",reviewPlanId:"8e812950-3311-40a7-93ab-636409df8cc2",
-    snapshotVersion:"plan-graph-1.0:3da5f48f",entrySceneId:"scene-001",
+    snapshotVersion:"plan-graph-1.0:3da5f48f37ac57c91b49ee747c11e45f1a9e9e73d8e892fcd1bd1f9f3f50c620",entrySceneId:"scene-001",
     scenes:[
       {sceneId:"scene-001",title:"魔法学院的试炼",
         dialogue:[
@@ -263,9 +264,9 @@ const PACKAGES = {
           {speakerId:"精灵导师艾莉娅",text:"魔法的试炼开始了，请回答这个问题：",emotion:"challenging"},
           {speakerId:"精灵导师艾莉娅",text:"水稻分蘖期管理——在深入理解「水稻分蘖期管理」的基础上，以下哪个选项最符合实际？",emotion:"questioning"}],
         choices:[
-          {choiceId:"c-scene-003-d1",questionId:"c3a94adf-7a32-2853-bbcf-50ef9da77458",text:"水稻基本生长周期",nextSceneId:"scene-004",scoreDelta:0,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"},
-          {choiceId:"c-scene-003-correct",questionId:"c3a94adf-7a32-2853-bbcf-50ef9da77458",text:"水稻分蘖期最关键的管理目标是协调群体数量与个体生长，通过水肥调控促进有效分蘖",nextSceneId:"scene-004",scoreDelta:1,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"},
-          {choiceId:"c-scene-003-d2",questionId:"c3a94adf-7a32-2853-bbcf-50ef9da77458",text:"看似合理但存在关键缺陷",nextSceneId:"scene-004",scoreDelta:0,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"}],
+          {choiceId:"c-scene-003-d1",questionId:"c3a94adf-7a32-2853-bbcf-50ef9da77458",text:"水稻基本生长周期",nextSceneId:"scene-004",answerKind:"CHOICE",correct:false,scoreDelta:0,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"},
+          {choiceId:"c-scene-003-correct",questionId:"c3a94adf-7a32-2853-bbcf-50ef9da77458",text:"水稻分蘖期最关键的管理目标是协调群体数量与个体生长，通过水肥调控促进有效分蘖",nextSceneId:"scene-004",answerKind:"CHOICE",correct:true,scoreDelta:1,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"},
+          {choiceId:"c-scene-003-d2",questionId:"c3a94adf-7a32-2853-bbcf-50ef9da77458",text:"看似合理但存在关键缺陷",nextSceneId:"scene-004",answerKind:"CHOICE",correct:false,scoreDelta:0,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"}],
         knowledgeBindings:[{knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",questionId:"c3a94adf-7a32-2853-bbcf-50ef9da77458",purpose:"QUESTION"}]},
       {sceneId:"scene-004",title:"试炼完成",
         dialogue:[
@@ -277,7 +278,7 @@ const PACKAGES = {
   science: {
     schemaVersion:"1.0",packageId:"60689f72-6589-49c9-b74a-633d2b5af1e0",
     generatorVersion:"gala-0.1.0",reviewPlanId:"8e812950-3311-40a7-93ab-636409df8cc2",
-    snapshotVersion:"plan-graph-1.0:3da5f48f",entrySceneId:"scene-001",
+    snapshotVersion:"plan-graph-1.0:3da5f48f37ac57c91b49ee747c11e45f1a9e9e73d8e892fcd1bd1f9f3f50c620",entrySceneId:"scene-001",
     scenes:[
       {sceneId:"scene-001",title:"空间站知识模块",
         dialogue:[
@@ -296,14 +297,14 @@ const PACKAGES = {
           {speakerId:"NEXUS",text:"系统已生成评估问题，请作答：",emotion:"challenging"},
           {speakerId:"NEXUS",text:"水稻分蘖期管理——关于「水稻分蘖期管理」，以下哪个说法是正确的？",emotion:"questioning"}],
         choices:[
-          {choiceId:"c-scene-003-d3",questionId:"25c0c346-081e-e95a-9e76-41d3f78c799d",text:"与题目无关的选项",nextSceneId:"scene-004",scoreDelta:0,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"},
-          {choiceId:"c-scene-003-d1",questionId:"25c0c346-081e-e95a-9e76-41d3f78c799d",text:"水稻基本生长周期",nextSceneId:"scene-004",scoreDelta:0,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"},
-          {choiceId:"c-scene-003-d2",questionId:"25c0c346-081e-e95a-9e76-41d3f78c799d",text:"以上都不对",nextSceneId:"scene-004",scoreDelta:0,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"},
-          {choiceId:"c-scene-003-correct",questionId:"25c0c346-081e-e95a-9e76-41d3f78c799d",text:"水稻分蘖期最关键的管理目标是协调群体数量与个体生长，通过水肥调控促进有效分蘖",nextSceneId:"scene-004",scoreDelta:1,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"}],
+          {choiceId:"c-scene-003-d3",questionId:"25c0c346-081e-e95a-9e76-41d3f78c799d",text:"与题目无关的选项",nextSceneId:"scene-004",answerKind:"CHOICE",correct:false,scoreDelta:0,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"},
+          {choiceId:"c-scene-003-d1",questionId:"25c0c346-081e-e95a-9e76-41d3f78c799d",text:"水稻基本生长周期",nextSceneId:"scene-004",answerKind:"CHOICE",correct:false,scoreDelta:0,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"},
+          {choiceId:"c-scene-003-d2",questionId:"25c0c346-081e-e95a-9e76-41d3f78c799d",text:"以上都不对",nextSceneId:"scene-004",answerKind:"CHOICE",correct:false,scoreDelta:0,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"},
+          {choiceId:"c-scene-003-correct",questionId:"25c0c346-081e-e95a-9e76-41d3f78c799d",text:"水稻分蘖期最关键的管理目标是协调群体数量与个体生长，通过水肥调控促进有效分蘖",nextSceneId:"scene-004",answerKind:"CHOICE",correct:true,scoreDelta:1,knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"}],
         knowledgeBindings:[{knowledgePointId:"d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",questionId:"25c0c346-081e-e95a-9e76-41d3f78c799d",purpose:"QUESTION"}]},
       {sceneId:"scene-004",title:"学习模块结束",
         dialogue:[
-          {speakerId:"NEXUS",text:"学习数据已记录。你的知识掌握度持续提升中。",emotion:"proud"},
+          {speakerId:"NEXUS",text:"本轮游戏流程已结束。",emotion:"proud"},
           {speakerId:"NEXUS",text:"本次复习共完成 1 道题目，辛苦了！",emotion:"warm"}],
         choices:[],knowledgeBindings:[]}
     ],assets:[]
@@ -354,12 +355,12 @@ function loadPackage(key) {
   document.documentElement.style.setProperty('--speaker-color', theme.accent);
   document.documentElement.style.setProperty('--scene-title-bg', theme.accent + '22');
 
-  // 计算总分
+  // 计算游戏内总分；scoreDelta 不参与判题，也不用于推断知识点掌握度
   totalScore = 0;
   currentPackage.scenes.forEach(scene => {
     if (scene.choices) {
       scene.choices.forEach(c => {
-        if (c.scoreDelta > 0) totalScore += c.scoreDelta;
+        totalScore += Math.max(0, Number(c.scoreDelta) || 0);
       });
     }
   });
@@ -486,7 +487,7 @@ function showChoices() {
 
     if (isQuestion && alreadyAnswered) {
       // 已回答，显示结果
-      if (choice.scoreDelta > 0) {
+      if (choice.correct === true) {
         btn.classList.add('correct');
         btn.innerHTML = choice.text + ' <span class="choice-result">✓ 正确</span>';
       } else {
@@ -501,7 +502,7 @@ function showChoices() {
         currentScene.choices.forEach((c, i) => {
           const b = container.children[i];
           b.disabled = true;
-          if (c.scoreDelta > 0) {
+          if (c.correct === true) {
             b.classList.add('correct');
             b.innerHTML = c.text + ' <span class="choice-result">✓ 正确</span>';
           } else if (c === choice) {
@@ -512,8 +513,9 @@ function showChoices() {
           }
         });
 
-        if (choice.scoreDelta > 0) {
-          score += choice.scoreDelta;
+        const gameScoreDelta = Number(choice.scoreDelta) || 0;
+        if (gameScoreDelta !== 0) {
+          score += gameScoreDelta;
           document.getElementById('score').textContent = score;
         }
         if (questionId) answeredQuestions.add(questionId);
