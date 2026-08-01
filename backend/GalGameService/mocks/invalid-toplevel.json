@@ -1,0 +1,20 @@
+{
+    "schemaVersion": "2.0",
+    "packageId": "00000000-0000-0000-0000-000000000000",
+    "generatorVersion": "",
+    "reviewPlanId": "00000000-0000-0000-0000-000000000000",
+    "snapshotVersion": "",
+    "entrySceneId": "scene-001",
+    "scenes": [
+        {
+            "sceneId": "scene-001",
+            "title": null,
+            "dialogue": [
+                { "speakerId": "heroine", "text": "顶层字段错误夹具", "emotion": null }
+            ],
+            "choices": [],
+            "knowledgeBindings": []
+        }
+    ],
+    "assets": []
+}

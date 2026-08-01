@@ -1,0 +1,24 @@
+{
+    "schemaVersion": "1.0",
+    "packageId": "55555555-5555-5555-5555-555555555555",
+    "generatorVersion": "gala-0.1.0",
+    "reviewPlanId": "8e812950-3311-40a7-93ab-636409df8cc2",
+    "snapshotVersion": "plan-graph-1.0:3da5f48f",
+    "entrySceneId": "scene-001",
+    "scenes": [
+        {
+            "sceneId": "scene-001",
+            "title": null,
+            "dialogue": [{ "speakerId": "heroine", "text": "资源错误夹具", "emotion": null }],
+            "choices": [],
+            "knowledgeBindings": []
+        }
+    ],
+    "assets": [
+        { "assetId": "bg-01", "type": "BACKGROUND", "uri": "/assets/bg01.png" },
+        { "assetId": "bg-01", "type": "BACKGROUND", "uri": "/assets/bg02.png" },
+        { "assetId": "", "type": "CHARACTER", "uri": "/assets/char01.png" },
+        { "assetId": "bgm-01", "type": "AUDIO", "uri": "" },
+        null
+    ]
+}
