@@ -3,8 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import ActionButton from '../components/ActionButton'
 import AuthLayout, { AuthHeading } from '../components/AuthLayout'
 import FormField from '../components/FormField'
-import { api, demoFallbackEnabled, isNetworkError } from '../lib/api'
-import { createDemoProfile, createDemoSession, saveProfile, saveSession } from '../lib/session'
+import { api } from '../lib/api'
+import { createDemoProfile, saveProfile, saveSession } from '../lib/session'
 
 export default function RegisterPage() {
   const navigate = useNavigate()
@@ -35,14 +35,7 @@ export default function RegisterPage() {
       saveProfile(createDemoProfile(form.displayName.trim(), session.session.userId))
       navigate('/home')
     } catch (error) {
-      if (demoFallbackEnabled && isNetworkError(error)) {
-        const session = createDemoSession(form.email)
-        saveSession(session)
-        saveProfile(createDemoProfile(form.displayName.trim(), session.session.userId))
-        navigate('/home', { state: { message: 'Gateway 未启动，已创建本地测试账户。' } })
-      } else {
-        setMessage(error instanceof Error ? error.message : '注册失败，请重试。')
-      }
+      setMessage(error instanceof Error ? error.message : '注册失败，请重试。')
     } finally {
       setBusy(false)
     }
