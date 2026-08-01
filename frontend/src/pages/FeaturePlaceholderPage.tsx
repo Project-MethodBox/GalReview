@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import BrandMark from '../components/BrandMark'
 import { BackIcon } from '../components/icons'
 

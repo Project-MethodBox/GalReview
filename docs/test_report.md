@@ -404,3 +404,162 @@ Learning 计划包含 5 个节点，5 个均为 `questionTarget`，生成结果�
 - 远程服务器的 SSH 端口可达，但提供的凭据认证失败；为避免触发锁定已停止重试，远程
   部署未执行。仓库保留 `.env.deploy.example` 与 Compose 配置，可在凭据可用后快速部署。
   本报告不记录服务器地址、账号密码或服务密钥。
+
+## 11. 2026-08-02 前端、Render 与部署闭环（撤销）
+
+> 本节曾使用错误引入的 C# RenderService 原型得出结论。该原型已移除，本节涉及
+> ReviewSession、结果提交和 mastery 回写的结论全部作废，不得作为当前实现证据。
+> 当前有效结果以第 12 节为准。
+
+### 11.1 结论
+
+第 10 节中“RenderService 不在仓库及 Compose”的限制已经失效。本轮按
+`docs/contract.md` 的接口完成并测试了 Frontend、Gateway、GalGameService、RenderService
+与 KnowledgeService 的最终结果回写：用户可在页面中上传资料、构图、生成复习计划和
+GalGame，逐场景作答后由 RenderService 提交证据，KnowledgeService 实际更新掌握度。
+
+最终默认 Compose 同时运行 12 个 healthy 容器：Frontend、Gateway、UserService、
+AuthService、FileService、KnowledgeService、GalGameService、RenderService、两套 MySQL、
+MongoDB 和 Neo4j。OCRService 仍只属于可选 `ocr` profile，本轮没有启动或测试 OCR 功能。
+
+Docker Desktop 的数据目录再次核对为 `D:\DockerData\DockerDesktopWSL`；本轮新增的
+MySQL 镜像、应用镜像和数据卷没有改回 C 盘默认位置。
+
+### 11.2 自动化回归
+
+| 项目 | 结果 |
+|---|---:|
+| AuthService Release tests | 8 / 8 |
+| UserService Release tests | 32 / 32 |
+| KnowledgeService Release tests | 105 / 105 |
+| GalGameService Release tests | 285 / 285 |
+| RenderService .NET tests | 11 / 11 |
+| RenderService JS Adapter tests | 6 / 6 |
+| Gateway tests | 176 / 176 |
+| Gateway TypeScript build | 通过 |
+| Frontend TypeScript + Vite production build | 通过，106 modules |
+| Frontend npm audit | 0 vulnerabilities |
+| Frontend 代理不可用分支 | `503 SERVICE_UNAVAILABLE`，关联 ID 保持一致 |
+| FileService Release build | 0 warning / 0 error |
+| FileService NuGet vulnerability scan | 0 vulnerable packages |
+| Compose config | 通过 |
+
+FileService 的 `MongoDB.Driver` 从 3.5.0 升级到 3.10.0，消除了原先传递引入的
+SharpCompress 和 Snappier 漏洞。Frontend 从存在安全公告的 `react-router-dom 7.18.2`
+迁移到 `react-router 8.3.0`，容器中的 `npm ci` 与审计均通过。
+
+Render 契约对照额外覆盖了容易抬高 mastery 的边界：`attemptNumber > 1` 时
+`quality <= 3`；结果只覆盖实际作答的分支题目，但每条证据仍必须唯一且与题目、知识点、
+选项和正确性绑定一致。Adapter 同时校验数量边界、UUID、引用与可达性，并在启动会话时
+冻结核对 `packageId + reviewPlanId + snapshotVersion`。
+
+### 11.3 API 全流程
+
+测试入口使用 Frontend 的同源地址，因此既验证了浏览器部署入口，也验证了 `/api/*` 到
+Gateway 的反向代理。真实输入仍为 `D:\AppData\test\农业生态学题库.pdf`，明确使用
+`enableOcr=false`。
+
+| 阶段 | 观测结果 |
+|---|---|
+| 注册、登录、用户资料 | 成功；用户与令牌 owner 一致 |
+| 上传与提取 | `SUCCEEDED`，`ocrRequested=false`，`ocrUsed=false` |
+| 规范化文本 | 26,139 UTF-16 code units，20 source spans，20 blocks |
+| 构图 | 7 章、243 个知识点、207 条关系，Neo4j 对账一致，初始 mastery 全为 0 |
+| Assessment Plan | 5 个节点，3 个实际出题点 |
+| GalGame | 7 个场景，完整包 checksum 与响应字节一致 |
+| Runtime 资源 | manifest、Adapter 和 WASM 均可经 Gateway 读取，WASM SHA-256 一致 |
+| Render 会话 | 权威包读取和二次校验成功；事件重投去重、进度重投幂等 |
+| 最终结果 | 首次 `ACCEPTED`，相同载荷重试 `DUPLICATE` |
+| 冲突载荷 | `409 IDEMPOTENCY_CONFLICT` |
+| 掌握度 | 3 个作答知识点由 0 更新为 35，版本同步递增 |
+
+创建 ReviewSession 的成功同时证明了新增
+`GET /internal/v1/game-packages/{packageId}?ownerUserId=...` 路由可由精确
+`RenderService` 身份调用。测试期间发现 Gateway 最初把该接口注册成无参数静态路径，
+真实请求会 404；已改为 `:packageId` 参数路由并加入路由测试。
+
+### 11.4 浏览器端全流程
+
+使用本机 Edge 进行无头浏览器测试，从 `/login` 开始实际操作页面：
+
+1. 登录并进入主页；
+2. 在 `/materials` 上传 PDF，等待非 OCR 提取和知识图谱完成；
+3. 创建 Assessment Plan 并进入 `/review`；
+4. 生成游戏包，加载 manifest、ES module Adapter 和 WASM；
+5. 连续点击 8 个场景选择，记录 5 条作答证据；
+6. 保存进度并提交最终结果，显示“复习完成”。
+
+浏览器控制台错误为 0，未捕获页面异常为 0。完成页截图保存在忽略版本控制的
+`.artifacts/integration/frontend-complete.png`。生产容器的 `/healthz`、根路径与 SPA
+fallback `/materials` 均返回 200。
+
+### 11.5 MySQL 服务器模式
+
+首次把 AuthService/UserService 从 Mock 切换到服务器模板使用的 `MySql` 模式时，发现
+MySQL 8.4 的 `caching_sha2_password` 会拒绝原连接串。Compose 已在两条内部连接串中补充
+`AllowPublicKeyRetrieval=True`，MySQL 端口仍不对宿主或公网开放。
+
+修复后完成了管理员登录、创建一次性邀请码、用户注册、用户登录和资料读取。随后重启
+AuthService 与 UserService，再次使用同一账号登录并读取相同用户资料成功；两个 `/readyz`
+均明确返回 `storage=mysql`，证明不是回退到内存模式。
+
+Render 最终边界校验修复并重建镜像后，又在该 MySQL 模式下经 Frontend `:8080` 重跑完整
+API 与 Edge 浏览器流程。API 仍得到 7 章、243 个知识点、207 条关系和 3 个由 0 更新为
+35 的 mastery；浏览器完成 8 次场景选择并提交 5 条作答证据，控制台错误和页面异常均为 0。
+
+### 11.6 当前限制
+
+- RenderService 的会话存储仍是 `ephemeral-memory`，容器重启会丢失进行中的会话；
+- 当前执行引擎是 JS Adapter。WASM 响应只有 8 字节的最小可加载模块，`/readyz` 如实返回
+  `wasmAbiComplete=false`；C++ ABI、内存所有权和真实帧渲染仍未完成；
+- GalGameService 仍使用进程内游戏包存储；
+- `ReviewCompleted v2` 消息总线尚未接入，当前闭环使用契约允许的同步 INTERNAL evidence；
+- 未执行远程部署；`docs/deploy.md` 和 `.env.deploy.example` 已保留直接在 Linux 服务器启动、
+  更新、回滚与备份的步骤，且不包含真实服务器凭据。
+
+## 12. 2026-08-02 RenderService C++ / JS 基础壳复测
+
+### 12.1 纠偏结论
+
+RenderService 当前只是一套供后续负责人继续开发的 C++ / JS 工具链基础壳。错误加入的
+ASP.NET Core 项目、C# 领域代码和 .NET 测试已经全部移除；仓库不再把临时 C# 原型当作
+RenderService 实现。
+
+当前镜像只完成以下工作：
+
+- 使用 `g++` 编译并执行 `src/main.cpp` 基础壳自检；
+- 由 JS 静态层公开 manifest、最小 WASM 和 ES module Adapter；
+- `/readyz` 明确返回 `runtimeMode=SHELL`、`reviewSessionsAvailable=false` 和
+  `wasmAbiComplete=false`；
+- ReviewSession 路径直接返回 `501 RENDER_SESSION_NOT_IMPLEMENTED`。
+
+### 12.2 实际测试
+
+| 项目 | 结果 |
+|---|---:|
+| C++ 壳容器编译 | 通过，`g++ -std=c++23` |
+| C++ 壳容器内执行 | 退出码 0 |
+| JS Adapter tests | 6 / 6 |
+| Frontend TypeScript + Vite build | 通过，106 modules |
+| Gateway readiness | 200 |
+| Runtime manifest | 200，`runtimeMode=SHELL` |
+| WASM checksum | 与 manifest 一致 |
+| ReviewSession 未实现分支 | 501，`RENDER_SESSION_NOT_IMPLEMENTED` |
+| 默认 Compose | 12 个容器 healthy |
+
+### 12.3 浏览器链路
+
+Edge 无头浏览器重新执行了登录、上传 PDF、非 OCR 构图、Assessment Plan、GalGame 生成、
+Adapter/WASM 加载和本地游玩。结果为 7 章、243 个知识点、207 条关系、8 次场景选择和
+5 条浏览器本地作答记录；控制台错误与页面异常均为 0。
+
+本轮没有调用 Render ReviewSession、progress、events 或 result，也没有更新 mastery。
+完成页明确提示这是基础壳本地体验，结果未提交。该边界符合当前 RenderService 尚待后续
+负责人开发的真实状态。
+
+### 12.4 未完成范围
+
+- ReviewSession、进度、事件、结果幂等与 KnowledgeService evidence 回传；
+- 完整 C++ WASM ABI、内存所有权、RuntimeState 与真实帧渲染；
+- `ReviewCompleted v2` 消息总线和生产持久化；
+- OCR 功能与远程服务器部署。

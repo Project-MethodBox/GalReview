@@ -111,13 +111,11 @@ public class InvalidPackageTests
         AssertInvalid(r);
         var codes = Codes(r);
         Assert.Contains("DUPLICATE_CHOICE_ID", codes);
-        Assert.Contains("INVALID_SCORE_DELTA", codes);
+        Assert.DoesNotContain("INVALID_SCORE_DELTA", codes);
         Assert.Contains("EMPTY_CHOICE_FIELD", codes);
         Assert.Contains("INVALID_NEXT_SCENE", codes);
         Assert.Contains("NULL_ELEMENT", codes);
-        // 负分与过大分值是两条不同 issue
-        var scoreDeltaCount = r.Errors.Count(e => e.Code == "INVALID_SCORE_DELTA");
-        Assert.True(scoreDeltaCount >= 2, $"期望至少 2 个 INVALID_SCORE_DELTA，实际 {scoreDeltaCount}");
+        // scoreDelta 只用于游戏计分，负值或大值都不能用来推断 correct。
         // Q1 恰有一个正确选项，不应级联出题目正确性错误
         Assert.DoesNotContain("NO_CORRECT_CHOICE", codes);
         Assert.DoesNotContain("MULTIPLE_CORRECT_CHOICES", codes);
@@ -125,15 +123,18 @@ public class InvalidPackageTests
 
     // ---- invalid-question-binding.json：题目/知识点绑定（跨服务证据核心）----
     [Fact]
-    public void InvalidQuestionBinding_TriggersAllSevenBindingCodes()
+    public void InvalidQuestionBinding_TriggersBindingAndCorrectnessCodes()
     {
         var r = new GamePackageValidator().Validate(LoadMockPackage("invalid-question-binding.json"));
         AssertInvalid(r);
         var codes = Codes(r);
-        Assert.Contains("MULTIPLE_CORRECT_CHOICES", codes);   // Q1 两个正确
+        // Q1 可以有多个正确选项；correct 与 scoreDelta 相互独立。
+        Assert.DoesNotContain("MULTIPLE_CORRECT_CHOICES", codes);
         Assert.Contains("NO_CORRECT_CHOICE", codes);          // Q2 无正确
         Assert.Contains("ORPHAN_QUESTION_BINDING", codes);     // Q3 绑定无 choice
         Assert.Contains("QUESTION_POINT_MISMATCH", codes);     // Q4 选项 pointId 不一致
+        Assert.Contains("QUESTION_BINDING_POINT_MISMATCH", codes);
+        Assert.Contains("MULTIPLE_QUESTIONS_IN_SCENE", codes);
         Assert.Contains("QUESTION_BINDING_MISSING_QUESTION_ID", codes); // B1 questionId=null
         Assert.Contains("EMPTY_BINDING_FIELD", codes);         // B2 knowledgePointId 空
         Assert.Contains("NULL_ELEMENT", codes);                // B3 null 绑定

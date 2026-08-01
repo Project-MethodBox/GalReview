@@ -1,6 +1,44 @@
 name: ${COMPOSE_PROJECT_NAME:-galreview-integration}
 
 services:
+  user-mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: ${USER_MYSQL_ROOT_PASSWORD:-user-root-dev-password}
+      MYSQL_DATABASE: galreview_user
+      MYSQL_USER: galreview_user
+      MYSQL_PASSWORD: ${USER_MYSQL_PASSWORD:-user-dev-password}
+    volumes:
+      - user-mysql-data:/var/lib/mysql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - mysqladmin ping -h 127.0.0.1 -uroot -p"$${MYSQL_ROOT_PASSWORD}" --silent
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
+
+  auth-mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: ${AUTH_MYSQL_ROOT_PASSWORD:-auth-root-dev-password}
+      MYSQL_DATABASE: galreview_auth
+      MYSQL_USER: galreview_auth
+      MYSQL_PASSWORD: ${AUTH_MYSQL_PASSWORD:-auth-dev-password}
+    volumes:
+      - auth-mysql-data:/var/lib/mysql
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - mysqladmin ping -h 127.0.0.1 -uroot -p"$${MYSQL_ROOT_PASSWORD}" --silent
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
+
   mongo:
     image: mongo:8.0
     volumes:
@@ -46,8 +84,9 @@ services:
       ASPNETCORE_URLS: http://+:5101
       MOONSTONE_MODE: ${USER_SERVICE_MODE:-Mock}
       Gateway__ServiceKey: ${USER_SERVICE_KEY:-moonstone-local-gateway-key}
+      ConnectionStrings__UserDatabase: "Server=user-mysql;Port=3306;Database=galreview_user;User ID=galreview_user;Password=${USER_MYSQL_PASSWORD:-user-dev-password};SslMode=Disabled;AllowPublicKeyRetrieval=True"
     depends_on:
-      mongo:
+      user-mysql:
         condition: service_healthy
     restart: unless-stopped
 
@@ -62,7 +101,18 @@ services:
       Gateway__ServiceKey: ${AUTH_SERVICE_KEY:-moonstone-local-gateway-key}
       Admin__Username: ${GALREVIEW_ADMIN_USERNAME:-integration-admin}
       Admin__Password: ${GALREVIEW_ADMIN_PASSWORD:-integration-admin-password}
+      Email__SmtpHost: ${SMTP_HOST:-}
+      Email__SmtpPort: ${SMTP_PORT:-465}
+      Email__UseSsl: ${SMTP_USE_SSL:-true}
+      Email__Username: ${SMTP_USERNAME:-}
+      Email__Password: ${SMTP_PASSWORD:-}
+      Email__FromAddress: ${SMTP_FROM_ADDRESS:-}
+      Email__FromName: ${SMTP_FROM_NAME:-GalReview}
+      AccountFrontend__BaseUrl: ${ACCOUNT_FRONTEND_BASE_URL:-http://localhost:8080}
+      ConnectionStrings__AuthDatabase: "Server=auth-mysql;Port=3306;Database=galreview_auth;User ID=galreview_auth;Password=${AUTH_MYSQL_PASSWORD:-auth-dev-password};SslMode=Disabled;AllowPublicKeyRetrieval=True"
     depends_on:
+      auth-mysql:
+        condition: service_healthy
       user-service:
         condition: service_healthy
     restart: unless-stopped
@@ -115,9 +165,17 @@ services:
       Gateway__BaseUrl: http://gateway:5000
       Gateway__ServiceKey: ${GALGAME_SERVICE_KEY:-moonstone-local-gateway-key}
       InternalAccess__ValidationAllowedServices__0: RenderService
+      InternalAccess__PackageReaderAllowedServices__0: RenderService
     depends_on:
       knowledge-service:
         condition: service_healthy
+    restart: unless-stopped
+
+  render-service:
+    build:
+      context: ./backend/RenderService
+    environment:
+      PORT: 5106
     restart: unless-stopped
 
   gateway:
@@ -139,10 +197,10 @@ services:
       KNOWLEDGE_SERVICE_URL: http://knowledge-service:8080
       GALGAME_SERVICE_URL: http://galgame-service:5105
       RENDER_SERVICE_URL: http://render-service:5106
-      READINESS_SERVICES: userService,authService,fileService,knowledgeService,galGameService
+      READINESS_SERVICES: userService,authService,fileService,knowledgeService,galGameService,renderService
       DEFAULT_TIMEOUT_MS: 30000
       UPLOAD_TIMEOUT_MS: 120000
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:5174}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080,http://localhost:5173,http://localhost:5174}
     depends_on:
       user-service:
         condition: service_healthy
@@ -154,8 +212,22 @@ services:
         condition: service_healthy
       galgame-service:
         condition: service_healthy
+      render-service:
+        condition: service_healthy
     ports:
       - "${GATEWAY_BIND_ADDRESS:-0.0.0.0}:${GATEWAY_HOST_PORT:-5000}:5000"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      GATEWAY_UPSTREAM: http://gateway:5000
+    depends_on:
+      gateway:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_BIND_ADDRESS:-0.0.0.0}:${FRONTEND_HOST_PORT:-8080}:8080"
     restart: unless-stopped
 
   ocr-service:
@@ -166,5 +238,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  user-mysql-data:
+  auth-mysql-data:
   file-mongo-data:
   knowledge-neo4j-data:

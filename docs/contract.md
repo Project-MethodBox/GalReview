@@ -3,7 +3,7 @@
 > 版本：v0.1  
 > 状态：Draft / 各服务负责人待确认  
 > 总负责人：PM & TL `@Arabidopsis`  
-> 更新时间：2026-08-01
+> 更新时间：2026-08-02
 > 依据：《千知万理 产品需求与技术方案》v0.2
 
 ## 0. 文档定位
@@ -47,6 +47,7 @@
 - **FileService 的数据库为 MongoDB + GridFS**：文件二进制、资料元数据、解析任务和规范化文本只由 FileService 写入。
 - **KnowledgeService 的数据库为 Neo4j**：章节、知识点、关系、计划和掌握度只由 KnowledgeService 写入。
 - **GalGameService 当前使用进程内临时存储**：集成 Compose 使用 `ephemeral-memory`，容器重启后生成任务与游戏包会丢失；该实现只用于当前联调，不是生产持久化方案。
+- **RenderService 当前只是 C++ / JS 基础工具链壳**：不创建或存储复习会话、进度、事件和结果；这些能力由后续负责人实现。
 - 不得将同一事实跨 MySQL、MongoDB、Neo4j 双写为多个权威来源。
 
 ## 1. 架构级调用约束
@@ -1362,6 +1363,7 @@ subject to:
 | `GET` | `/api/v1/game-packages/{packageId}` | 读取游戏包清单 | - | `GamePackageManifest` | `200/400/401/404` |
 | `GET` | `/api/v1/game-packages/{packageId}/content` | 下载完整 JSON 游戏包 | `If-None-Match?` | JSON | `200/304/400/401/404` |
 | `POST` | `/internal/v1/game-package-validations` | 由受信服务校验游戏包 | `GamePackageValidationRequest` | `ValidationResult` | `200/400/403/422` |
+| `GET` | `/internal/v1/game-packages/{packageId}?ownerUserId=...` | 仅 RenderService 按会话用户读取权威游戏包 | Query | `GamePackage` | `200/400/403/404` |
 
 `POST /api/v1/game-generations` 在返回 `202` 前同步经 Gateway 读取并校验 PlanGraph。计划
 不存在或不属于当前用户返回 `422 REVIEW_PLAN_NOT_FOUND`，快照不一致返回
@@ -1374,6 +1376,12 @@ subject to:
 这些字节的 SHA-256，匹配 `If-None-Match` 时返回 `304`。INTERNAL 校验请求只有 JSON
 绑定失败或缺少 `package` 时返回 `400 ApiFailure`；包可解析但违反 schema 约束时返回
 `422 ApiSuccess<ValidationResult>`，其中 `valid=false` 并列出 `errors`。
+
+RenderService 创建会话时不得伪造或信任浏览器提交的计划快照。它必须以精确
+`X-Service-Name: RenderService` 身份经 Gateway 调用 INTERNAL 游戏包读取接口；
+`ownerUserId` 取自 RenderService 当前请求中由 Gateway 注入并已校验的 `X-User-Id`。
+GalGameService 必须同时校验调用方 allowlist、包所有者和 `packageId`，成功时返回标准
+`ApiSuccess<GamePackage>`；所有者不匹配与包不存在统一返回 `404 RESOURCE_NOT_FOUND`。
 
 ### 7.2 生成任务数据类型
 
@@ -1486,6 +1494,13 @@ interface ValidationResult {
 }
 ```
 
+`schemaVersion=1.0` 的结构文件固定为
+`backend/GalGameService/schema/game-package-1.0.schema.json`。一个包包含 1-100 个 Scene；
+每个 Scene 包含 1-200 行 dialogue 与 0-6 个 choices。`scoreDelta` 是任意 JSON number，
+只表示游戏分数；负值、较大值或零都不得代替 `correct`。Schema 负责字段形状、枚举与
+`additionalProperties=false`，`GamePackageValidator` 负责同场景绑定、可达性、引用与正确
+选项等跨字段规则。
+
 ### 7.3.1 **URGENT（跨服务阻塞项）** PlanGraph 消费与证据绑定
 
 GalGameService 在接受 `GameGenerationRequest` 后必须经 Gateway 调用
@@ -1548,22 +1563,25 @@ GalGameService 在接受 `GameGenerationRequest` 后必须经 Gateway 调用
 }
 ```
 
-### 7.5 OWNER-TBD
+### 7.5 已冻结项与剩余 OWNER-TBD
 
-- [ ] `schemaVersion=1.0` 的完整 JSON Schema；
-- [ ] 场景、对话和选择数量上限；
-- [ ] 角色、音频和资源引用结构；
-- [ ] 生成失败和部分成功语义；
-- [ ] `generatorVersion` 与 seed 的可复现范围；
-- [ ] 游戏包保存位置和清理策略。
+- [x] `schemaVersion=1.0` JSON Schema 及 100/200/6 数量边界；
+- [x] 首版角色只使用 `DialogueLine.speakerId`，资源统一使用 `AssetRef`；
+- [x] 生成任务原子交付，不返回部分游戏包：后台成功时同时保存 manifest 与完整包，失败时
+  `packageId=null` 并在任务中返回 `error`；
+- [x] 当前 `generatorVersion="gala-0.1.0"`。显式 seed 会稳定 questionId、场景顺序与
+  选项顺序；`packageId` 和 manifest 时间仍在每次生成时新建，因此首版不承诺整个包或
+  checksum 字节级相同。seed 省略时使用随机值；
+- [ ] 生产游戏包持久化、跨副本一致性、保留期和清理任务。
 
 当前 `InMemoryGameStore` 在普通模式与 Mock 模式都只使用进程内存；Mock 模式额外装载固定
 样例，集成 Compose 使用普通模式，不预置任务或游戏包。服务或容器重启后数据不可恢复，
 因此生产持久化、跨副本一致性和清理策略仍为 `OWNER-TBD`。
 
-当前 INTERNAL 校验端点及 `RenderService` 服务身份允许名单已经存在，但 RenderService
-实现、WASM 运行时、会话结果提交与 mastery 更新的全链路仍由 `@Zopiclone` 负责并保持
-`OWNER-TBD`；仅通过游戏包校验不能视为该闭环已经完成。
+当前 GalGameService 已提供 INTERNAL 游戏包读取与校验端点，并保留 `RenderService` 精确
+服务身份允许名单。RenderService 本身只交付 C++ 编译壳、最小 WASM 和 JS Adapter；
+会话、结果提交、mastery evidence、完整 WASM ABI 与真实帧渲染均由 `@Zopiclone` 后续实现，
+不得用前端本地体验冒充这些服务端能力已经完成。
 
 `@F15EX` 需要交付：
 
@@ -1582,11 +1600,16 @@ GalGameService 在接受 `GameGenerationRequest` 后必须经 Gateway 调用
 | 方法 | Gateway 路由 | 用途 | 请求 | 响应 | 状态 |
 |---|---|---|---|---|---|
 | `GET` | `/api/v1/render-runtime/manifest` | 读取 WASM 与 schema 兼容信息 | - | `RuntimeManifest` | `200/503` |
-| `POST` | `/api/v1/review-sessions` | 创建复习会话 | `CreateReviewSessionRequest` | `ReviewSession` | `201/422` |
-| `GET` | `/api/v1/review-sessions/{sessionId}` | 读取会话和进度 | - | `ReviewSession` | `200/404` |
-| `PUT` | `/api/v1/review-sessions/{sessionId}/progress` | 幂等保存进度 | `ProgressSnapshotInput` | `ProgressSnapshot` | `200/409` |
-| `POST` | `/api/v1/review-sessions/{sessionId}/events` | 追加交互事件 | `InteractionEventBatch` | `EventReceipt` | `202/422` |
-| `PUT` | `/api/v1/review-sessions/{sessionId}/result` | 幂等提交最终结果 | `ReviewResultInput` | `ReviewResult` | `200/409` |
+| `GET` | `/api/v1/render-runtime/runtime.wasm` | 下载 manifest 指定的 WASM 字节 | - | `application/wasm` | `200/503` |
+| `GET` | `/api/v1/render-runtime/adapter.js` | 下载浏览器 JS Adapter | - | `application/javascript` | `200/503` |
+| `POST` | `/api/v1/review-sessions` | 创建复习会话 | `CreateReviewSessionRequest` | `ReviewSession` | `201/400/401/422/502/503` |
+| `GET` | `/api/v1/review-sessions/{sessionId}` | 读取会话和进度 | - | `ReviewSession` | `200/400/401/404` |
+| `PUT` | `/api/v1/review-sessions/{sessionId}/progress` | 幂等保存进度 | `ProgressSnapshotInput` | `ProgressSnapshot` | `200/400/401/404/409/422` |
+| `POST` | `/api/v1/review-sessions/{sessionId}/events` | 追加交互事件 | `InteractionEventBatch` | `EventReceipt` | `202/400/401/404/409/422` |
+| `PUT` | `/api/v1/review-sessions/{sessionId}/result` | 幂等提交最终结果 | `ReviewResultInput` | `ReviewResult` | `200/400/401/404/409/422/503` |
+
+上表中的 ReviewSession 接口是后续实现目标。当前 `runtimeMode=SHELL` 时只实现三个公开
+runtime 资源；访问 `/api/v1/review-sessions*` 返回 `501 RENDER_SESSION_NOT_IMPLEMENTED`。
 
 ### 8.2 REST 数据类型
 
@@ -1597,6 +1620,9 @@ interface RuntimeManifest {
   wasmUrl: Uri;
   jsAdapterUrl: Uri;
   checksum: Sha256;
+  runtimeMode: "SHELL" | "FULL";
+  reviewSessionsAvailable: boolean;
+  wasmAbiComplete: boolean;
 }
 
 interface CreateReviewSessionRequest {
@@ -1676,7 +1702,7 @@ interface ReviewResultInput {
   idempotencyKey: Uuid;
   reviewPlanId: Uuid;
   snapshotVersion: string;
-  answerResults: AnswerResult[];
+  answerResults: AnswerResult[]; // 题目包 1-100；纯讲解包必须为空
   durationSeconds: number;
 }
 
@@ -1700,7 +1726,12 @@ RenderService 完成会话后必须把足够的原始学习证据交给 Knowledg
 - 最终接受结果后发布 `ReviewCompleted v2`；启用同步恢复路径时，使用同一 payload 调用
   `PUT /internal/v1/review-evidence/{resultId}`。两条路径必须共享 `resultId + idempotencyKey`，由 KnowledgeService 去重。
 - 页面刷新、网络重试或消息重投不得生成新的 resultId。相同 idempotencyKey 的 payload 发生变化时必须作为冲突暴露，不得覆盖第一次结果。
+- 同一会话对完全相同的结果载荷重试返回 `200 DUPLICATE` 和原 `resultId`；使用不同幂等键，或复用同一幂等键但改变任何结果字段，返回 `409 IDEMPOTENCY_CONFLICT`。
 - 没有 `reviewPlanId`、snapshot、questionId、quality 或时间证据的旧 `ReviewCompleted v1` 不足以更新 mastery；KnowledgeService 不得根据 v1 的 `scoreDelta` 猜测掌握度。
+- 对没有任何 `QUESTION` binding 的纯讲解包，`answerResults` 必须为空；RenderService 可以
+  完成本地会话，但不得调用要求 1-100 条证据的 KnowledgeService evidence 接口，掌握度
+  保持不变。只要包内存在 QUESTION，结果就必须覆盖实际作答题目并走同一 evidence 校验路径；
+  未进入的分支场景不得伪造 `AnswerResult`，也不要求覆盖包内所有未访问题目。
 
 本小节是 RenderService 的 **URGENT（跨服务阻塞项）**；这里只冻结提交义务，不由 KnowledgeService 实现 RenderService。
 
@@ -1732,7 +1763,28 @@ interface WasmAdapter {
   serializeState(): JsonObject;
   dispose(): void;
 }
+
+type SessionBootstrap = ReviewSession;
+
+interface WasmAdapterFactoryOptions {
+  wasmUrl?: string; // 省略时使用 /api/v1/render-runtime/runtime.wasm
+}
+
+export function createWasmAdapter(
+  options?: WasmAdapterFactoryOptions
+): Promise<WasmAdapter>;
 ```
+
+`adapter.js` 必须以 ES module 形式导出上述 `createWasmAdapter`；前端只依赖这个工厂和
+`WasmAdapter`，不得访问 RenderService 容器直连地址。`SessionBootstrap` 已固定为完整
+`ReviewSession`；`RuntimeInput`、`RenderEvent` 与 `RuntimeState` 的稳定字段仍为 OWNER-TBD，在它们冻结前 adapter
+只能透传 JSON 对象，调用方不得据此形成新的跨服务证据字段。
+
+当前可执行版本为 `cpp-js-shell-0.1.0`：镜像会编译并运行 C++ 空壳自检，Adapter 加载
+manifest 指定的最小 WASM、校验游戏包并冻结浏览器本地会话。场景展示与选择仍由前端根据
+`GamePackage` 驱动。`/readyz` 和 manifest 必须如实返回 `runtimeMode="SHELL"`、
+`executionEngine="cpp-js-shell"`、`reviewSessionsAvailable=false` 和
+`wasmAbiComplete=false`；不得把它描述成完整 C++ 渲染引擎或结果回传服务。
 
 职责：
 
@@ -1791,11 +1843,13 @@ interface WasmAdapter {
 | `/api/v1/materials`、`/api/v1/ingestion-jobs` | FileService | Browser | 用户令牌 |
 | `/api/v1/knowledge-*`、`/api/v1/assessment-plans`、`/api/v1/learning-plans`、`/api/v1/review-plans`、`/api/v1/mastery-records` | KnowledgeService | Browser | 用户令牌 |
 | `/api/v1/game-*` | GalGameService | Browser / Render | 用户令牌 |
-| `/api/v1/render-runtime`、`/api/v1/review-sessions` | RenderService | Browser | 用户令牌；manifest 可公开缓存 |
+| `/api/v1/render-runtime/manifest`、`/api/v1/render-runtime/runtime.wasm`、`/api/v1/render-runtime/adapter.js` | RenderService | Browser | 公开；可缓存，必须按 manifest checksum 验证 WASM |
+| `/api/v1/review-sessions` | RenderService | Browser | 用户令牌 |
 | `/internal/v1/materials/*/extracted-text` | FileService | KnowledgeService | 服务身份；维护适配为 **URGENT（FileService / Gateway）** |
 | `/internal/v1/review-plans/*/graph` | KnowledgeService | GalGameService | **URGENT（跨服务阻塞项）** 精确服务身份 |
 | `/internal/v1/review-evidence/*` | KnowledgeService | RenderService | **URGENT（跨服务阻塞项）** 精确服务身份 |
 | `/internal/v1/game-package-validations` | GalGameService | RenderService | 服务身份；当前默认只允许 `RenderService` |
+| `/internal/v1/game-packages/*` | GalGameService | RenderService | 服务身份；同时校验请求中的 ownerUserId |
 | `/internal/v1/*` | 对应服务 | Service only | 服务身份；用户委托身份可选 |
 
 ### 9.2 Gateway 行为与信任头
@@ -1823,8 +1877,8 @@ interface WasmAdapter {
 
 `READINESS_SERVICES` 是逗号分隔的服务 key。Gateway 应用默认值为
 `userService,authService,fileService,knowledgeService`；根目录集成 Compose 显式追加
-`galGameService`，因此当前完整本地闭环会真实探测五个服务的 `/healthz`。尚未加入该
-Compose 的 RenderService 和可选 OCRService 不进入本轮 readiness。配置中出现未知 key
+`galGameService,renderService`，因此当前完整本地闭环会真实探测六个服务的 `/healthz`。
+可选 OCRService 不进入 readiness。配置中出现未知 key
 时 Gateway 必须拒绝启动。
 KnowledgeService 在宿主机的默认目标为 `http://localhost:5080`；集成容器网络内使用
 `http://knowledge-service:8080`。
@@ -1836,6 +1890,16 @@ KnowledgeService 在宿主机的默认目标为 `http://localhost:5080`；集成
 - 前端不得拼接服务直连地址。
 - 前端不得根据 HTTP 500 的 message 猜测业务状态。
 - 所有稳定分支判断使用 `error.code` 或显式状态字段。
+
+当前页面路由为 `/login`、`/register`、`/forgot-password`、`/home`、`/materials`、
+`/knowledge-graph` 和 `/review`。`/materials` 只按 5.2 的非 OCR 请求上传、提取并构图，
+随后创建 Assessment 或 Learning Plan；`/review` 依次调用 GalGame 生成、游戏包读取、
+Render runtime 资源。manifest 为 `runtimeMode=SHELL` 时只在浏览器本地创建临时会话并
+完成壳体验，不调用 ReviewSession/progress/events/result，也不更新 mastery；只有
+`reviewSessionsAvailable=true` 后才允许走这些服务端接口。生产容器只暴露 `8080`，并
+把相对 `/api/*` 同源代理到 Gateway；构建产物不得包含某台开发机的服务直连地址。代理
+无法连接 Gateway 时返回 `503 SERVICE_UNAVAILABLE`，保留合法的 `X-Correlation-Id`，
+请求未提供时生成新的关联 ID，并在响应头与 `ApiFailure.traceId` 中返回同一值。
 
 ### 9.5 容器化运行基线
 
@@ -1849,7 +1913,11 @@ KnowledgeService 在宿主机的默认目标为 `http://localhost:5080`；集成
 | FileService | `5103 / 不暴露` | 使用 MongoDB + GridFS；只由 Gateway 访问 |
 | KnowledgeService | `8080 / ${KNOWLEDGE_HOST_PORT:-5080}` | 使用 Neo4j；仅诊断端口，绑定地址由 `DIAGNOSTIC_BIND_ADDRESS` 配置 |
 | GalGameService | `5105 / 不暴露` | 只由 Gateway 访问；当前使用进程内临时存储 |
+| RenderService | `5106 / 不暴露` | C++ 编译壳 + JS Adapter/WASM 静态运行时；ReviewSession 尚未实现 |
+| Frontend | `8080 / ${FRONTEND_HOST_PORT:-8080}` | 非 root Node 静态站点；同源代理 `/api` 到 Gateway |
 | OCRService | `5110 / 不暴露` | `ocr` profile 的可选内部依赖，本轮闭环不启动 |
+| User MySQL | `3306 / 不暴露` | 只供 UserService；独立卷 `user-mysql-data` |
+| Auth MySQL | `3306 / 不暴露` | 只供 AuthService；独立卷 `auth-mysql-data` |
 | MongoDB | `27017 / 不暴露` | 只供 FileService |
 | Neo4j | `7687 / 7687`，Browser `7474 / 7474` | 只由 KnowledgeService 写图，Browser 仅供本地诊断 |
 
@@ -1858,18 +1926,21 @@ KnowledgeService 在宿主机的默认目标为 `http://localhost:5080`；集成
 - Gateway 使用 `GATEWAY_KEY`、各服务 `*_SERVICE_KEY`、各服务 `*_SERVICE_URL`、`READINESS_SERVICES`、`DEFAULT_TIMEOUT_MS`、`UPLOAD_TIMEOUT_MS` 和 `CORS_ORIGINS`；GalGameService 的目标配置明确为 `GALGAME_SERVICE_URL` 与 `GALGAME_SERVICE_KEY`；
 - FileService 使用 `Gateway__ServiceKey`、`ConnectionStrings__FileDatabase`、`MongoDb__Database`、`InternalAccess__ExtractedTextAllowedServices__0`、`Ocr__BaseUrl`、`Ocr__TimeoutMinutes`；
 - KnowledgeService 使用 `Gateway__ServiceKey`、`GatewayMaterialText__BaseUrl`、`GatewayMaterialText__ServiceName`、`GatewayMaterialText__ServiceKey`、`GatewayMaterialText__Timeout` 以及 `Neo4j__Uri`、`Neo4j__Username`、`Neo4j__Password`、`Neo4j__Database`；
-- GalGameService 使用 `Gateway__BaseUrl`、`Gateway__ServiceKey` 和 `InternalAccess__ValidationAllowedServices__0`；集成 Compose 的 INTERNAL 校验调用方默认只允许 `RenderService`；
-- AuthService 与 UserService 分别使用自己的 `Gateway__ServiceKey`；集成环境的 Mock 和管理员占位配置不得沿用到生产；
+- GalGameService 使用 `Gateway__BaseUrl`、`Gateway__ServiceKey`、`InternalAccess__ValidationAllowedServices__0` 和 `InternalAccess__PackageReaderAllowedServices__0`；两个 INTERNAL 调用方默认都只允许 `RenderService`；
+- RenderService 基础壳只使用 `PORT`；未来实现 INTERNAL 回调时再启用 `Gateway__BaseUrl`、`Gateway__ServiceName` 与 `Gateway__ServiceKey`；
+- AuthService 与 UserService 分别使用自己的 `Gateway__ServiceKey`、独立 MySQL 连接串和独立数据卷；服务器模板固定使用 `MySql` 模式，本地可显式覆盖为 `Mock`。Compose 内部 MySQL 8.4 的 `caching_sha2_password` 连接串包含 `AllowPublicKeyRetrieval=True` 且端口不外露；改接外部数据库时必须使用受信 CA 的 TLS；
+- Frontend 使用 `GATEWAY_UPSTREAM`，AuthService 的可选邮件配置使用 `SMTP_*` 与 `ACCOUNT_FRONTEND_BASE_URL`；
 - `DSAPI`（DeepSeek）和 `BitchSDAU`（阿里 API）不是“注册/登录 -> 上传 -> 确定性文本提取 -> KnowledgeService 构图 -> Neo4j”链路的依赖，不能因为宿主环境已配置就把它们注入或记录到这些容器。
 
 开发默认密钥只用于本地；生产部署必须通过 secret 管理器覆盖，日志、构建参数、
 Compose 文件和接口示例均不得打印真实值。Docker Desktop 的镜像与卷数据位置属于宿主机运维配置，不由业务容器内路径决定。
 
 仓库根目录已有 `.env.deploy.example`，只保存变量名和 `CHANGE_ME` 占位值。未来部署时在
-目标主机复制为不提交版本库的 `.env`，替换服务密钥、Neo4j 密码、管理员占位凭据、绑定
-地址、宿主端口和 CORS 源后，再由同一 `compose.integration.yaml` 启动。当前只完成本地
-集成容器环境，尚未执行远程部署；模板保留快速远程启动能力，但 AuthService/UserService
-仍使用已测试的 Mock 模式，GalGameService 仍是临时内存存储，不能据此宣称生产就绪。
+目标主机复制为不提交版本库的 `.env`，替换服务密钥、数据库密码、管理员占位凭据、绑定
+地址、宿主端口、SMTP 和 CORS 源后，再由同一 `compose.integration.yaml` 启动。本地已验证
+12 个默认容器同时 healthy，并验证 AuthService/UserService 在 MySQL 模式重启后仍可登录
+和读取用户资料；尚未执行远程部署。GalGameService 仍是临时内存存储，RenderService 仅为
+基础工具链壳且完整 C++ WASM ABI 未完成，因此这两项不能据此宣称生产就绪。
 
 ## 10. 异步事件
 
@@ -2096,9 +2167,11 @@ tests/
 
 ### 11.4 当前全流程集成验证范围
 
-本轮集成只验证一条确定性闭环：用户经 Gateway 注册并登录，上传含可直接提取文字的
-资料，FileService 生成规范化文本，KnowledgeService 经 Gateway 读取该文本并在
-Neo4j 构建章节、知识点和依赖图。解析任务请求固定为：
+本轮集成验证一条确定性支撑链路：用户经 Gateway 注册并登录，上传含可直接提取文字的
+资料，FileService 生成规范化文本，KnowledgeService 经 Gateway 读取该文本并在 Neo4j
+构建章节、知识点和依赖图；随后生成 Assessment Plan 与 GalGame 游戏包，前端经公开
+Runtime manifest、JS Adapter 和最小 WASM 完成基础壳本地游玩。Render 会话、作答证据
+提交和 mastery 更新不在当前已完成范围。解析任务请求固定为：
 
 ```json
 {
@@ -2108,6 +2181,10 @@ Neo4j 构建章节、知识点和依赖图。解析任务请求固定为：
   "ocrMode": "standard"
 }
 ```
+
+`RuntimeManifest.wasmUrl` 与 `jsAdapterUrl` 必须使用上述 Gateway 相对路径，前端不得直连
+RenderService。`checksum` 是 `runtime.wasm` 原始响应字节的小写 SHA-256；manifest 与两个
+资源端点可公开读取，并必须使用相同 `wasmVersion` 构建产物，部署时不得返回不存在的 URL。
 
 `ocrMode` 在这里仅验证兼容的数据形状；`enableOcr=false` 才是实际执行约束。
 集成脚本不得启动 OCR profile、调用 `/v1/ocr`、轮询 OCR 逐页进度或把扫描件作为
@@ -2120,15 +2197,15 @@ Neo4j 构建章节、知识点和依赖图。解析任务请求固定为：
 适配分别属于 AuthService、FileService、Gateway 负责的 **URGENT（跨服务义务）**；
 KnowledgeService 只负责从受信文本开始的校验、构图、计划和掌握度逻辑。
 
-2026-07-31 的当前可执行基线已经按上述范围完成真实 E2E：26,139 个 UTF-16 code
+2026-07-31 的非 OCR 构图基线已经按上述范围完成真实 E2E：26,139 个 UTF-16 code
 unit、20 个来源区间和 20 个块通过文本契约校验，`chapter-segmenter-v2` /
 `knowledge-extractor-v2` 构建出 7 章、243 个知识点和 207 条先修关系；API 与
 Neo4j 计数一致，先修子图无环，初始 mastery 全为 0，同请求构图幂等复用及
 `IDEMPOTENCY_KEY_REUSED` 冲突码均通过。逐接口证据、命令、容器状态和未测范围见
-`docs/test_report.md`。该 2026-07-31 记录只证明本节列出的同步非 OCR 闭环；
-GalGameService 的 PlanGraph 客户端、生成器、校验器、Gateway 路由和容器适配在
-2026-08-01 已具备独立测试覆盖，进一步的真实串联结果以测试报告为准。RenderService、
-WASM 运行时、游戏结束后的 mastery 回传、消息事件和 OCR 仍不得表述为已经完成集成。
+`docs/test_report.md`。2026-08-02 又在默认 12 容器环境中验证了 GalGameService 的 PlanGraph
+读取与游戏包生成，以及 Render 的公开 runtime 资源、C++ 壳自检、JS Adapter 加载和浏览器
+本地游玩。Render 会话、事件、结果幂等、mastery evidence、OCR、消息总线、完整 WASM ABI
+和真实帧渲染均未完成集成；逐接口证据和限制以 `docs/test_report.md` 第 11 节为准。
 
 ## 12. 开工清单
 
@@ -2162,13 +2239,14 @@ WASM 运行时、游戏结束后的 mastery 回传、消息事件和 OCR 仍不�
 - [ ] 每位负责人确认所属端点与数据类型；
 - [ ] 每个 P0 端点至少存在 `success`、`validation-error` 和 `processing/empty` Mock；
 - [ ] 前端可在后端未完成时基于 Mock 开发；
-- [ ] GalGameService 与 RenderService 共同通过黄金游戏包；
-- [ ] JS Adapter 可使用 Mock 完成 WASM 初始化、加载、游玩、保存和结果提交；
-- [ ] Gateway 路由表、鉴权方式和统一错误响应完成确认；
-- [ ] 所有领域服务确认只经 Gateway 调用；仅保留 FileService 到内部 OCR 执行依赖这一受限例外。
-- [ ] **URGENT** FileService 可返回符合 5.2.1 的纯文本与结构块；
+- [ ] GalGameService 与完整 RenderService 共同通过黄金游戏包；当前仅 JS Adapter 壳完成校验；
+- [ ] JS Adapter 与完整 WASM 完成初始化、加载、游玩、保存和结果提交；当前只完成本地壳加载与游玩；
+- [x] Gateway 路由表、鉴权方式和统一错误响应完成确认；
+- [x] 所有领域服务只经 Gateway 调用；仅保留 FileService 到内部 OCR 执行依赖这一受限例外。
+- [x] **URGENT** FileService 可返回符合 5.2.1 的纯文本与结构块；
 - [ ] **URGENT** FileService 可发布 `MaterialTextReady v1`；同步 HTTP 可用不得冒充事件生产已完成；
-- [ ] KnowledgeService 可从同一文本稳定构建章节 DAG，并生成不可变 ASSESSMENT/LEARNING PlanGraph；
-- [ ] **URGENT** GalGameService 可按 snapshot 读取 PlanGraph，RenderService 可提交 `ReviewCompleted v2`，重复结果只更新一次 mastery。
+- [x] KnowledgeService 可从同一文本稳定构建章节 DAG，并生成不可变 ASSESSMENT/LEARNING PlanGraph；
+- [ ] **URGENT** GalGameService 可按 snapshot 读取 PlanGraph，RenderService 可通过同步 INTERNAL evidence 回写结果，重复结果只更新一次 mastery；GalGame 侧已完成，Render 侧待实现；
+- [ ] **URGENT** RenderService 发布 `ReviewCompleted v2` 消息并由 KnowledgeService 消费；同步闭环不得冒充消息总线已经完成。
 
 后续字段细化进入各服务仓库；本文只维护跨服务边界与团队共同依赖。

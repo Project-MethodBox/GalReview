@@ -117,7 +117,7 @@ export function createProxyForRoute(
           proxyReq.setHeader('X-Service-Name', req.gatewayServiceName);
         }
       },
-      error: (err, req: Request, res: Response) => {
+      error: (err, req, res) => {
         // 响应已发送或不是 HTTP 响应对象则跳过
         if (!res || !('writeHead' in res) || res.headersSent) return;
 

@@ -9,6 +9,10 @@ using System.Text.Json.Serialization;
 
 public sealed class GamePackageValidator
 {
+    public const int MaxScenes = 100;
+    public const int MaxDialoguePerScene = 200;
+    public const int MaxChoicesPerScene = 6;
+
     // ========================================================================
     // 静态缓存：JsonSerializerOptions 只创建一次，避免每次 ComputeChecksum 重复分配
     // ========================================================================
@@ -123,8 +127,10 @@ public sealed class GamePackageValidator
         if (string.IsNullOrWhiteSpace(package.SnapshotVersion))
             issues.Add(new("snapshotVersion", "MISSING_SNAPSHOT_VERSION", "snapshotVersion 不能为空"));
 
-        if (package.Scenes is null || package.Scenes.Length == 0)
-            issues.Add(new("scenes", "SCENE_COUNT_OUT_OF_RANGE", "scenes 不能为空"));
+        if (package.Scenes is null || package.Scenes.Length == 0
+            || package.Scenes.Length > MaxScenes)
+            issues.Add(new("scenes", "SCENE_COUNT_OUT_OF_RANGE",
+                $"scenes 数量必须为 1-{MaxScenes}"));
     }
 
     private static void ValidateScene(
@@ -154,8 +160,9 @@ public sealed class GamePackageValidator
         // dialogue
         if (scene.Dialogue is null)
             issues.Add(new($"{scenePath}.dialogue", "DIALOGUE_COUNT_OUT_OF_RANGE", "dialogue 不能为 null"));
-        else if (scene.Dialogue.Length == 0)
-            issues.Add(new($"{scenePath}.dialogue", "DIALOGUE_COUNT_OUT_OF_RANGE", "dialogue 不能为空数组"));
+        else if (scene.Dialogue.Length == 0 || scene.Dialogue.Length > MaxDialoguePerScene)
+            issues.Add(new($"{scenePath}.dialogue", "DIALOGUE_COUNT_OUT_OF_RANGE",
+                $"dialogue 数量必须为 1-{MaxDialoguePerScene}"));
         else
         {
             for (var d = 0; d < scene.Dialogue.Length; d++)
@@ -179,6 +186,10 @@ public sealed class GamePackageValidator
             issues.Add(new($"{scenePath}.choices", "CHOICE_COUNT_OUT_OF_RANGE", "choices 不能为 null"));
         else
         {
+            if (scene.Choices.Length > MaxChoicesPerScene)
+                issues.Add(new($"{scenePath}.choices", "CHOICE_COUNT_OUT_OF_RANGE",
+                    $"choices 数量不能超过 {MaxChoicesPerScene}"));
+
             var seenChoiceIds = new HashSet<string>(StringComparer.Ordinal);
             for (var c = 0; c < scene.Choices.Length; c++)
             {

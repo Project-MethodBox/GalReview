@@ -1,0 +1,329 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router'
+import { api } from '../lib/api'
+import { pollUntil } from '../lib/poll'
+import { loadRuntime } from '../lib/runtime'
+import { readSession } from '../lib/session'
+import { readWorkflow, updateWorkflow } from '../lib/workflow'
+import type {
+  AnswerResult,
+  Difficulty,
+  GameChoice,
+  GamePackage,
+  GameScene,
+  GameStyle,
+  ReviewResult,
+  ReviewSession,
+  RuntimeManifest,
+  WasmAdapter,
+} from '../types/api'
+
+interface AttemptState {
+  answers: AnswerResult[]
+  attemptsByQuestion: Record<string, number>
+}
+
+function generationError(error: { message: string } | null): Error {
+  return new Error(error?.message || '游戏生成失败。')
+}
+
+function attemptsFromAnswers(answers: AnswerResult[]): Record<string, number> {
+  return Object.fromEntries(answers.map((answer) => [answer.questionId, answer.attemptNumber]))
+}
+
+function createShellSession(gamePackage: GamePackage): ReviewSession {
+  const userId = readSession()?.session.userId
+  if (!userId) throw new Error('登录会话已失效，请重新登录。')
+  return {
+    sessionId: crypto.randomUUID(),
+    userId,
+    packageId: gamePackage.packageId,
+    reviewPlanId: gamePackage.reviewPlanId,
+    snapshotVersion: gamePackage.snapshotVersion,
+    status: 'CREATED',
+    currentSceneId: null,
+    progressVersion: 0,
+    startedAt: new Date().toISOString(),
+    completedAt: null,
+  }
+}
+
+export default function ReviewPage() {
+  const initial = readWorkflow()
+  const adapterRef = useRef<WasmAdapter | null>(null)
+  const resultKeyRef = useRef(initial.resultIdempotencyKey || crypto.randomUUID())
+  const startedAtRef = useRef(Date.now())
+  const sceneStartedAtRef = useRef(Date.now())
+  const [style, setStyle] = useState<GameStyle>('CAMPUS')
+  const [difficulty, setDifficulty] = useState<Difficulty>('STANDARD')
+  const [gamePackage, setGamePackage] = useState<GamePackage | undefined>(initial.gamePackage)
+  const [session, setSession] = useState<ReviewSession | undefined>(initial.reviewSession)
+  const [runtimeManifest, setRuntimeManifest] = useState<RuntimeManifest>()
+  const [sceneId, setSceneId] = useState(initial.reviewSession?.currentSceneId || initial.gamePackage?.entrySceneId || '')
+  const [visitedSceneIds, setVisitedSceneIds] = useState<string[]>(sceneId ? [sceneId] : [])
+  const [attempt, setAttempt] = useState<AttemptState>({
+    answers: initial.answerResults || [],
+    attemptsByQuestion: attemptsFromAnswers(initial.answerResults || []),
+  })
+  const [busy, setBusy] = useState(false)
+  const [progress, setProgress] = useState(initial.gamePackage ? '游戏包已准备好，正在等待渲染器。' : '选择风格后开始生成。')
+  const [error, setError] = useState('')
+  const [result, setResult] = useState<ReviewResult>()
+  const [shellCompleted, setShellCompleted] = useState(false)
+
+  const scene = useMemo(
+    () => gamePackage?.scenes.find((item) => item.sceneId === sceneId),
+    [gamePackage, sceneId],
+  )
+
+  useEffect(() => () => adapterRef.current?.dispose(), [])
+
+  useEffect(() => {
+    if (!initial.resultIdempotencyKey) updateWorkflow({ resultIdempotencyKey: resultKeyRef.current })
+  }, [initial.resultIdempotencyKey])
+
+  async function attachRuntime(manifest: RuntimeManifest, pack: GamePackage, reviewSession: ReviewSession) {
+    adapterRef.current?.dispose()
+    adapterRef.current = await loadRuntime(manifest, pack, reviewSession)
+    setRuntimeManifest(manifest)
+    const nextSceneId = reviewSession.currentSceneId || pack.entrySceneId
+    setSceneId(nextSceneId)
+    setVisitedSceneIds((current) => current.includes(nextSceneId) ? current : [...current, nextSceneId])
+    sceneStartedAtRef.current = Date.now()
+  }
+
+  async function generateAndStart() {
+    const workflow = readWorkflow()
+    if (!workflow.plan) {
+      setError('请先从资料页创建复习计划。')
+      return
+    }
+    setBusy(true)
+    setError('')
+    try {
+      setProgress('GalGame 正在根据计划组织剧情与题目…')
+      const accepted = await api.createGameGeneration(workflow.plan, style, difficulty)
+      const completed = await pollUntil(
+        () => api.getGameGeneration(accepted.generationId),
+        (job) => job.status === 'SUCCEEDED' || job.status === 'FAILED',
+        (job) => setProgress(`GalGame 正在生成… ${job.progress}%`),
+      )
+      if (completed.status === 'FAILED') throw generationError(completed.error)
+      if (!completed.packageId) throw new Error('生成任务完成但没有返回 packageId。')
+
+      const manifest = await api.getGamePackage(completed.packageId)
+      const pack = await api.getGamePackageContent(manifest.contentUrl)
+      if (pack.reviewPlanId !== workflow.plan.reviewPlanId || pack.snapshotVersion !== workflow.plan.snapshotVersion) {
+        throw new Error('游戏包与当前复习计划的不可变快照不一致。')
+      }
+      const renderManifest = await api.getRuntimeManifest()
+      const reviewSession = renderManifest.reviewSessionsAvailable === false
+        ? createShellSession(pack)
+        : await api.createReviewSession(pack.packageId, renderManifest.wasmVersion)
+      if (reviewSession.reviewPlanId !== pack.reviewPlanId || reviewSession.snapshotVersion !== pack.snapshotVersion) {
+        throw new Error('复习会话与游戏包快照不一致。')
+      }
+      await attachRuntime(renderManifest, pack, reviewSession)
+      const resultIdempotencyKey = crypto.randomUUID()
+      resultKeyRef.current = resultIdempotencyKey
+      setAttempt({ answers: [], attemptsByQuestion: {} })
+      setShellCompleted(false)
+      setGamePackage(pack)
+      setSession(reviewSession)
+      updateWorkflow({ gameManifest: manifest, gamePackage: pack, reviewSession, answerResults: [], resultIdempotencyKey })
+      setProgress('渲染器已加载，可以开始复习。')
+      startedAtRef.current = Date.now()
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '游戏准备失败。')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function resumeRuntime() {
+    const workflow = readWorkflow()
+    if (!workflow.gamePackage || !workflow.reviewSession) return
+    setBusy(true)
+    setError('')
+    try {
+      const manifest = await api.getRuntimeManifest()
+      const currentSession = manifest.reviewSessionsAvailable === false
+        ? workflow.reviewSession
+        : await api.getReviewSession(workflow.reviewSession.sessionId)
+      await attachRuntime(manifest, workflow.gamePackage, currentSession)
+      setSession(currentSession)
+      setProgress('已恢复当前复习会话。')
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '会话恢复失败。')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function createAnswer(choice: GameChoice): AnswerResult | null {
+    if (choice.answerKind !== 'CHOICE' || typeof choice.correct !== 'boolean') return null
+    const responseTimeMs = Math.max(0, Date.now() - sceneStartedAtRef.current)
+    const attemptNumber = (attempt.attemptsByQuestion[choice.questionId] || 0) + 1
+    const quality = choice.correct ? (attemptNumber > 1 ? 3 : 5) : 0
+    return {
+      attemptId: crypto.randomUUID(),
+      questionId: choice.questionId,
+      knowledgePointId: choice.knowledgePointId,
+      answerKind: 'CHOICE',
+      choiceId: choice.choiceId,
+      correct: choice.correct,
+      quality,
+      scoreDelta: choice.scoreDelta,
+      responseTimeMs,
+      hintsUsed: 0,
+      attemptNumber,
+      occurredAt: new Date().toISOString(),
+    }
+  }
+
+  async function saveSceneProgress(nextSceneId: string, nextVisited: string[]): Promise<ReviewSession | undefined> {
+    if (!session || !adapterRef.current) return undefined
+    if (runtimeManifest?.reviewSessionsAvailable === false) {
+      const nextSession: ReviewSession = {
+        ...session,
+        currentSceneId: nextSceneId,
+        progressVersion: session.progressVersion + 1,
+        status: 'RUNNING',
+      }
+      setSession(nextSession)
+      updateWorkflow({ reviewSession: nextSession })
+      return nextSession
+    }
+    const saved = await api.saveProgress(session.sessionId, {
+      expectedVersion: session.progressVersion,
+      currentSceneId: nextSceneId,
+      visitedSceneIds: nextVisited,
+      runtimeState: adapterRef.current.serializeState(),
+    })
+    const nextSession = { ...session, currentSceneId: saved.currentSceneId, progressVersion: saved.version, status: 'RUNNING' as const }
+    setSession(nextSession)
+    updateWorkflow({ reviewSession: nextSession })
+    return nextSession
+  }
+
+  async function choose(choice: GameChoice) {
+    if (!scene || !session || busy) return
+    setBusy(true)
+    setError('')
+    try {
+      const answer = createAnswer(choice)
+      if (answer) {
+        const nextAnswers = [...attempt.answers, answer]
+        setAttempt((current) => ({
+          answers: [...current.answers, answer],
+          attemptsByQuestion: { ...current.attemptsByQuestion, [answer.questionId]: answer.attemptNumber },
+        }))
+        updateWorkflow({ answerResults: nextAnswers })
+      }
+      if (runtimeManifest?.reviewSessionsAvailable !== false) {
+        await api.appendEvents(session.sessionId, [{
+          clientEventId: crypto.randomUUID(),
+          type: 'CHOICE_SELECTED',
+          occurredAt: new Date().toISOString(),
+          payload: {
+            sceneId: scene.sceneId,
+            choiceId: choice.choiceId,
+            questionId: choice.questionId,
+            knowledgePointId: choice.knowledgePointId,
+          },
+        }])
+      }
+      if (choice.nextSceneId) {
+        const nextVisited = visitedSceneIds.includes(choice.nextSceneId) ? visitedSceneIds : [...visitedSceneIds, choice.nextSceneId]
+        await saveSceneProgress(choice.nextSceneId, nextVisited)
+        setVisitedSceneIds(nextVisited)
+        setSceneId(choice.nextSceneId)
+        sceneStartedAtRef.current = Date.now()
+      } else {
+        const answers = answer ? [...attempt.answers, answer] : attempt.answers
+        const savedSession = await saveSceneProgress(scene.sceneId, visitedSceneIds)
+        await finish(answers, savedSession)
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '选择保存失败。')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function finish(answers = attempt.answers, sessionOverride?: ReviewSession) {
+    const activeSession = sessionOverride || session
+    if (!activeSession || !gamePackage) return
+    setBusy(true)
+    setError('')
+    try {
+      if (runtimeManifest?.reviewSessionsAvailable === false) {
+        setShellCompleted(true)
+        setProgress('C++/JS 基础壳已完成本地体验；本次结果未提交，掌握度不会更新。')
+        return
+      }
+      const completed = await api.submitReviewResult(activeSession.sessionId, {
+        expectedProgressVersion: activeSession.progressVersion,
+        idempotencyKey: resultKeyRef.current,
+        reviewPlanId: gamePackage.reviewPlanId,
+        snapshotVersion: gamePackage.snapshotVersion,
+        answerResults: answers,
+        durationSeconds: Math.max(0, Math.round((Date.now() - startedAtRef.current) / 1_000)),
+      })
+      setResult(completed)
+      setProgress(completed.status === 'DUPLICATE' ? '这次结果已经提交过。' : '本次复习结果已提交。')
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '结果提交失败。')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function finishCurrentScene() {
+    if (!scene) return
+    setBusy(true)
+    try {
+      const savedSession = await saveSceneProgress(scene.sceneId, visitedSceneIds)
+      await finish(attempt.answers, savedSession)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '进度保存失败。')
+      setBusy(false)
+    }
+  }
+
+  if (!initial.plan) {
+    return <main className="empty-workspace"><h1>还没有复习计划</h1><p>从一份资料开始，选择本次要测试或学习的章节。</p><Link to="/materials">创建计划</Link></main>
+  }
+
+  return (
+    <main className="review-page">
+      <header className="workspace-header">
+        <div><p>{initial.plan.type === 'ASSESSMENT' ? '全面测试' : '章节学习'}</p><h1>{initial.material?.displayName || '本次复习'}</h1></div>
+        <nav><Link to="/home">返回主页</Link><Link to="/knowledge-graph">查看图谱</Link></nav>
+      </header>
+
+      {!gamePackage || !session || !adapterRef.current ? (
+        <section className="review-setup workspace-card">
+          <h2>准备 GalGame</h2>
+          <p>{initial.plan.nodes.length} 个计划节点，预计 {initial.plan.estimatedQuestionCount} 道题。</p>
+          <label>故事风格<select value={style} onChange={(event) => setStyle(event.target.value as GameStyle)}><option value="CAMPUS">校园</option><option value="FANTASY">幻想</option><option value="SCIENCE">科幻</option></select></label>
+          <label>难度<select value={difficulty} onChange={(event) => setDifficulty(event.target.value as Difficulty)}><option value="BASIC">基础</option><option value="STANDARD">标准</option><option value="ADVANCED">进阶</option></select></label>
+          {gamePackage && session ? <button className="primary-button" type="button" disabled={busy} onClick={() => void resumeRuntime()}>恢复会话</button> : <button className="primary-button" type="button" disabled={busy} onClick={() => void generateAndStart()}>{busy ? '准备中…' : '生成并开始'}</button>}
+        </section>
+      ) : result || shellCompleted ? (
+        <section className="review-complete workspace-card"><p>复习完成</p><h2>{shellCompleted ? '渲染基础壳运行完成' : result?.status === 'ACCEPTED' ? '这次努力已经记下了' : '结果已安全去重'}</h2><p>{shellCompleted ? `本地记录 ${attempt.answers.length} 条作答；会话与掌握度回传等待 RenderService 后续实现。` : `共记录 ${attempt.answers.length} 条作答证据。`}</p><Link to="/knowledge-graph">查看知识图谱</Link></section>
+      ) : scene ? (
+        <section className="game-stage">
+          <div className="game-stage__meta"><span>{runtimeManifest?.wasmVersion}</span><span>{visitedSceneIds.length} 个场景已访问</span></div>
+          <article className="dialogue-panel">
+            {scene.title ? <h2>{scene.title}</h2> : null}
+            {scene.dialogue.map((line, index) => <div className="dialogue-line" key={`${line.speakerId}-${index}`}><strong>{line.speakerId}</strong><p>{line.text}</p></div>)}
+          </article>
+          {scene.choices.length ? <div className="choice-list">{scene.choices.map((choice) => <button key={choice.choiceId} disabled={busy} type="button" onClick={() => void choose(choice)}>{choice.text}</button>)}</div> : <button className="primary-button" disabled={busy} type="button" onClick={() => void finishCurrentScene()}>结束复习</button>}
+        </section>
+      ) : <section className="workspace-card"><h2>场景不存在</h2><p>游戏包没有找到当前场景，请重新生成。</p></section>}
+
+      <p className={error ? 'error-banner' : 'workflow-status'} aria-live="polite">{error || progress}</p>
+    </main>
+  )
+}

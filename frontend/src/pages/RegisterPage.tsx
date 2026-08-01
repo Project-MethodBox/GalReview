@@ -1,10 +1,10 @@
 import { useState, type FormEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import ActionButton from '../components/ActionButton'
 import AuthLayout, { AuthHeading } from '../components/AuthLayout'
 import FormField from '../components/FormField'
 import { api } from '../lib/api'
-import { createDemoProfile, saveProfile, saveSession } from '../lib/session'
+import { saveProfile, saveSession } from '../lib/session'
 
 export default function RegisterPage() {
   const navigate = useNavigate()
@@ -32,7 +32,7 @@ export default function RegisterPage() {
     try {
       const session = await api.register(form)
       saveSession(session)
-      saveProfile(createDemoProfile(form.displayName.trim(), session.session.userId))
+      saveProfile(await api.getCurrentUser())
       navigate('/home')
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '注册失败，请重试。')

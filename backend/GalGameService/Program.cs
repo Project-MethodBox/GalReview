@@ -36,6 +36,9 @@ var storageName = isMockMode ? "mock-memory" : "ephemeral-memory";
 var validationAllowedServices = InternalServiceAccessPolicy.CreateAllowlist(
     builder.Configuration.GetSection("InternalAccess:ValidationAllowedServices"),
     "RenderService");
+var packageReaderAllowedServices = InternalServiceAccessPolicy.CreateAllowlist(
+    builder.Configuration.GetSection("InternalAccess:PackageReaderAllowedServices"),
+    "RenderService");
 
 // HttpClient：经 Gateway 调用 KnowledgeService
 builder.Services.AddHttpClient("gateway", client =>
@@ -306,6 +309,34 @@ app.MapGet("/api/v1/game-packages/{packageId}/content", (string packageId, HttpC
     return Results.Text(
         GamePackageValidator.SerializeCanonical(package),
         "application/json; charset=utf-8");
+});
+
+// ============================================================================
+// INTERNAL：RenderService 按当前会话用户读取权威游戏包。
+// ownerUserId 必须来自 RenderService 收到的 Gateway 可信 X-User-Id，不能取浏览器自报值。
+// ============================================================================
+
+app.MapGet("/internal/v1/game-packages/{packageId}", (
+    string packageId,
+    string? ownerUserId,
+    HttpContext c,
+    IGameStore store) =>
+{
+    if (!InternalServiceAccessPolicy.IsTrusted(
+            c.Request.Headers, gatewayKey, packageReaderAllowedServices))
+        return Failure(c, 403, "FORBIDDEN", "需要经 Gateway 转发的可信 RenderService 身份。");
+
+    if (!TryParseUuidV4(packageId, out var id)
+        || !TryParseUuidV4(ownerUserId, out _))
+        return Failure(c, 400, "VALIDATION_ERROR", "packageId 与 ownerUserId 必须为 UUID v4。");
+
+    var owner = store.GetPackageOwner(id);
+    var package = store.GetPackage(id);
+    if (owner is null || package is null
+        || !string.Equals(owner, ownerUserId, StringComparison.OrdinalIgnoreCase))
+        return Failure(c, 404, "RESOURCE_NOT_FOUND", "游戏包不存在。");
+
+    return Results.Ok(ApiSuccess.Create(package, c.TraceIdentifier));
 });
 
 // ============================================================================

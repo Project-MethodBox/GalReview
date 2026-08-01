@@ -1,16 +1,35 @@
-import { readSession } from './session'
+import { clearSession, readSession, updateSessionTokens } from './session'
 import type {
   ApiFailure,
   ApiSuccess,
+  AnswerResult,
   AuthSessionResponse,
+  Chapter,
+  GameGenerationJob,
+  GamePackage,
+  GamePackageManifest,
+  GameStyle,
+  Difficulty,
+  GraphBuildJob,
+  IngestionJob,
+  KnowledgeGraphSummary,
+  KnowledgePointPage,
+  KnowledgeRelationPage,
+  Material,
+  MaterialPage,
+  PlanGraph,
+  ProgressSnapshot,
+  ReviewResult,
+  ReviewSession,
+  RuntimeManifest,
+  TokenPair,
   UserProfile,
 } from '../types/api'
 
 const configuredBase = import.meta.env.VITE_API_BASE_URL?.trim() || '/api/v1'
 const API_BASE_URL = configuredBase.replace(/\/$/, '')
-
-export const demoFallbackEnabled =
-  import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEMO_FALLBACK !== 'false'
+const DEFAULT_TIMEOUT_MS = 30_000
+const UPLOAD_TIMEOUT_MS = 120_000
 
 export class ApiClientError extends Error {
   readonly code: string
@@ -28,49 +47,119 @@ export class ApiClientError extends Error {
   }
 }
 
-export function isNetworkError(error: unknown): boolean {
-  return error instanceof TypeError
-    || (error instanceof DOMException && error.name === 'AbortError')
-    || (error instanceof ApiClientError && error.code === 'HTTP_ERROR' && error.status >= 500)
+interface RequestOptions extends RequestInit {
+  authenticated?: boolean
+  retryAfterRefresh?: boolean
+  timeoutMs?: number
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+let refreshPromise: Promise<TokenPair> | null = null
+
+function resolveUrl(path: string): string {
+  if (/^https?:\/\//i.test(path)) return path
+  if (path.startsWith('/api/')) return path
+  return `${API_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`
+}
+
+function errorFromPayload(payload: unknown, status: number): ApiClientError {
+  if (payload && typeof payload === 'object' && 'error' in payload) {
+    const failure = payload as ApiFailure
+    if (failure.error && typeof failure.error.code === 'string' && typeof failure.error.message === 'string') {
+      return new ApiClientError(
+        failure.error.message,
+        failure.error.code,
+        status,
+        failure.traceId,
+        failure.error.details ?? {},
+      )
+    }
+  }
+  return new ApiClientError('服务暂时不可用，请稍后再试。', 'HTTP_ERROR', status)
+}
+
+async function refreshAccessToken(): Promise<TokenPair> {
+  const refreshToken = readSession()?.tokens.refreshToken
+  if (!refreshToken) throw new ApiClientError('登录状态已失效，请重新登录。', 'AUTH_REQUIRED', 401)
+  if (!refreshPromise) {
+    refreshPromise = request<TokenPair>('/auth/tokens', {
+      method: 'POST',
+      body: JSON.stringify({ refreshToken }),
+      authenticated: false,
+      retryAfterRefresh: false,
+    }).then((tokens) => {
+      updateSessionTokens(tokens)
+      return tokens
+    }).catch((error) => {
+      clearSession()
+      throw error
+    }).finally(() => {
+      refreshPromise = null
+    })
+  }
+  return refreshPromise
+}
+
+async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const {
+    authenticated = true,
+    retryAfterRefresh = true,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+    ...init
+  } = options
   const controller = new AbortController()
-  const timeout = window.setTimeout(() => controller.abort(), 15_000)
-  const token = readSession()?.tokens.accessToken
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs)
   const headers = new Headers(init.headers)
   headers.set('Accept', 'application/json')
   headers.set('X-Correlation-Id', crypto.randomUUID())
   if (init.body && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json')
-  if (token && !token.startsWith('demo-')) headers.set('Authorization', `Bearer ${token}`)
+  const token = readSession()?.tokens.accessToken
+  if (authenticated && token) headers.set('Authorization', `Bearer ${token}`)
 
   try {
-    const response = await fetch(`${API_BASE_URL}${path}`, {
-      ...init,
-      headers,
-      signal: controller.signal,
-    })
+    const response = await fetch(resolveUrl(path), { ...init, headers, signal: controller.signal })
+    const bodyText = response.status === 204 ? '' : await response.text()
+    const payload = bodyText ? (JSON.parse(bodyText) as ApiSuccess<T> | ApiFailure) : null
 
-    if (response.status === 204) return undefined as T
-
-    const payload = (await response.json().catch(() => null)) as ApiSuccess<T> | ApiFailure | null
-    if (!response.ok) {
-      if (payload && 'error' in payload) {
-        throw new ApiClientError(
-          payload.error.message,
-          payload.error.code,
-          response.status,
-          payload.traceId,
-          payload.error.details,
-        )
-      }
-      throw new ApiClientError('服务暂时不可用，请稍后再试。', 'HTTP_ERROR', response.status)
+    if (response.status === 401 && authenticated && retryAfterRefresh) {
+      await refreshAccessToken()
+      return request<T>(path, { ...options, retryAfterRefresh: false })
     }
-
-    if (!payload || !('data' in payload)) {
-      throw new ApiClientError('服务响应格式不正确。', 'UPSTREAM_CONTRACT_INVALID', 502)
+    if (!response.ok) throw errorFromPayload(payload, response.status)
+    if (!bodyText) return undefined as T
+    if (!payload || typeof payload !== 'object' || !('data' in payload)) {
+      throw new ApiClientError('服务响应格式不符合契约。', 'UPSTREAM_CONTRACT_INVALID', 502)
     }
     return payload.data as T
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new ApiClientError('服务返回了无法解析的 JSON。', 'UPSTREAM_CONTRACT_INVALID', 502)
+    }
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new ApiClientError('请求超时，请稍后重试。', 'SERVICE_UNAVAILABLE', 503)
+    }
+    throw error
+  } finally {
+    window.clearTimeout(timeout)
+  }
+}
+
+async function requestRawJson<T>(path: string): Promise<T> {
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS)
+  const headers = new Headers({
+    Accept: 'application/json',
+    'X-Correlation-Id': crypto.randomUUID(),
+  })
+  const token = readSession()?.tokens.accessToken
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  try {
+    const response = await fetch(resolveUrl(path), { headers, signal: controller.signal })
+    const payload = await response.json().catch(() => null)
+    if (!response.ok) throw errorFromPayload(payload, response.status)
+    if (!payload || typeof payload !== 'object') {
+      throw new ApiClientError('游戏包响应格式不符合契约。', 'UPSTREAM_CONTRACT_INVALID', 502)
+    }
+    return payload as T
   } finally {
     window.clearTimeout(timeout)
   }
@@ -80,10 +169,20 @@ function json(body: unknown): string {
   return JSON.stringify(body)
 }
 
+function query(params: Record<string, string | number | undefined>): string {
+  const search = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined) search.set(key, String(value))
+  }
+  const result = search.toString()
+  return result ? `?${result}` : ''
+}
+
 export const api = {
   login(email: string, password: string): Promise<AuthSessionResponse> {
     return request('/auth/sessions', {
       method: 'POST',
+      authenticated: false,
       body: json({ email, password, deviceName: navigator.userAgent.slice(0, 120) }),
     })
   },
@@ -91,13 +190,19 @@ export const api = {
   register(input: { email: string; password: string; displayName: string; invitationCode: string }): Promise<AuthSessionResponse> {
     return request('/auth/registrations', {
       method: 'POST',
-      body: json({ ...input, invitationCode: input.invitationCode.trim().toUpperCase(), deviceName: navigator.userAgent.slice(0, 120) }),
+      authenticated: false,
+      body: json({
+        ...input,
+        invitationCode: input.invitationCode.trim().toUpperCase(),
+        deviceName: navigator.userAgent.slice(0, 120),
+      }),
     })
   },
 
   requestPasswordReset(email: string): Promise<void> {
     return request('/auth/password-reset-requests', {
       method: 'POST',
+      authenticated: false,
       body: json({ email }),
     })
   },
@@ -105,11 +210,164 @@ export const api = {
   resetPassword(resetToken: string, newPassword: string): Promise<void> {
     return request('/auth/password-resets', {
       method: 'POST',
+      authenticated: false,
       body: json({ resetToken, newPassword }),
     })
   },
 
+  logout(sessionId: string): Promise<void> {
+    return request(`/auth/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
+  },
+
   getCurrentUser(): Promise<UserProfile> {
     return request('/users/me')
+  },
+
+  listMaterials(): Promise<MaterialPage> {
+    return request(`/materials${query({ limit: 100 })}`)
+  },
+
+  uploadMaterial(file: File, displayName?: string, subjectCode?: string): Promise<Material> {
+    const body = new FormData()
+    body.append('file', file)
+    if (displayName?.trim()) body.append('displayName', displayName.trim())
+    if (subjectCode?.trim()) body.append('subjectCode', subjectCode.trim().toUpperCase())
+    return request('/materials', { method: 'POST', body, timeoutMs: UPLOAD_TIMEOUT_MS })
+  },
+
+  createIngestionJob(materialId: string): Promise<IngestionJob> {
+    return request(`/materials/${encodeURIComponent(materialId)}/ingestion-jobs`, {
+      method: 'POST',
+      body: json({ parserVersion: 'files-text-v1', force: false, enableOcr: false, ocrMode: 'standard' }),
+    })
+  },
+
+  getIngestionJob(jobId: string): Promise<IngestionJob> {
+    return request(`/ingestion-jobs/${encodeURIComponent(jobId)}`)
+  },
+
+  createGraphBuild(materialId: string, subjectHint?: string): Promise<GraphBuildJob> {
+    return request('/knowledge-graph-builds', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      body: json({
+        materialId,
+        subjectHint: subjectHint?.trim().toUpperCase() || undefined,
+        segmentationMode: 'AUTO',
+        extractorVersion: 'knowledge-extractor-v2',
+      }),
+    })
+  },
+
+  getGraphBuild(buildId: string): Promise<GraphBuildJob> {
+    return request(`/knowledge-graph-builds/${encodeURIComponent(buildId)}`)
+  },
+
+  getKnowledgeGraph(graphId: string): Promise<KnowledgeGraphSummary> {
+    return request(`/knowledge-graphs/${encodeURIComponent(graphId)}`)
+  },
+
+  getChapters(graphId: string): Promise<Chapter[]> {
+    return request(`/knowledge-graphs/${encodeURIComponent(graphId)}/chapters`)
+  },
+
+  getPoints(graphId: string): Promise<KnowledgePointPage> {
+    return request(`/knowledge-graphs/${encodeURIComponent(graphId)}/points${query({ limit: 100 })}`)
+  },
+
+  getRelations(graphId: string): Promise<KnowledgeRelationPage> {
+    return request(`/knowledge-graphs/${encodeURIComponent(graphId)}/relations${query({ limit: 100 })}`)
+  },
+
+  createAssessmentPlan(graphId: string, chapterIds: string[]): Promise<PlanGraph> {
+    return request('/assessment-plans', {
+      method: 'POST',
+      body: json({ graphId, chapterIds, maxQuestions: 6, coverageTarget: 0.8, maximumInferenceDepth: 3 }),
+    })
+  },
+
+  createLearningPlan(graphId: string, chapterIds: string[]): Promise<PlanGraph> {
+    return request('/learning-plans', {
+      method: 'POST',
+      body: json({ graphId, chapterIds, maxPoints: 12, maximumDependencyDepth: 5 }),
+    })
+  },
+
+  getReviewPlan(reviewPlanId: string): Promise<PlanGraph> {
+    return request(`/review-plans/${encodeURIComponent(reviewPlanId)}`)
+  },
+
+  createGameGeneration(plan: PlanGraph, style: GameStyle, difficulty: Difficulty): Promise<GameGenerationJob> {
+    return request('/game-generations', {
+      method: 'POST',
+      body: json({
+        reviewPlanId: plan.reviewPlanId,
+        snapshotVersion: plan.snapshotVersion,
+        style,
+        difficulty,
+        locale: 'zh-CN',
+      }),
+    })
+  },
+
+  getGameGeneration(generationId: string): Promise<GameGenerationJob> {
+    return request(`/game-generations/${encodeURIComponent(generationId)}`)
+  },
+
+  getGamePackage(packageId: string): Promise<GamePackageManifest> {
+    return request(`/game-packages/${encodeURIComponent(packageId)}`)
+  },
+
+  getGamePackageContent(contentUrl: string): Promise<GamePackage> {
+    return requestRawJson<GamePackage>(contentUrl)
+  },
+
+  getRuntimeManifest(): Promise<RuntimeManifest> {
+    return request('/render-runtime/manifest', { authenticated: false })
+  },
+
+  createReviewSession(packageId: string, clientRuntimeVersion: string): Promise<ReviewSession> {
+    return request('/review-sessions', {
+      method: 'POST',
+      body: json({ packageId, clientRuntimeVersion }),
+    })
+  },
+
+  getReviewSession(sessionId: string): Promise<ReviewSession> {
+    return request(`/review-sessions/${encodeURIComponent(sessionId)}`)
+  },
+
+  saveProgress(
+    sessionId: string,
+    input: { expectedVersion: number; currentSceneId: string; visitedSceneIds: string[]; runtimeState: Record<string, unknown> },
+  ): Promise<ProgressSnapshot> {
+    return request(`/review-sessions/${encodeURIComponent(sessionId)}/progress`, {
+      method: 'PUT',
+      body: json(input),
+    })
+  },
+
+  appendEvents(sessionId: string, events: Array<{ clientEventId: string; type: string; occurredAt: string; payload: Record<string, unknown> }>): Promise<{ accepted: number; duplicates: number }> {
+    return request(`/review-sessions/${encodeURIComponent(sessionId)}/events`, {
+      method: 'POST',
+      body: json({ events }),
+    })
+  },
+
+  submitReviewResult(
+    sessionId: string,
+    input: {
+      expectedProgressVersion: number
+      idempotencyKey: string
+      reviewPlanId: string
+      snapshotVersion: string
+      answerResults: AnswerResult[]
+      durationSeconds: number
+    },
+  ): Promise<ReviewResult> {
+    return request(`/review-sessions/${encodeURIComponent(sessionId)}/result`, {
+      method: 'PUT',
+      body: json(input),
+    })
   },
 }

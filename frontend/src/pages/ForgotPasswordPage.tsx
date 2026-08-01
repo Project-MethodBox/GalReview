@@ -1,9 +1,9 @@
 import { useState, type FormEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import ActionButton from '../components/ActionButton'
 import AuthLayout, { AuthHeading } from '../components/AuthLayout'
 import FormField from '../components/FormField'
-import { api, demoFallbackEnabled, isNetworkError } from '../lib/api'
+import { api } from '../lib/api'
 
 export default function ForgotPasswordPage() {
   const navigate = useNavigate()
@@ -25,11 +25,7 @@ export default function ForgotPasswordPage() {
       await api.requestPasswordReset(email)
       setMessage('验证码已发送，请在 10 分钟内完成修改。')
     } catch (error) {
-      if (demoFallbackEnabled && isNetworkError(error)) {
-        setMessage('Gateway 未启动：测试模式下可输入任意 6 位验证码。')
-      } else {
-        setMessage(error instanceof Error ? error.message : '验证码发送失败。')
-      }
+      setMessage(error instanceof Error ? error.message : '验证码发送失败。')
     } finally {
       setSending(false)
     }
@@ -51,11 +47,7 @@ export default function ForgotPasswordPage() {
       await api.resetPassword(resetToken, newPassword)
       navigate('/login', { state: { message: '密码已更新，请使用新密码登录。' } })
     } catch (error) {
-      if (demoFallbackEnabled && isNetworkError(error)) {
-        navigate('/login', { state: { message: '测试模式：密码修改流程已完成。' } })
-      } else {
-        setMessage(error instanceof Error ? error.message : '密码修改失败。')
-      }
+      setMessage(error instanceof Error ? error.message : '密码修改失败。')
     } finally {
       setBusy(false)
     }

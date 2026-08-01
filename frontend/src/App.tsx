@@ -1,11 +1,14 @@
-import { useEffect, useRef } from 'react'
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { useEffect, useRef, type ReactNode } from 'react'
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router'
 import FeaturePlaceholderPage from './pages/FeaturePlaceholderPage'
 import ForgotPasswordPage from './pages/ForgotPasswordPage'
 import HomePage from './pages/HomePage'
+import KnowledgeGraphPage from './pages/KnowledgeGraphPage'
 import LoginPage from './pages/LoginPage'
 import NotFoundPage from './pages/NotFoundPage'
 import RegisterPage from './pages/RegisterPage'
+import ReviewPage from './pages/ReviewPage'
+import StudyFlowPage from './pages/StudyFlowPage'
 import { readSession } from './lib/session'
 
 const routeDepth: Record<string, number> = {
@@ -18,6 +21,10 @@ const routeDepth: Record<string, number> = {
   '/knowledge-graph': 3,
   '/review': 3,
   '/settings': 3,
+}
+
+function Protected({ children }: { children: ReactNode }) {
+  return readSession() ? children : <Navigate replace to="/login" state={{ message: '请先登录。' }} />
 }
 
 function AnimatedRoutes() {
@@ -40,12 +47,12 @@ function AnimatedRoutes() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-        <Route path="/home" element={<HomePage />} />
-        <Route path="/materials" element={<FeaturePlaceholderPage title="资料上传" description="资料列表、上传和解析任务将从这里接入 FileService。" />} />
-        <Route path="/knowledge" element={<FeaturePlaceholderPage title="知识点" description="知识点详情与掌握度查询将从这里接入 KnowledgeService。" />} />
-        <Route path="/knowledge-graph" element={<FeaturePlaceholderPage title="知识图谱" description="章节、知识点和关系图的可视化入口已经预留。" />} />
-        <Route path="/review" element={<FeaturePlaceholderPage title="继续复习" description="复习计划、GalGame 游戏包与 WASM 会话将在这里汇合。" />} />
-        <Route path="/settings" element={<FeaturePlaceholderPage title="个人设置" description="个人资料、学习目标、难度和减少动态效果的入口已经预留。" />} />
+        <Route path="/home" element={<Protected><HomePage /></Protected>} />
+        <Route path="/materials" element={<Protected><StudyFlowPage /></Protected>} />
+        <Route path="/knowledge" element={<Protected><KnowledgeGraphPage /></Protected>} />
+        <Route path="/knowledge-graph" element={<Protected><KnowledgeGraphPage /></Protected>} />
+        <Route path="/review" element={<Protected><ReviewPage /></Protected>} />
+        <Route path="/settings" element={<Protected><FeaturePlaceholderPage title="个人设置" description="个人资料、学习目标、难度和减少动态效果的入口。" /></Protected>} />
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </div>
