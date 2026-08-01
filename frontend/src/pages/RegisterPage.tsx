@@ -1,0 +1,73 @@
+import { useState, type FormEvent } from 'react'
+import { useNavigate } from 'react-router-dom'
+import ActionButton from '../components/ActionButton'
+import AuthLayout, { AuthHeading } from '../components/AuthLayout'
+import FormField from '../components/FormField'
+import { api, demoFallbackEnabled, isNetworkError } from '../lib/api'
+import { createDemoProfile, createDemoSession, saveProfile, saveSession } from '../lib/session'
+
+export default function RegisterPage() {
+  const navigate = useNavigate()
+  const [form, setForm] = useState({ displayName: '', email: '', password: '', invitationCode: '' })
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+  const [errors, setErrors] = useState<Record<string, string>>({})
+
+  function update(name: keyof typeof form, value: string) {
+    setForm((current) => ({ ...current, [name]: value }))
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const nextErrors: Record<string, string> = {}
+    if (!form.displayName.trim()) nextErrors.displayName = '请输入用户名'
+    if (!/^\S+@\S+\.\S+$/.test(form.email)) nextErrors.email = '请输入有效邮箱'
+    if (form.password.length < 8) nextErrors.password = '密码至少需要 8 个字符'
+    if (!form.invitationCode.trim()) nextErrors.invitationCode = '请输入邀请码'
+    setErrors(nextErrors)
+    if (Object.keys(nextErrors).length) return
+
+    setBusy(true)
+    setMessage('')
+    try {
+      const session = await api.register(form)
+      saveSession(session)
+      saveProfile(createDemoProfile(form.displayName.trim(), session.session.userId))
+      navigate('/home')
+    } catch (error) {
+      if (demoFallbackEnabled && isNetworkError(error)) {
+        const session = createDemoSession(form.email)
+        saveSession(session)
+        saveProfile(createDemoProfile(form.displayName.trim(), session.session.userId))
+        navigate('/home', { state: { message: 'Gateway 未启动，已创建本地测试账户。' } })
+      } else {
+        setMessage(error instanceof Error ? error.message : '注册失败，请重试。')
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <AuthLayout page="register">
+      <form className="auth-form" onSubmit={submit} noValidate>
+        <AuthHeading title="注册" subtitle="始于微光，终成星河。" />
+        <FormField label="用户名" autoComplete="nickname" placeholder="在此处输入您的用户名" value={form.displayName} onChange={(event) => update('displayName', event.target.value)} error={errors.displayName} />
+        <FormField label="邮箱" type="email" autoComplete="email" placeholder="在此处输入您的邮箱" value={form.email} onChange={(event) => update('email', event.target.value)} error={errors.email} />
+        <FormField label="密码" autoComplete="new-password" placeholder="在此处输入您的密码" value={form.password} onChange={(event) => update('password', event.target.value)} error={errors.password} passwordToggle />
+        <FormField
+          label="验证码"
+          autoComplete="one-time-code"
+          placeholder="在此处输入您的邀请码"
+          value={form.invitationCode}
+          onChange={(event) => update('invitationCode', event.target.value)}
+          error={errors.invitationCode}
+          trailing={<button className="inline-button" type="button" onClick={() => setMessage('当前注册流程使用管理员提供的邀请码。')}>发送</button>}
+        />
+        <div className="auth-form__actions"><ActionButton type="submit" disabled={busy}>{busy ? '创建中' : '创建'}</ActionButton></div>
+        <button className="auth-form__back-link" type="button" onClick={() => navigate('/login')}>已有账户，返回登录</button>
+        {message ? <p className="form-message" role="status">{message}</p> : null}
+      </form>
+    </AuthLayout>
+  )
+}
