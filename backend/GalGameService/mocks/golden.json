@@ -1,0 +1,41 @@
+{
+    "schemaVersion":  "1.0",
+    "packageId":  "f2561bb2-b88c-47ef-b0ae-8f283ff64f1b",
+    "generatorVersion":  "gala-0.1.0",
+    "reviewPlanId":  "8e812950-3311-40a7-93ab-636409df8cc2",
+    "snapshotVersion":  "plan-graph-1.0:3da5f48f",
+    "entrySceneId":  "scene-001",
+    "scenes":  [
+                   {
+                       "sceneId":  "scene-001",
+                       "title":  null,
+                       "dialogue":  [
+                                        {
+                                            "speakerId":  "heroine",
+                                            "text":  "水稻分蘖期最关键的管理目标是什么？",
+                                            "emotion":  "curious"
+                                        }
+                                    ],
+                       "choices":  [
+                                       {
+                                           "choiceId":  "c1",
+                                           "questionId":  "6428a20a-66dd-44c9-944f-d7b36fa9c95a",
+                                           "text":  "协调群体数量与个体生长",
+                                           "nextSceneId":  null,
+                                           "scoreDelta":  1,
+                                           "knowledgePointId":  "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"
+                                       }
+                                   ],
+                       "knowledgeBindings":  [
+                                                 {
+                                                     "knowledgePointId":  "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",
+                                                     "questionId":  "6428a20a-66dd-44c9-944f-d7b36fa9c95a",
+                                                     "purpose":  "QUESTION"
+                                                 }
+                                             ]
+                   }
+               ],
+    "assets":  [
+
+               ]
+}

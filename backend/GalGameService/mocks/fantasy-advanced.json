@@ -1,0 +1,150 @@
+{
+    "schemaVersion":  "1.0",
+    "packageId":  "868d08a0-3ffd-4966-bff6-7422aad6a648",
+    "generatorVersion":  "gala-0.1.0",
+    "reviewPlanId":  "8e812950-3311-40a7-93ab-636409df8cc2",
+    "snapshotVersion":  "plan-graph-1.0:3da5f48f",
+    "entrySceneId":  "scene-001",
+    "scenes":  [
+                   {
+                       "sceneId":  "scene-001",
+                       "title":  "魔法学院的试炼",
+                       "dialogue":  [
+                                        {
+                                            "speakerId":  "精灵导师艾莉娅",
+                                            "text":  "勇敢的冒险者，欢迎来到知识之塔。今天我们将一同探索自然法则的奥秘。",
+                                            "emotion":  "mystical"
+                                        },
+                                        {
+                                            "speakerId":  "精灵导师艾莉娅",
+                                            "text":  "今天我们要复习的主题是：水稻·生长周期",
+                                            "emotion":  "encouraging"
+                                        }
+                                    ],
+                       "choices":  [
+                                       {
+                                           "choiceId":  "c-scene-001-1",
+                                           "questionId":  "c3bd304f-dc44-df55-8608-64c20672e90a",
+                                           "text":  "准备好了，开始吧！",
+                                           "nextSceneId":  "scene-002",
+                                           "scoreDelta":  0,
+                                           "knowledgePointId":  "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"
+                                       }
+                                   ],
+                       "knowledgeBindings":  [
+                                                 {
+                                                     "knowledgePointId":  "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",
+                                                     "questionId":  "c3bd304f-dc44-df55-8608-64c20672e90a",
+                                                     "purpose":  "FEEDBACK"
+                                                 }
+                                             ]
+                   },
+                   {
+                       "sceneId":  "scene-002",
+                       "title":  "知识点讲解：水稻基本生长周期",
+                       "dialogue":  [
+                                        {
+                                            "speakerId":  "精灵导师艾莉娅",
+                                            "text":  "在正式提问之前，先回顾一下「水稻基本生长周期」。",
+                                            "emotion":  "thoughtful"
+                                        },
+                                        {
+                                            "speakerId":  "精灵导师艾莉娅",
+                                            "text":  "水稻从播种到成熟的完整生长周期，包括幼苗期、分蘖期、拔节期、抽穗期和成熟期。",
+                                            "emotion":  "explaining"
+                                        }
+                                    ],
+                       "choices":  [
+                                       {
+                                           "choiceId":  "c-scene-002-1",
+                                           "questionId":  "b8a4c1be-db80-1759-9ecf-8f4ad0cfcfd5",
+                                           "text":  "了解了，继续。",
+                                           "nextSceneId":  "scene-003",
+                                           "scoreDelta":  0,
+                                           "knowledgePointId":  "84f7d873-e573-4689-b18d-6f82c745d1bf"
+                                       }
+                                   ],
+                       "knowledgeBindings":  [
+                                                 {
+                                                     "knowledgePointId":  "84f7d873-e573-4689-b18d-6f82c745d1bf",
+                                                     "questionId":  "b8a4c1be-db80-1759-9ecf-8f4ad0cfcfd5",
+                                                     "purpose":  "EXPLAIN"
+                                                 }
+                                             ]
+                   },
+                   {
+                       "sceneId":  "scene-003",
+                       "title":  "复习题：水稻分蘖期管理",
+                       "dialogue":  [
+                                        {
+                                            "speakerId":  "精灵导师艾莉娅",
+                                            "text":  "魔法的试炼开始了，请回答这个问题：",
+                                            "emotion":  "challenging"
+                                        },
+                                        {
+                                            "speakerId":  "精灵导师艾莉娅",
+                                            "text":  "水稻分蘖期管理——在深入理解「水稻分蘖期管理」的基础上，以下哪个选项最符合实际？",
+                                            "emotion":  "questioning"
+                                        }
+                                    ],
+                       "choices":  [
+                                       {
+                                           "choiceId":  "c-scene-003-d1",
+                                           "questionId":  "c3a94adf-7a32-2853-bbcf-50ef9da77458",
+                                           "text":  "水稻基本生长周期",
+                                           "nextSceneId":  "scene-004",
+                                           "scoreDelta":  0,
+                                           "knowledgePointId":  "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"
+                                       },
+                                       {
+                                           "choiceId":  "c-scene-003-correct",
+                                           "questionId":  "c3a94adf-7a32-2853-bbcf-50ef9da77458",
+                                           "text":  "水稻分蘖期最关键的管理目标是协调群体数量与个体生长，通过水肥调控促进有效分蘖",
+                                           "nextSceneId":  "scene-004",
+                                           "scoreDelta":  1,
+                                           "knowledgePointId":  "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"
+                                       },
+                                       {
+                                           "choiceId":  "c-scene-003-d2",
+                                           "questionId":  "c3a94adf-7a32-2853-bbcf-50ef9da77458",
+                                           "text":  "看似合理但存在关键缺陷",
+                                           "nextSceneId":  "scene-004",
+                                           "scoreDelta":  0,
+                                           "knowledgePointId":  "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"
+                                       }
+                                   ],
+                       "knowledgeBindings":  [
+                                                 {
+                                                     "knowledgePointId":  "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",
+                                                     "questionId":  "c3a94adf-7a32-2853-bbcf-50ef9da77458",
+                                                     "purpose":  "QUESTION"
+                                                 }
+                                             ]
+                   },
+                   {
+                       "sceneId":  "scene-004",
+                       "title":  "试炼完成",
+                       "dialogue":  [
+                                        {
+                                            "speakerId":  "精灵导师艾莉娅",
+                                            "text":  "你的智慧之光闪耀夺目，试炼圆满完成！",
+                                            "emotion":  "proud"
+                                        },
+                                        {
+                                            "speakerId":  "精灵导师艾莉娅",
+                                            "text":  "本次复习共完成 1 道题目，辛苦了！",
+                                            "emotion":  "warm"
+                                        }
+                                    ],
+                       "choices":  [
+
+                                   ],
+                       "knowledgeBindings":  [
+
+                                             ]
+                   }
+               ],
+    "assets":  [
+
+               ]
+}
