@@ -56,13 +56,12 @@ export default function RegisterPage() {
         <FormField label="邮箱" type="email" autoComplete="email" placeholder="在此处输入您的邮箱" value={form.email} onChange={(event) => update('email', event.target.value)} error={errors.email} />
         <FormField label="密码" autoComplete="new-password" placeholder="在此处输入您的密码" value={form.password} onChange={(event) => update('password', event.target.value)} error={errors.password} passwordToggle />
         <FormField
-          label="验证码"
-          autoComplete="one-time-code"
-          placeholder="在此处输入您的邀请码"
+          label="注册邀请码"
+          autoComplete="off"
+          placeholder="请输入管理员提供的邀请码"
           value={form.invitationCode}
           onChange={(event) => update('invitationCode', event.target.value)}
           error={errors.invitationCode}
-          trailing={<button className="inline-button" type="button" onClick={() => setMessage('当前注册流程使用管理员提供的邀请码。')}>发送</button>}
         />
         <div className="auth-form__actions"><ActionButton type="submit" disabled={busy}>{busy ? '创建中' : '创建'}</ActionButton></div>
         <button className="auth-form__back-link" type="button" onClick={() => navigate('/login')}>已有账户，返回登录</button>
