@@ -133,7 +133,7 @@ public class GameGeneratorTests
             .SelectMany(s => s.Choices)
             .Where(c => c.QuestionId == questionId)
             .ToList();
-        Assert.Single(scoredChoices.Where(c => c.ScoreDelta == 1));
+        Assert.Single(scoredChoices, c => c.ScoreDelta == 1);
         Assert.All(scoredChoices.Where(c => c.ScoreDelta == 0), c => Assert.Equal(questionId, c.QuestionId));
     }
 

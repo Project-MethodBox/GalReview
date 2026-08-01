@@ -145,6 +145,12 @@ public sealed class GamePackageValidator
     {
         var scenePath = $"scenes[{index}]";
 
+        if (scene is null)
+        {
+            issues.Add(new(scenePath, "NULL_ELEMENT", "场景元素不能为 null"));
+            return;
+        }
+
         // sceneId 非空且唯一
         if (string.IsNullOrWhiteSpace(scene.SceneId))
             issues.Add(new($"{scenePath}.sceneId", "EMPTY_SCENE_ID", "sceneId 不能为空"));
@@ -166,6 +172,11 @@ public sealed class GamePackageValidator
             {
                 var line = scene.Dialogue[d];
                 var dPath = $"{scenePath}.dialogue[{d}]";
+                if (line is null)
+                {
+                    issues.Add(new(dPath, "NULL_ELEMENT", "对话行元素不能为 null"));
+                    continue;
+                }
                 if (string.IsNullOrWhiteSpace(line.SpeakerId))
                     issues.Add(new($"{dPath}.speakerId", "EMPTY_DIALOGUE_FIELD", "speakerId 不能为空"));
                 if (string.IsNullOrWhiteSpace(line.Text))
@@ -186,6 +197,11 @@ public sealed class GamePackageValidator
             {
                 var choice = scene.Choices[c];
                 var cPath = $"{scenePath}.choices[{c}]";
+                if (choice is null)
+                {
+                    issues.Add(new(cPath, "NULL_ELEMENT", "选项元素不能为 null"));
+                    continue;
+                }
                 ValidateChoice(
                     choice, cPath, sceneIds,
                     questionToPoints, choiceQuestionIds, questionCorrectCounts,
@@ -200,6 +216,11 @@ public sealed class GamePackageValidator
             {
                 var binding = scene.KnowledgeBindings[b];
                 var bPath = $"{scenePath}.knowledgeBindings[{b}]";
+                if (binding is null)
+                {
+                    issues.Add(new(bPath, "NULL_ELEMENT", "知识绑定元素不能为 null"));
+                    continue;
+                }
                 if (binding.KnowledgePointId == Guid.Empty)
                     issues.Add(new($"{bPath}.knowledgePointId", "EMPTY_BINDING_FIELD",
                         "knowledgePointId 不能为空 GUID"));
@@ -335,6 +356,11 @@ public sealed class GamePackageValidator
         {
             var asset = assets[a];
             var aPath = $"assets[{a}]";
+            if (asset is null)
+            {
+                issues.Add(new(aPath, "NULL_ELEMENT", "资源元素不能为 null"));
+                continue;
+            }
             if (string.IsNullOrWhiteSpace(asset.AssetId))
                 issues.Add(new($"{aPath}.assetId", "EMPTY_ASSET_FIELD", "assetId 不能为空"));
             else if (!seenAssetIds.Add(asset.AssetId))
