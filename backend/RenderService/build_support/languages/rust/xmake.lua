@@ -41,6 +41,18 @@ function add_rustmanifest(manifest)
     add_values("rust.cargo.manifests", manifest)
 end
 
+-- Optional: declares the prefix every #[no_mangle]/#[export_name] symbol
+-- must carry (flat-namespace collision policy; ABI-mandated names stay
+-- whitelisted in validate.lua). The prefix is project policy, so it lives in
+-- the project's xmake.lua -- omit the declaration to skip prefix validation
+-- entirely (owner-confirmed keeper, 2026-08-02: cheap machine enforcement of
+-- a real risk -- bare exported names silently collide in the flat namespace,
+-- and static-archive resolution does not always fail loudly).
+function add_rustexportprefix(prefix)
+    add_rules("rust.cargo.require_rule")
+    add_values("rust.cargo.export_prefix", prefix)
+end
+
 rule("rust.cargo.require_rule")
     on_load(function (target)
         if target:rule("rust.cargo") then
@@ -104,10 +116,12 @@ rule("rust.cargo")
         end
 
         -- aggregate-style validation: orphan mod-tree files, #![no_std]
-        -- policy, whe_ export prefix (all problems in one pass)
+        -- policy, project-declared export prefix (all problems in one pass)
+        local export_prefix = table.wrap(target:values("rust.cargo.export_prefix"))[1]
         import("validate", {rootdir = RUST_MODULES_DIR}).run({
             root_file = root_file,
-            sources = sources
+            sources = sources,
+            export_prefix = export_prefix
         })
 
         local gcc_triplet = settings.managed_target(settings.configured_target_os())

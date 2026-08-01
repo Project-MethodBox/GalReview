@@ -201,7 +201,7 @@ import :AlgorithmEngine.search;
         local mutated = copy_of(files)
         mutated[sort_leaf] = [[
 export module WhiteHopeEngine:AlgorithmEngine.sort;
-#if WHE_TEST_GATE
+#if CONFIG_TEST_GATE
 import :AlgorithmEngine.search;
 #endif
 ]]

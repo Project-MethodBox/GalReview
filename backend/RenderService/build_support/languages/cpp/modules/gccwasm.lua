@@ -18,8 +18,32 @@ import("gccemsdk")
 import("core.base.bytes")
 
 local RUST_MODULES_DIR = path.join(os.scriptdir(), "..", "..", "rust", "modules")
-local WASM_CAPABILITY = "gcc17-hosted-emscripten-pthread-tls-atomic-locks-wait-rust-atomic-concepts-contracts-coroutines-reflection-basic-abi-int128-backend-v43"
-local WASM_SMOKE_CAPABILITY = "hosted-pthread-tls-atomic-lock-policy-shared-ptr-rust-int128-std-module-empty-abi-dwarf-canary-name-section-eh-trap-opt-size-v8"
+-- The declared capability depends on whether the smoke covered the Rust leg:
+-- a project with no rust.cargo target never provisions Rust (owner boundary,
+-- 2026-08-02), so its toolchain must not claim rust-atomic. Rust-enabled
+-- projects compose the exact historical string, keeping installed stamps
+-- valid; Rust-less checkouts get their own string and stamp.
+local WASM_CAPABILITY_PREFIX = "gcc17-hosted-emscripten-pthread-tls-atomic-locks-wait"
+local WASM_CAPABILITY_RUST_LEG = "-rust-atomic"
+local WASM_CAPABILITY_SUFFIX = "-concepts-contracts-coroutines-reflection-basic-abi-int128-backend-v43"
+
+local function rust_leg_enabled()
+    return import("toolchain", {rootdir = RUST_MODULES_DIR}).project_enables_rust()
+end
+
+local function wasm_capability()
+    return WASM_CAPABILITY_PREFIX .. (rust_leg_enabled() and WASM_CAPABILITY_RUST_LEG or "") .. WASM_CAPABILITY_SUFFIX
+end
+-- Split like the toolchain capability above and for the same reason: the
+-- smoke's Rust leg only runs for rust.cargo projects, and the declared smoke
+-- capability must say what was actually verified.
+local WASM_SMOKE_CAPABILITY_PREFIX = "hosted-pthread-tls-atomic-lock-policy-shared-ptr"
+local WASM_SMOKE_CAPABILITY_RUST_LEG = "-rust"
+local WASM_SMOKE_CAPABILITY_SUFFIX = "-int128-std-module-empty-abi-dwarf-canary-name-section-eh-trap-opt-size-v8"
+
+local function wasm_smoke_capability()
+    return WASM_SMOKE_CAPABILITY_PREFIX .. (rust_leg_enabled() and WASM_SMOKE_CAPABILITY_RUST_LEG or "") .. WASM_SMOKE_CAPABILITY_SUFFIX
+end
 
 -- Debug/GC assertion anchors for the hosted link smoke. The two data markers
 -- and the marker/unused functions are planted into the smoke C++ source below
@@ -618,8 +642,8 @@ end
 local function smoke_signature(target_os)
     local source = settings.gcc_source_profile(target_os)
     return table.concat({
-        "capability=" .. WASM_CAPABILITY,
-        "smoke_capability=" .. WASM_SMOKE_CAPABILITY,
+        "capability=" .. wasm_capability(),
+        "smoke_capability=" .. wasm_smoke_capability(),
         "gcc_ref=" .. source.ref,
         "gcc_revision=" .. gccsources.managed_toolchains_gcc_source_revision(settings.gcc_source_dir(target_os)),
         "c_compiler=" .. tostring(compiler_path(target_os, "c") or ""),
@@ -850,9 +874,9 @@ local function write_basic_abi_source(root)
     local source = path.join(root, "basic_c_abi.c")
     io.writefile(source, table.concat({
         "#ifdef __cplusplus",
-        "#define WHE_ABI_EXTERN extern \"C\"",
+        "#define SMOKE_ABI_EXTERN extern \"C\"",
         "#else",
-        "#define WHE_ABI_EXTERN",
+        "#define SMOKE_ABI_EXTERN",
         "#endif",
         "",
         "struct empty_value",
@@ -875,34 +899,34 @@ local function write_basic_abi_source(root)
         "\tint right;",
         "};",
         "",
-        "WHE_ABI_EXTERN __attribute__((visibility(\"default\"), noinline))",
+        "SMOKE_ABI_EXTERN __attribute__((visibility(\"default\"), noinline))",
         "struct empty_value gcc_wasm_abi_empty(struct empty_value value)",
         "{",
         "\treturn value;",
         "}",
         "",
-        "WHE_ABI_EXTERN __attribute__((visibility(\"default\"), noinline))",
+        "SMOKE_ABI_EXTERN __attribute__((visibility(\"default\"), noinline))",
         "struct singleton_value gcc_wasm_abi_singleton(struct singleton_value value)",
         "{",
         "\tstruct singleton_value result = {value.value + 1};",
         "\treturn result;",
         "}",
         "",
-        "WHE_ABI_EXTERN __attribute__((visibility(\"default\"), noinline))",
+        "SMOKE_ABI_EXTERN __attribute__((visibility(\"default\"), noinline))",
         "struct nested_singleton_value gcc_wasm_abi_nested_singleton(struct nested_singleton_value value)",
         "{",
         "\tstruct nested_singleton_value result = {{value.value.value + 1}};",
         "\treturn result;",
         "}",
         "",
-        "WHE_ABI_EXTERN __attribute__((visibility(\"default\"), noinline))",
+        "SMOKE_ABI_EXTERN __attribute__((visibility(\"default\"), noinline))",
         "struct pair_value gcc_wasm_abi_pair(struct pair_value value)",
         "{",
         "\tstruct pair_value result = {value.left + 1, value.right + 2};",
         "\treturn result;",
         "}",
         "",
-        "WHE_ABI_EXTERN __attribute__((visibility(\"default\"), noinline))",
+        "SMOKE_ABI_EXTERN __attribute__((visibility(\"default\"), noinline))",
         "int gcc_wasm_abi_varargs(int fixed, ...)",
         "{",
         "\t__builtin_va_list arguments;",
@@ -912,7 +936,7 @@ local function write_basic_abi_source(root)
         "\treturn fixed + value;",
         "}",
         "",
-        "#undef WHE_ABI_EXTERN",
+        "#undef SMOKE_ABI_EXTERN",
         ""
     }, "\n"))
     return source
@@ -2441,12 +2465,14 @@ static smoke_task make_smoke_task()
 	co_return 42;
 }
 
+#if SMOKE_WITH_RUST
 extern "C" std::uint32_t rust_atomic_add(std::uint32_t value);
 extern "C" std::uint32_t rust_atomic_load();
 extern "C" void rust_atomic_reset();
 extern "C" std::uint32_t rust_round_trip(std::uint32_t value);
 extern "C" std::uint64_t rust_u128_divide_low(std::uint64_t low, std::uint64_t high,
 	std::uint64_t divisor);
+#endif
 extern "C" int std_module_empty_abi_smoke();
 
 extern "C" std::uint32_t gcc_wasm_cpp_increment(std::uint32_t value)
@@ -2526,30 +2552,41 @@ int main()
 	if (phase.load(std::memory_order_relaxed) != 42)
 		return 14;
 
+#if SMOKE_WITH_RUST
 	rust_atomic_reset();
+#endif
 	std::atomic<int> cpp_atomic = 0;
 	std::latch completion(2);
 	std::thread first([&]
 	{
 		cpp_atomic.fetch_add(19, std::memory_order_relaxed);
+#if SMOKE_WITH_RUST
 		rust_atomic_add(19);
+#endif
 		completion.count_down();
 	});
 	std::thread second([&]
 	{
 		cpp_atomic.fetch_add(23, std::memory_order_relaxed);
+#if SMOKE_WITH_RUST
 		rust_atomic_add(23);
+#endif
 		completion.count_down();
 	});
 	completion.wait();
 	first.join();
 	second.join();
-	if (cpp_atomic.load(std::memory_order_relaxed) != 42 || rust_atomic_load() != 42)
+	if (cpp_atomic.load(std::memory_order_relaxed) != 42)
+		return 15;
+#if SMOKE_WITH_RUST
+	if (rust_atomic_load() != 42)
 		return 15;
 	if (rust_round_trip(40) != 42)
 		return 16;
-	if (rust_u128_divide_low(0, 1, 2) != (std::uint64_t{1} << 63)
-		|| gcc_wasm_cpp_u128_divide_low(0, 1, 2) != (std::uint64_t{1} << 63))
+	if (rust_u128_divide_low(0, 1, 2) != (std::uint64_t{1} << 63))
+		return 19;
+#endif
+	if (gcc_wasm_cpp_u128_divide_low(0, 1, 2) != (std::uint64_t{1} << 63))
 		return 19;
 
 	auto shared_value = std::make_shared<std::atomic<int>>(0);
@@ -2811,6 +2848,7 @@ function run_emscripten_link_smoke(target_os)
         "-freflection",
         "-fcontracts",
         "-fcontract-evaluation-semantic=enforce",
+        "-DSMOKE_WITH_RUST=" .. (rust_leg_enabled() and "1" or "0"),
         "-c", cxx_source,
         "-o", cxx_object
     }, {target_os = target_os, envs = cxx_envs})
@@ -2836,37 +2874,49 @@ function run_emscripten_link_smoke(target_os)
         errors.fail("GCC wasm backend DWARF canary tripped: -g changed the emitted object bytes, so the backend has grown debug output; revisit the wasm debug policy (symbols=none plus emcc -g2) before trusting this toolchain")
     end
 
-    local rust_toolchain = import("toolchain", {rootdir = RUST_MODULES_DIR})
-    local rust_runtime = import("wasm_runtime", {rootdir = RUST_MODULES_DIR})
-    local rust_target = "wasm32-unknown-emscripten"
-    rust_toolchain.install({rust_target})
-    local runtime_rlibs = rust_runtime.ensure({})
-    local rust_args = {
-        "--target", rust_target,
-        "--crate-type", "lib",
-        "--crate-name", "gcc_wasm_rust_atomic_smoke",
-        "--edition", "2024",
-        "--emit", "obj=" .. rust_object,
-        "-Cpanic=abort",
-        "-Ccodegen-units=1",
-        "-Ctarget-feature=+atomics,+bulk-memory,+mutable-globals",
-        "-Zunstable-options",
-        "-O",
-    }
-    for _, rlib in ipairs(runtime_rlibs) do
-        table.insert(rust_args, "--extern")
-        table.insert(rust_args, "noprelude:" .. rlib.name .. "=" .. rlib.path)
+    -- Rust leg: only for projects that opted into Rust via add_rules
+    -- ("rust.cargo"). A C++-only project embedding this build system must
+    -- never have a Rust toolchain provisioned or cargo invoked as a side
+    -- effect of building its wasm toolchain (owner boundary, 2026-08-02);
+    -- the declared capability string reflects the skipped leg.
+    local runtime_rlibs = {}
+    if rust_leg_enabled() then
+        local rust_toolchain = import("toolchain", {rootdir = RUST_MODULES_DIR})
+        local rust_runtime = import("wasm_runtime", {rootdir = RUST_MODULES_DIR})
+        local rust_target = "wasm32-unknown-emscripten"
+        rust_toolchain.install({rust_target})
+        runtime_rlibs = rust_runtime.ensure({})
+        local rust_args = {
+            "--target", rust_target,
+            "--crate-type", "lib",
+            "--crate-name", "gcc_wasm_rust_atomic_smoke",
+            "--edition", "2024",
+            "--emit", "obj=" .. rust_object,
+            "-Cpanic=abort",
+            "-Ccodegen-units=1",
+            "-Ctarget-feature=+atomics,+bulk-memory,+mutable-globals",
+            "-Zunstable-options",
+            "-O",
+        }
+        for _, rlib in ipairs(runtime_rlibs) do
+            table.insert(rust_args, "--extern")
+            table.insert(rust_args, "noprelude:" .. rlib.name .. "=" .. rlib.path)
+        end
+        table.insert(rust_args, rust_source)
+        run.run_program("compile Rust core atomic WebAssembly smoke", rust_toolchain.rustc_path(),
+            rust_args, {target_os = target_os})
+    else
+        errors.log("no target attaches rust.cargo; skipping the Rust atomic leg of the WebAssembly smoke")
     end
-    table.insert(rust_args, rust_source)
-    run.run_program("compile Rust core atomic WebAssembly smoke", rust_toolchain.rustc_path(),
-        rust_args, {target_os = target_os})
 
     local common_link_args = {
         cxx_object,
         std_module_interface_object,
         std_module_consumer_object,
-        rust_object,
     }
+    if rust_leg_enabled() then
+        table.insert(common_link_args, rust_object)
+    end
     for _, rlib in ipairs(runtime_rlibs) do
         table.insert(common_link_args, rlib.path)
     end
@@ -2973,13 +3023,14 @@ function run_emscripten_link_smoke(target_os)
 
     local sizes_summary = record_smoke_sizes(root, target_os, {output, output_wasm, opt_output, opt_wasm})
     io.writefile(path.join(root, "emscripten.stamp"), smoke_signature(target_os))
-    print("GCC concepts, contracts, coroutines, reflection, std-module empty-record ABI, pthread/TLS/atomic wait/shared_ptr, and Rust atomic Emscripten smoke passed: " .. output)
+    print("GCC concepts, contracts, coroutines, reflection, std-module empty-record ABI, pthread/TLS/atomic wait/shared_ptr"
+        .. (rust_leg_enabled() and ", and Rust atomic" or "") .. " Emscripten smoke passed: " .. output)
     print("wasm build-quality assertions passed (DWARF canary no-op, -g2 name section, symbol-granular GC, full -O3 wasm-opt pipeline, -fexceptions throw traps); sizes: " .. sizes_summary)
     return true
 end
 
 function capability_name()
-    return WASM_CAPABILITY
+    return wasm_capability()
 end
 
 function reset_build_cache(target_os)

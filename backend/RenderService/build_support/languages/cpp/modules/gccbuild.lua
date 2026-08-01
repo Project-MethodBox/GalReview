@@ -529,9 +529,9 @@ function ensure_fresh_binary_can_run(build, build_envs)
         return
     end
     os.mkdir(build)
-    local marker_leaf = "whe-run-probe.out"
-    local source = path.join(build, "whe-run-probe.c")
-    local program = path.join(build, base.exe("whe-run-probe"))
+    local marker_leaf = "toolchain-run-probe.out"
+    local source = path.join(build, "toolchain-run-probe.c")
+    local program = path.join(build, base.exe("toolchain-run-probe"))
     local marker = path.join(build, marker_leaf)
     os.tryrm(marker)
     io.writefile(source, table.concat({

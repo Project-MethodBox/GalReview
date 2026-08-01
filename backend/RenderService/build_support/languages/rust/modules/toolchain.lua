@@ -83,6 +83,26 @@ function rust_home()
     return path.join(layout.toolchains_home(), base.host_os(), "rust")
 end
 
+-- True when any target of the loaded project attaches the rust.cargo rule --
+-- the single opt-in that says "this project ships Rust". Toolchain-level
+-- stages (e.g. the wasm smoke's Rust leg) consult this so a build_support
+-- checkout embedded in a C++-only project never provisions Rust on its own;
+-- explicit commands (`xmake toolchains install rust`) stay unaffected. When
+-- no project is loadable in the calling context the answer is conservatively
+-- false -- Rust work must never start as a side effect of a failed probe.
+function project_enables_rust()
+    local ok, enabled = errors.trycall(function ()
+        local project = import("core.project.project")
+        for _, target in pairs(project.targets()) do
+            if target:rule("rust.cargo") then
+                return true
+            end
+        end
+        return false
+    end)
+    return ok == true and enabled == true
+end
+
 local function pin_file()
     return path.join(rust_home(), "pin")
 end
