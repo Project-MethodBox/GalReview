@@ -20,7 +20,9 @@
     <ProjectReference Include="..\GalGame.GalGameService.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <!-- 将 mocks 目录的 JSON 文件复制到测试输出目录，供 MockDataTests 加载 -->
+    <!-- 将 mocks 目录的 JSON 文件复制到测试输出目录，供 MockDataTests / InvalidPackageTests 加载 -->
     <Content Include="..\mocks\*.json" CopyToOutputDirectory="PreserveNewest" Link="mocks\%(Filename)%(Extension)" />
+    <!-- 将 schema 目录的 JSON Schema 复制到测试输出目录，供 GamePackageSchemaTests 加载 -->
+    <Content Include="..\schema\*.json" CopyToOutputDirectory="PreserveNewest" Link="schema\%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>

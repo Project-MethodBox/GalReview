@@ -1,0 +1,32 @@
+{
+    "schemaVersion": "1.0",
+    "packageId": "11111111-1111-1111-1111-111111111111",
+    "generatorVersion": "gala-0.1.0",
+    "reviewPlanId": "8e812950-3311-40a7-93ab-636409df8cc2",
+    "snapshotVersion": "plan-graph-1.0:3da5f48f",
+    "entrySceneId": "scene-999",
+    "scenes": [
+        {
+            "sceneId": "scene-001",
+            "title": null,
+            "dialogue": [{ "speakerId": "heroine", "text": "第一个场景", "emotion": null }],
+            "choices": [],
+            "knowledgeBindings": []
+        },
+        {
+            "sceneId": "scene-001",
+            "title": null,
+            "dialogue": [{ "speakerId": "heroine", "text": "重复 sceneId", "emotion": null }],
+            "choices": [],
+            "knowledgeBindings": []
+        },
+        {
+            "sceneId": "",
+            "title": null,
+            "dialogue": [{ "speakerId": "heroine", "text": "空 sceneId", "emotion": null }],
+            "choices": [],
+            "knowledgeBindings": []
+        }
+    ],
+    "assets": []
+}
