@@ -40,10 +40,25 @@ local function expected_crates(opt)
     return {"core", "compiler_builtins", "alloc"}
 end
 
-local function find_rlibs(root, opt, strict)
+-- Locates one rlib per expected crate under `root`. Three layout shapes are
+-- probed because the callers hand over two different kinds of tree and Cargo
+-- moved its intermediate artifacts upstream:
+--   * `lib<name>-*.rlib`                       -- our own flat cache dir;
+--   * `deps/lib<name>-*.rlib`                  -- cargo target layout up to
+--     nightly-2026-02-18;
+--   * `build/<name>/*/out/lib<name>-*.rlib`    -- the 2026 build-dir split
+--     (observed nightly-2026-08-01: `deps` is left empty and intermediates
+--     land in per-crate `build/<crate>/<hash>/out` folders).
+-- Exactly one artifact must remain across all shapes -- the build tree is
+-- wiped before every rebuild (safe_remove_tree below), so stale-hash
+-- duplicates cannot accumulate; anything else is a hard failure, never a
+-- silent pick.
+function find_rlibs(root, opt, strict)
     local rlibs = {}
     for _, name in ipairs(expected_crates(opt)) do
         local matches = os.files(path.join(root, "lib" .. name .. "-*.rlib"))
+        table.join2(matches, os.files(path.join(root, "deps", "lib" .. name .. "-*.rlib")))
+        table.join2(matches, os.files(path.join(root, "build", name, "*", "out", "lib" .. name .. "-*.rlib")))
         if #matches ~= 1 then
             if strict then
                 errors.fail("Rust WebAssembly atomic runtime expected one lib%s rlib under %s, found %d",
@@ -197,7 +212,7 @@ build_atomic_runtime = function(opt, output, marker, signature)
 
     local manifest = table.concat({
         "[package]",
-        "name = \"whe_wasm_atomic_runtime_probe\"",
+        "name = \"wasm_atomic_runtime_probe\"",
         "version = \"0.0.0\"",
         "edition = \"2024\"",
         "",
@@ -214,7 +229,7 @@ build_atomic_runtime = function(opt, output, marker, signature)
         "version = 4",
         "",
         "[[package]]",
-        "name = \"whe_wasm_atomic_runtime_probe\"",
+        "name = \"wasm_atomic_runtime_probe\"",
         "version = \"0.0.0\"",
         ""
     }, "\n")
@@ -223,7 +238,7 @@ build_atomic_runtime = function(opt, output, marker, signature)
         "",
         "use core::sync::atomic::{AtomicUsize, Ordering};",
         "",
-        "pub fn whe_wasm_atomic_runtime_probe(value: &AtomicUsize) -> usize {",
+        "pub fn wasm_atomic_runtime_probe(value: &AtomicUsize) -> usize {",
         "\tvalue.fetch_add(1, Ordering::SeqCst)",
         "}",
         ""
@@ -259,7 +274,7 @@ build_atomic_runtime = function(opt, output, marker, signature)
         envs = cargo_envs
     })
 
-    local built = find_rlibs(path.join(target_dir, RUST_TARGET, "release", "deps"), opt, true)
+    local built = find_rlibs(path.join(target_dir, RUST_TARGET, "release"), opt, true)
     os.mkdir(output)
     for _, rlib in ipairs(built) do
         os.cp(rlib.path, path.join(output, path.filename(rlib.path)))

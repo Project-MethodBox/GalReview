@@ -12,10 +12,11 @@
 --     diagnostics and final link; alloc is available via the rs/runtime.rs
 --     allocator bridge. A std crate would fail at link time with obscure
 --     errors.
---   * whe_ export prefix: #[no_mangle]/#[export_name] symbols share the
---     global flat namespace with C/C++; the prefix rule turns collisions
---     from a probability into an impossibility. ABI-mandated names the
---     dist libraries require are whitelisted here.
+--   * export prefix: #[no_mangle]/#[export_name] symbols share the global
+--     flat namespace with C/C++; a project-declared prefix rule (see
+--     add_rustexportprefix) turns collisions from a probability into an
+--     impossibility. ABI-mandated names the dist libraries require are
+--     whitelisted here. Projects that declare no prefix skip this check.
 --
 -- Duplicate #[panic_handler] needs no validator anymore: within one crate
 -- rustc itself rejects it immediately as a duplicate lang item.
@@ -100,17 +101,23 @@ local function check_no_std(root_file, problems)
     end
 end
 
-local function check_export_prefix(sources, problems)
+local function check_export_prefix(sources, export_prefix, problems)
+    local function flag(file, index, kind, symbol)
+        if EXPORT_WHITELIST[symbol] or symbol:startswith(export_prefix) then
+            return
+        end
+        table.insert(problems, string.format(
+            '%s:%d: %s symbol "%s" must carry the %s prefix (global namespace collision policy)',
+            file, index, kind, symbol, export_prefix))
+    end
     for _, file in ipairs(sources) do
         local _, lines = read_lines(file)
         local pending_attribute = nil
         for index, line in ipairs(lines) do
             local stripped = line:gsub("//.*$", "")
             local export_name = stripped:match('#%[export_name%s*=%s*"([^"]+)"%]')
-            if export_name and not EXPORT_WHITELIST[export_name] and not export_name:match("^whe_") then
-                table.insert(problems, string.format(
-                    '%s:%d: exported symbol "%s" must carry the whe_ prefix (global namespace collision policy)',
-                    file, index, export_name))
+            if export_name then
+                flag(file, index, "exported", export_name)
             end
             if pending_attribute then
                 -- `static mut` must be tried before `static`: the shorter
@@ -119,11 +126,7 @@ local function check_export_prefix(sources, problems)
                     or stripped:match("%f[%w_]static%s+mut%s+([%w_]+)")
                     or stripped:match("%f[%w_]static%s+([%w_]+)")
                 if symbol then
-                    if not EXPORT_WHITELIST[symbol] and not symbol:match("^whe_") then
-                        table.insert(problems, string.format(
-                            '%s:%d: #[no_mangle] symbol "%s" must carry the whe_ prefix (global namespace collision policy)',
-                            file, index, symbol))
-                    end
+                    flag(file, index, "#[no_mangle]", symbol)
                     pending_attribute = nil
                 elseif stripped:match("%S") and not stripped:match("^%s*#%[") then
                     pending_attribute = nil
@@ -134,11 +137,7 @@ local function check_export_prefix(sources, problems)
                 local same_line = stripped:match("no_mangle.-%f[%w_]fn%s+([%w_]+)")
                     or stripped:match("no_mangle.-%f[%w_]static%s+m?u?t?%s*([%w_]+)")
                 if same_line then
-                    if not EXPORT_WHITELIST[same_line] and not same_line:match("^whe_") then
-                        table.insert(problems, string.format(
-                            '%s:%d: #[no_mangle] symbol "%s" must carry the whe_ prefix (global namespace collision policy)',
-                            file, index, same_line))
-                    end
+                    flag(file, index, "#[no_mangle]", same_line)
                 else
                     pending_attribute = index
                 end
@@ -149,12 +148,16 @@ end
 
 -- Runs every check over the crate tree; fails loudly with the full problem
 -- list (one pass, aggregate-validator style).
---   opt: root_file (the crate root, rs/lib.rs), sources (every .rs in rs/)
+--   opt: root_file (the crate root, <rootdir>/lib.rs), sources (every .rs
+--   under the root), export_prefix (project symbol prefix; nil/empty skips
+--   the prefix check -- the policy belongs to the project, not this module)
 function run(opt)
     local problems = {}
     check_no_std(opt.root_file, problems)
     check_orphans(opt.root_file, opt.sources, problems)
-    check_export_prefix(opt.sources, problems)
+    if opt.export_prefix and opt.export_prefix ~= "" then
+        check_export_prefix(opt.sources, opt.export_prefix, problems)
+    end
     if #problems > 0 then
         errors.fail("rust crate validation failed:\n  %s", table.concat(problems, "\n  "))
     end

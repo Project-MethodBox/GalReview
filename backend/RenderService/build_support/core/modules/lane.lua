@@ -51,9 +51,9 @@ end
 
 -- Command-scoped environment for the child xmake. XMAKE_CONFIGDIR re-keys the
 -- lock + config + localcache (the whole reason lanes do not serialize on the
--- single project lock); XMAKE_TMPDIR re-keys the C++ module mapper. WHE_LANE
--- marks the child as a lane so the gcc.modules foreign-plat cache sweep stands
--- down: several lanes legitimately keep different plats' module BMIs side by
+-- single project lock); XMAKE_TMPDIR re-keys the C++ module mapper.
+-- TOOLCHAINS_LANE marks the child as a lane so the gcc.modules foreign-plat
+-- cache sweep stands down: several lanes legitimately keep different plats' module BMIs side by
 -- side in the shared build tree, and each lane's isolated localcache makes the
 -- cross-plat reuse that sweep heals impossible anyway. The OS temp
 -- (TMP/TEMP/TMPDIR), where rustc writes codegen intermediates, is only re-keyed
@@ -66,7 +66,7 @@ local function lane_envs(layout)
     {
         XMAKE_CONFIGDIR = layout.configdir,
         XMAKE_TMPDIR = layout.xtmpdir,
-        WHE_LANE = layout.name
+        TOOLCHAINS_LANE = layout.name
     }
     if not base.is_windows_host() then
         os.mkdir(layout.ostmpdir)

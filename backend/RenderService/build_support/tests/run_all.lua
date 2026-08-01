@@ -13,6 +13,7 @@ import("rust_validate_cases", {rootdir = path.join(os.scriptdir(), "cases")})
 import("rust_cargo_cases", {rootdir = path.join(os.scriptdir(), "cases")})
 import("rust_toolchain_cases", {rootdir = path.join(os.scriptdir(), "cases")})
 import("rust_link_export_cases", {rootdir = path.join(os.scriptdir(), "cases")})
+import("wasm_runtime_cases", {rootdir = path.join(os.scriptdir(), "cases")})
 import("androidndk_cases", {rootdir = path.join(os.scriptdir(), "cases")})
 import("gccglibc_cases", {rootdir = path.join(os.scriptdir(), "cases")})
 import("gccfeatures_cases", {rootdir = path.join(os.scriptdir(), "cases")})
@@ -34,6 +35,7 @@ local SUITES = {
     {name = "rust_cargo", entry = function (t) rust_cargo_cases.run(t) end},
     {name = "rust_toolchain", entry = function (t) rust_toolchain_cases.run(t) end},
     {name = "rust_link_export", entry = function (t) rust_link_export_cases.run(t) end},
+    {name = "wasm_runtime", entry = function (t) wasm_runtime_cases.run(t) end},
     {name = "androidndk", entry = function (t) androidndk_cases.run(t) end},
     {name = "gccglibc", entry = function (t) gccglibc_cases.run(t) end},
     {name = "gccfeatures", entry = function (t) gccfeatures_cases.run(t) end},
@@ -71,7 +73,7 @@ function main(filter)
         end
     end
 
-    local root = path.join(os.tmpdir(), "whe-buildsupport-tests",
+    local root = path.join(os.tmpdir(), "xmake-buildsupport-tests",
         tostring(os.time()) .. "-" .. tostring(os.getpid and os.getpid() or 0))
     os.mkdir(root)
     local ctx = testkit.new_context(root)

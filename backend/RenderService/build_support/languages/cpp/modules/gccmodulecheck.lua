@@ -52,9 +52,9 @@ local function module_relative_path(sourcefile, source_root, projectdir)
 end
 
 -- Unconditional imports only: imports inside any #if/#ifdef region are
--- configuration-dependent and are skipped -- the dormant WHE_* gates
--- intentionally keep textual cycles that never activate together (spec
--- module-organization item 10), and platform-gated imports differ per
+-- configuration-dependent and are skipped -- a project's dormant feature
+-- gates may intentionally keep textual cycles that never activate together
+-- (owner-controlled redesign areas), and platform-gated imports differ per
 -- build anyway.
 local function unconditional_imports(content, unit_by_name)
     local imports = {}
@@ -469,7 +469,7 @@ function warn_foreign_plat_cache(target, opt)
     -- corrupt an in-flight parallel build -- so stand down for real lane
     -- builds. The fixture suite drives this function explicitly and always
     -- passes opt.builddir, so it is never mistaken for a lane.
-    if not opt.builddir and os.getenv("WHE_LANE") then
+    if not opt.builddir and os.getenv("TOOLCHAINS_LANE") then
         return
     end
     local host = opt.host or os.host()

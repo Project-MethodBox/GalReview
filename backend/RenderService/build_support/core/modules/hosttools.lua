@@ -349,19 +349,19 @@ function compiler_smoke_ok(cc, cxx, shell)
         os.mkdir(srcdir)
         os.mkdir(workdir)
         io.writefile(path.join(srcdir, "smoke.c"),
-            "int main(void)\n{\n\treturn WHE_SMOKE_ANSWER - 42;\n}\n")
+            "int main(void)\n{\n\treturn TOOLCHAIN_SMOKE_ANSWER - 42;\n}\n")
         io.writefile(path.join(srcdir, "smoke.cpp"),
             "#include <string>\n\nint main()\n{\n\tstd::string text(\"whe\");\n\treturn static_cast<int>(text.size()) - 3;\n}\n")
         for _, step in ipairs(steps) do
             local tool, source, output = step[1], step[2], step[3]
             local produced = output .. (base.is_windows_host() and ".exe" or "")
             if shelled then
-                os.runv(shell, {"-c", base.shquote(tool) .. " -DWHE_SMOKE_ANSWER=42 -c ../src/" .. source .. " -o " .. output .. ".o"},
+                os.runv(shell, {"-c", base.shquote(tool) .. " -DTOOLCHAIN_SMOKE_ANSWER=42 -c ../src/" .. source .. " -o " .. output .. ".o"},
                     {curdir = workdir, envs = envs, timeout = 120000})
                 os.runv(shell, {"-c", base.shquote(tool) .. " " .. output .. ".o -o " .. produced},
                     {curdir = workdir, envs = envs, timeout = 120000})
             else
-                os.runv(tool, {"-DWHE_SMOKE_ANSWER=42", "-c", "../src/" .. source, "-o", output .. ".o"},
+                os.runv(tool, {"-DTOOLCHAIN_SMOKE_ANSWER=42", "-c", "../src/" .. source, "-o", output .. ".o"},
                     {curdir = workdir, envs = envs, timeout = 120000})
                 os.runv(tool, {output .. ".o", "-o", produced},
                     {curdir = workdir, envs = envs, timeout = 120000})
