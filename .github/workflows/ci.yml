@@ -1,0 +1,79 @@
+name: CI
+
+# 千知万理 GalReview — 最小可用 CI
+# 覆盖：.NET 服务（Auth/User/File/GalGame/Knowledge）构建与测试、gateway 构建与测试
+# 触发：main 分支推送 + 指向 main 的 PR
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# 同一分支新运行自动取消旧运行，省额度
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dotnet:
+    name: .NET services
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 项目混合 net8.0（Auth/User/File）与 net10.0（GalGame/Knowledge）
+      - name: Setup .NET SDKs
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      # FileService 无测试项目，单独构建以验证可编译
+      - name: Build FileService (no tests)
+        run: dotnet build backend/FileService/GalGame.FileService.csproj --nologo
+
+      # 四个测试项目各自 restore+build+test
+      - name: Test AuthService
+        run: dotnet test backend/AuthService/Tests/GalGame.AuthService.Tests.csproj --nologo
+
+      - name: Test UserService
+        run: dotnet test backend/UserService/Tests/GalGame.UserService.Tests.csproj --nologo
+
+      - name: Test GalGameService
+        run: dotnet test backend/GalGameService/Tests/GalGame.GalGameService.Tests.csproj --nologo
+
+      - name: Test KnowledgeService
+        run: dotnet test backend/KnowledgeService/KnowledgeService.Tests/KnowledgeService.Tests.csproj --nologo
+
+  gateway:
+    name: Gateway (Node)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gateway
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: gateway/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # tsc 类型检查 + 产物构建
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
