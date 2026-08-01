@@ -32,19 +32,62 @@ GalGameService/
 ├── Program.cs                  # 服务入口：中间件链 + 5 个端点
 ├── Contracts.cs                # 数据类型（GamePackage、Scene、Choice 等）
 ├── GameGenerator.cs            # 游戏包生成器（3 风格 × 3 难度）
-├── GamePackageValidator.cs     # 校验器（12 类规则 + SHA-256 checksum）
+├── GamePackageValidator.cs     # 校验器（15 类规则 + SHA-256 checksum）
 ├── InMemoryGameStore.cs        # Mock 内存存储 + 黄金游戏包
 ├── PlanGraphClient.cs          # PlanGraph 读取客户端（§7.3.1 URGENT）
 ├── GalGame.GalGameService.csproj
 ├── Dockerfile
 ├── appsettings.json
 ├── appsettings.Development.json
+├── schema/
+│   └── game-package-1.0.schema.json  # schema 1.0 结构契约（draft-07，§7.5 冻结）
+├── mocks/
+│   ├── golden.json                    # 黄金游戏包（§12.1）
+│   ├── campus-standard.json           # 风格包 ×3
+│   ├── fantasy-advanced.json
+│   ├── science-basic.json
+│   ├── invalid-toplevel.json          # 故意错误包 ×6（§12.1 错误包，负向夹具）
+│   ├── invalid-scene-structure.json
+│   ├── invalid-dialogue.json
+│   ├── invalid-choice.json
+│   ├── invalid-question-binding.json
+│   ├── invalid-assets.json
+│   └── preview.html
 └── Tests/
     ├── GalGame.GalGameService.Tests.csproj
-    ├── GamePackageValidatorTests.cs   # 14 个校验器测试
-    ├── GameGeneratorTests.cs          # 16 个生成器测试
-    └── PlanGraphClientTests.cs        # 4 个 PlanGraph 客户端测试
+    ├── GamePackageValidatorTests.cs      # 校验器测试
+    ├── GameGeneratorTests.cs             # 生成器测试
+    ├── PlanGraphClientTests.cs           # PlanGraph 客户端测试
+    ├── MockDataTests.cs                  # mock 数据场景逻辑与计分规则
+    ├── UserInteractionSimulationTests.cs # 用户交互模拟与得分验证
+    ├── BoundaryTests.cs                  # 边界输入（特殊字符/超长文本）
+    ├── GalGameServiceIntegrationTests.cs # WebApplicationFactory 集成测试
+    ├── InMemoryGameStoreTests.cs         # 内存存储测试
+    ├── InvalidPackageTests.cs            # 错误包负向测试（精确错误码断言）
+    └── GamePackageSchemaTests.cs         # JSON Schema 契约测试
 ```
+
+## 校验夹具与 Schema（§7.5 / §12.1）
+
+`@F15EX` 契约交付三件套：黄金包、错误包、校验器。
+
+- **校验器**：`GamePackageValidator`，15 类规则，可由 GalGameService 和 RenderService 共同运行。
+- **JSON Schema**：`schema/game-package-1.0.schema.json`（draft-07）冻结结构与字段级约束
+  （数量上限、枚举、UUID 格式、`additionalProperties=false`）。跨字段语义规则由校验器在运行时
+  强制，二者互补。Schema 可被 RenderService / CI / 前端在反序列化前做廉价预检。
+- **错误包**：`mocks/invalid-*.json` 共 6 个，每个聚焦一类错误聚类，覆盖全部 29 个错误码分支：
+
+| 文件 | 覆盖错误码 |
+|---|---|
+| `invalid-toplevel.json` | `INVALID_SCHEMA_VERSION` / `INVALID_PACKAGE_ID` / `MISSING_GENERATOR_VERSION` / `INVALID_REVIEW_PLAN_ID` / `MISSING_SNAPSHOT_VERSION` |
+| `invalid-scene-structure.json` | `DUPLICATE_SCENE_ID` / `EMPTY_SCENE_ID` / `ENTRY_SCENE_NOT_FOUND` |
+| `invalid-dialogue.json` | `EMPTY_DIALOGUE_FIELD` / `NULL_ELEMENT` |
+| `invalid-choice.json` | `DUPLICATE_CHOICE_ID` / `INVALID_SCORE_DELTA` / `EMPTY_CHOICE_FIELD` / `INVALID_NEXT_SCENE` / `NULL_ELEMENT` |
+| `invalid-question-binding.json` | `MULTIPLE_CORRECT_CHOICES` / `NO_CORRECT_CHOICE` / `ORPHAN_QUESTION_BINDING` / `QUESTION_POINT_MISMATCH` / `QUESTION_BINDING_MISSING_QUESTION_ID` / `EMPTY_BINDING_FIELD` / `NULL_ELEMENT` |
+| `invalid-assets.json` | `DUPLICATE_ASSET_ID` / `EMPTY_ASSET_FIELD` / `NULL_ELEMENT` |
+
+数量超限（101 场景 / 201 对话 / 7 选项）与 `null` 包由 `InvalidPackageTests.cs` 程序化构造，
+不入静态 JSON。OWNER-TBD 六项决策见 `docs/galgame-owner-tbd.md`。
 
 ## 核心设计
 
