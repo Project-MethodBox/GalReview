@@ -1,0 +1,194 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "$id": "https://galreview.dev/schemas/game-package-1.0.schema.json",
+    "title": "game-package-1.0",
+    "description": "千知万理 GalGameService 游戏包 schema 1.0 结构契约。对应 docs/contract.md §7.3。本 Schema 只冻结结构与字段级约束（数量上限、枚举、UUID 格式、必填字段、additionalProperties=false）；跨字段语义规则（每题恰一个正确选项、孤儿绑定、questionId 跨场景一致性、nextSceneId 引用有效性、entrySceneId 存在性）由 GamePackageValidator 在运行时强制，二者互补。",
+    "type": "object",
+    "required": [
+        "schemaVersion",
+        "packageId",
+        "generatorVersion",
+        "reviewPlanId",
+        "snapshotVersion",
+        "entrySceneId",
+        "scenes",
+        "assets"
+    ],
+    "additionalProperties": false,
+    "properties": {
+        "schemaVersion": {
+            "const": "1.0",
+            "description": "首版固定为 1.0；破坏性变更升级主版本。"
+        },
+        "packageId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "UUID v4，小写。空 GUID 由校验器拒绝（INVALID_PACKAGE_ID）。"
+        },
+        "generatorVersion": {
+            "type": "string",
+            "minLength": 1,
+            "description": "生成器版本，如 gala-0.1.0。与 seed 共同决定可复现范围。"
+        },
+        "reviewPlanId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "来源 PlanGraph 的 reviewPlanId；空 GUID 由校验器拒绝。"
+        },
+        "snapshotVersion": {
+            "type": "string",
+            "minLength": 1,
+            "description": "不可变 PlanGraph 快照版本，作为知识边界。"
+        },
+        "entrySceneId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "必须等于 scenes 中某场景的 sceneId；存在性由校验器强制。"
+        },
+        "scenes": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "description": "场景数量上限 100（GamePackageValidator.MaxScenes）。",
+            "items": { "$ref": "#/$defs/scene" }
+        },
+        "assets": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/asset" },
+            "description": "资源引用列表，可为空数组。"
+        }
+    },
+    "$defs": {
+        "scene": {
+            "type": "object",
+            "required": ["sceneId", "dialogue", "choices", "knowledgeBindings"],
+            "additionalProperties": false,
+            "properties": {
+                "sceneId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "包内唯一；空白由校验器拒绝（EMPTY_SCENE_ID）。"
+                },
+                "title": {
+                    "type": ["string", "null"],
+                    "description": "可选场景标题。"
+                },
+                "dialogue": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 200,
+                    "description": "单场景对话行上限 200（MaxDialoguePerScene）；不允许空数组或 null。",
+                    "items": { "$ref": "#/$defs/dialogueLine" }
+                },
+                "choices": {
+                    "type": "array",
+                    "maxItems": 6,
+                    "description": "单场景选项上限 6（MaxChoicesPerScene）；允许空数组（纯导航/讲解场景）。",
+                    "items": { "$ref": "#/$defs/choice" }
+                },
+                "knowledgeBindings": {
+                    "type": "array",
+                    "items": { "$ref": "#/$defs/binding" }
+                }
+            }
+        },
+        "dialogueLine": {
+            "type": "object",
+            "required": ["speakerId", "text"],
+            "additionalProperties": false,
+            "properties": {
+                "speakerId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "说话人标识；空白由校验器拒绝（EMPTY_DIALOGUE_FIELD）。"
+                },
+                "text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "对话文本；纯空白由校验器拒绝。"
+                },
+                "emotion": {
+                    "type": ["string", "null"],
+                    "description": "可选情绪标签。"
+                }
+            }
+        },
+        "choice": {
+            "type": "object",
+            "required": ["choiceId", "questionId", "text", "nextSceneId", "scoreDelta", "knowledgePointId"],
+            "additionalProperties": false,
+            "properties": {
+                "choiceId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "同一场景内唯一；空白由校验器拒绝。"
+                },
+                "questionId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "题目标识；空 GUID 由校验器拒绝。同一题的所有 choice 共享同一 questionId。"
+                },
+                "text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "选项文本；空白由校验器拒绝。"
+                },
+                "nextSceneId": {
+                    "type": ["string", "null"],
+                    "description": "目标 sceneId；null 表示结束。非空时必须指向存在场景，由校验器强制。"
+                },
+                "scoreDelta": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "计分增量：0（错误/干扰）或 1（正确）；负数或 >1 由校验器拒绝（INVALID_SCORE_DELTA）。"
+                },
+                "knowledgePointId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "绑定知识点；空 GUID 由校验器拒绝。"
+                }
+            }
+        },
+        "binding": {
+            "type": "object",
+            "required": ["knowledgePointId", "questionId", "purpose"],
+            "additionalProperties": false,
+            "properties": {
+                "knowledgePointId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "绑定知识点；空 GUID 由校验器拒绝（EMPTY_BINDING_FIELD）。"
+                },
+                "questionId": {
+                    "type": ["string", "null"],
+                    "format": "uuid",
+                    "description": "purpose=QUESTION 时必填且包内唯一；缺失由校验器拒绝（QUESTION_BINDING_MISSING_QUESTION_ID）。"
+                },
+                "purpose": {
+                    "enum": ["EXPLAIN", "QUESTION", "FEEDBACK"]
+                }
+            }
+        },
+        "asset": {
+            "type": "object",
+            "required": ["assetId", "type", "uri"],
+            "additionalProperties": false,
+            "properties": {
+                "assetId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "包内唯一；空白由校验器拒绝。"
+                },
+                "type": {
+                    "enum": ["BACKGROUND", "CHARACTER", "AUDIO", "OTHER"]
+                },
+                "uri": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "资源引用地址；空白由校验器拒绝。"
+                }
+            }
+        }
+    }
+}

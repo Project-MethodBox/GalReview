@@ -1,0 +1,81 @@
+{
+    "schemaVersion": "1.0",
+    "packageId": "44444444-4444-4444-4444-444444444444",
+    "generatorVersion": "gala-0.1.0",
+    "reviewPlanId": "8e812950-3311-40a7-93ab-636409df8cc2",
+    "snapshotVersion": "plan-graph-1.0:3da5f48f",
+    "entrySceneId": "scene-001",
+    "scenes": [
+        {
+            "sceneId": "scene-001",
+            "title": null,
+            "dialogue": [{ "speakerId": "heroine", "text": "题目绑定错误夹具", "emotion": null }],
+            "choices": [
+                {
+                    "choiceId": "c1",
+                    "questionId": "6428a20a-66dd-44c9-944f-d7b36fa9c95a",
+                    "text": "Q1 第一个正确",
+                    "nextSceneId": null,
+                    "scoreDelta": 1,
+                    "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"
+                },
+                {
+                    "choiceId": "c2",
+                    "questionId": "6428a20a-66dd-44c9-944f-d7b36fa9c95a",
+                    "text": "Q1 第二个正确（多解）",
+                    "nextSceneId": null,
+                    "scoreDelta": 1,
+                    "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"
+                },
+                {
+                    "choiceId": "c3",
+                    "questionId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+                    "text": "Q2 无正确选项",
+                    "nextSceneId": null,
+                    "scoreDelta": 0,
+                    "knowledgePointId": "e1111111-e111-e111-e111-e11111111111"
+                },
+                {
+                    "choiceId": "c4",
+                    "questionId": "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
+                    "text": "Q4 绑定不同知识点",
+                    "nextSceneId": null,
+                    "scoreDelta": 1,
+                    "knowledgePointId": "e3333333-e333-e333-e333-e33333333333"
+                },
+                {
+                    "choiceId": "c5",
+                    "questionId": "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
+                    "text": "Q4 另一知识点",
+                    "nextSceneId": null,
+                    "scoreDelta": 0,
+                    "knowledgePointId": "e4444444-e444-e444-e444-e44444444444"
+                }
+            ],
+            "knowledgeBindings": [
+                {
+                    "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",
+                    "questionId": "6428a20a-66dd-44c9-944f-d7b36fa9c95a",
+                    "purpose": "QUESTION"
+                },
+                {
+                    "knowledgePointId": "e1111111-e111-e111-e111-e11111111111",
+                    "questionId": null,
+                    "purpose": "QUESTION"
+                },
+                {
+                    "knowledgePointId": "00000000-0000-0000-0000-000000000000",
+                    "questionId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+                    "purpose": "QUESTION"
+                },
+                null,
+                {
+                    "knowledgePointId": "e2222222-e222-e222-e222-e22222222222",
+                    "questionId": "dddddddd-dddd-dddd-dddd-dddddddddddd",
+                    "purpose": "QUESTION"
+                }
+            ]
+        }
+    ],
+    "assets": []
+}
