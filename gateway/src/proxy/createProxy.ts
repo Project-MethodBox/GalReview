@@ -89,13 +89,18 @@ export function createProxyForRoute(
     timeout: timeoutMs + PROXY_ERROR_RESPONSE_GRACE_MS,
     // 不自动跟随重定向，透传给客户端
     followRedirects: false,
+    // 注入静态头：X-Gateway-Key（每个服务密钥固定，通过 headers 字段一次性设置）
+    headers: {
+      'X-Gateway-Key': targetServiceKey,
+    },
+    // 使用 on 注册事件处理器：
+    // 必须通过 on.error 注册错误处理器，http-proxy-middleware v3 仅当 on.error 存在时
+    // 才会跳过默认的 errorResponsePlugin（否则默认插件先注册并返回 504 纯文本，
+    // 覆盖本网关的统一 JSON 错误信封）。plugins 适用于中间件式扩展，不适用于覆盖默认错误响应。
     on: {
-      proxyReq: (proxyReq, req) => {
+      proxyReq: (proxyReq, req: Request) => {
         // 剥离客户端原始敏感头，防止凭证泄露给下游
         stripSensitiveHeaders(proxyReq);
-
-        // 注入目标服务的独立身份密钥（非全局 key）
-        proxyReq.setHeader('X-Gateway-Key', targetServiceKey);
 
         // 注入链路追踪
         if (req.traceId) {
@@ -112,7 +117,7 @@ export function createProxyForRoute(
           proxyReq.setHeader('X-Service-Name', req.gatewayServiceName);
         }
       },
-      error: (err, req, res) => {
+      error: (err, req: Request, res: Response) => {
         // 响应已发送或不是 HTTP 响应对象则跳过
         if (!res || !('writeHead' in res) || res.headersSent) return;
 
