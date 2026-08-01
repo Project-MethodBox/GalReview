@@ -1,4 +1,5 @@
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { useEffect, useRef } from 'react'
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import FeaturePlaceholderPage from './pages/FeaturePlaceholderPage'
 import ForgotPasswordPage from './pages/ForgotPasswordPage'
 import HomePage from './pages/HomePage'
@@ -7,10 +8,34 @@ import NotFoundPage from './pages/NotFoundPage'
 import RegisterPage from './pages/RegisterPage'
 import { readSession } from './lib/session'
 
-export default function App() {
+const routeDepth: Record<string, number> = {
+  '/login': 0,
+  '/register': 1,
+  '/forgot-password': 1,
+  '/home': 2,
+  '/materials': 3,
+  '/knowledge': 3,
+  '/knowledge-graph': 3,
+  '/review': 3,
+  '/settings': 3,
+}
+
+function AnimatedRoutes() {
+  const location = useLocation()
+  const previousPath = useRef(location.pathname)
+  const previousDepth = routeDepth[previousPath.current] ?? 0
+  const currentDepth = routeDepth[location.pathname] ?? 0
+  const direction = previousPath.current === location.pathname
+    ? 'neutral'
+    : currentDepth > previousDepth ? 'forward' : currentDepth < previousDepth ? 'back' : 'neutral'
+
+  useEffect(() => {
+    previousPath.current = location.pathname
+  }, [location.pathname])
+
   return (
-    <BrowserRouter>
-      <Routes>
+    <div className={`route-transition route-transition--${direction}`} key={location.key}>
+      <Routes location={location}>
         <Route path="/" element={<Navigate replace to={readSession() ? '/home' : '/login'} />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
@@ -23,6 +48,14 @@ export default function App() {
         <Route path="/settings" element={<FeaturePlaceholderPage title="个人设置" description="个人资料、学习目标、难度和减少动态效果的入口已经预留。" />} />
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
+    </div>
+  )
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AnimatedRoutes />
     </BrowserRouter>
   )
 }

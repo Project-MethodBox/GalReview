@@ -40,6 +40,15 @@ button, input { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
 button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid color-mix(in srgb, var(--text) 35%, transparent); outline-offset: 3px; }
 
+.route-transition { min-height: 100vh; overflow-x: clip; background: var(--canvas); will-change: opacity, transform; }
+.route-transition--forward { animation: route-enter-forward 240ms cubic-bezier(.22, 1, .36, 1) both; }
+.route-transition--back { animation: route-enter-back 240ms cubic-bezier(.22, 1, .36, 1) both; }
+.route-transition--neutral { animation: route-enter-fade 180ms ease-out both; }
+
+@keyframes route-enter-forward { from { opacity: 0; transform: translate3d(14px, 0, 0); } to { opacity: 1; transform: translate3d(0, 0, 0); } }
+@keyframes route-enter-back { from { opacity: 0; transform: translate3d(-14px, 0, 0); } to { opacity: 1; transform: translate3d(0, 0, 0); } }
+@keyframes route-enter-fade { from { opacity: .72; } to { opacity: 1; } }
+
 .auth-page {
   position: relative;
   min-height: max(100vh, 1117px);
@@ -102,8 +111,14 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
 }
 .form-field__control input { width: 100%; height: 100%; padding: 0 58px 0 18px; border: 0; outline: 0; color: var(--text); background: transparent; font-size: 18px; font-weight: 300; }
 .form-field__control input::placeholder { color: color-mix(in srgb, var(--text) 50%, transparent); }
+.form-field__control input[type="password"] { -webkit-appearance: none; appearance: none; }
+.form-field__control input[type="password"]::-ms-reveal,
+.form-field__control input[type="password"]::-ms-clear,
+.form-field__control input[type="password"]::-webkit-credentials-auto-fill-button,
+.form-field__control input[type="password"]::-webkit-caps-lock-indicator { display: none !important; visibility: hidden; pointer-events: none; }
 .form-field__icon, .form-field__decorative { position: absolute; right: 16px; top: 50%; width: 24px; height: 24px; transform: translateY(-50%); color: #696969; }
 .form-field__icon { display: grid; place-items: center; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.form-field__icon:disabled { cursor: default; opacity: .35; }
 .form-field__icon svg { width: 24px; height: 24px; }
 .form-field__error { position: absolute; top: 129px; left: 10px; color: var(--danger); font-size: 13px; font-weight: 700; }
 .form-field--error .form-field__control { border-color: var(--danger); }
@@ -220,5 +235,5 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
+  *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; }
 }
