@@ -106,6 +106,20 @@ services:
       - "5080:8080"
     restart: unless-stopped
 
+  # GalGameService：游戏生成任务、游戏包与校验（§9.3 闭环接入）
+  # Mock 模式下使用内存存储 + 内置 PlanGraph，无外部依赖；
+  # Gateway__BaseUrl 供生产模式经 Gateway 回调 KnowledgeService PlanGraph。
+  galgame-service:
+    build:
+      context: ./backend/GalGameService
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:5105
+      MOONSTONE_MODE: Mock
+      Gateway__BaseUrl: http://gateway:5000
+      Gateway__ServiceKey: ${GALGAME_SERVICE_KEY:-moonstone-local-gateway-key}
+    restart: unless-stopped
+
   gateway:
     build:
       context: ./gateway
@@ -125,7 +139,7 @@ services:
       KNOWLEDGE_SERVICE_URL: http://knowledge-service:8080
       GALGAME_SERVICE_URL: http://galgame-service:5105
       RENDER_SERVICE_URL: http://render-service:5106
-      READINESS_SERVICES: userService,authService,fileService,knowledgeService
+      READINESS_SERVICES: userService,authService,fileService,knowledgeService,galGameService
       DEFAULT_TIMEOUT_MS: 30000
       UPLOAD_TIMEOUT_MS: 120000
       CORS_ORIGINS: http://localhost:5173,http://localhost:5174
@@ -137,6 +151,8 @@ services:
       file-service:
         condition: service_healthy
       knowledge-service:
+        condition: service_healthy
+      galgame-service:
         condition: service_healthy
     ports:
       - "5000:5000"
