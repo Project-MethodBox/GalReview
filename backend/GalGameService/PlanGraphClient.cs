@@ -116,7 +116,7 @@ public sealed class PlanGraphClient
             using var timeoutCts = new CancellationTokenSource(RequestTimeout);
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
 
-            var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, linkedCts.Token);
+            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, linkedCts.Token);
 
             switch ((int)response.StatusCode)
             {

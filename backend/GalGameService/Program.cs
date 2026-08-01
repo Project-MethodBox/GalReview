@@ -63,14 +63,26 @@ var app = builder.Build();
 // 中间件
 // ============================================================================
 
-// X-Correlation-Id
+// X-Correlation-Id：校验格式并截断长度，防止头注入和日志注入
 app.Use(async (context, next) =>
 {
-    var correlationId = context.Request.Headers["X-Correlation-Id"].FirstOrDefault();
-    context.TraceIdentifier = string.IsNullOrWhiteSpace(correlationId)
-        ? Guid.NewGuid().ToString("N")
-        : correlationId;
-    context.Response.Headers["X-Correlation-Id"] = context.TraceIdentifier;
+    const int MaxCorrelationIdLength = 64;
+    var rawCorrelationId = context.Request.Headers["X-Correlation-Id"].FirstOrDefault();
+
+    string correlationId;
+    if (!string.IsNullOrWhiteSpace(rawCorrelationId)
+        && rawCorrelationId.Length <= MaxCorrelationIdLength
+        && rawCorrelationId.All(c => char.IsLetterOrDigit(c) || c == '-' || c == '_'))
+    {
+        correlationId = rawCorrelationId;
+    }
+    else
+    {
+        correlationId = Guid.NewGuid().ToString("N");
+    }
+
+    context.TraceIdentifier = correlationId;
+    context.Response.Headers["X-Correlation-Id"] = correlationId;
     await next();
 });
 
