@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
@@ -12,7 +13,6 @@ using Xunit;
 // - 中间件链（X-Correlation-Id、异常处理、Gateway 密钥验证）
 // - 端点路由与 JSON 序列化
 // - ETag / 304 协商缓存
-// - 幂等键
 // - 错误信封格式（ApiFailure）
 // ============================================================================
 
@@ -25,7 +25,7 @@ public class GalGameServiceIntegrationTests : IClassFixture<WebApplicationFactor
     private const string UserId = "7bc4918a-9079-4ea2-9e8e-369ad79a9f20";
     private static readonly Guid GoldenPackageId = Guid.Parse("f2561bb2-b88c-47ef-b0ae-8f283ff64f1b");
     private static readonly Guid MockReviewPlanId = Guid.Parse("8e812950-3311-40a7-93ab-636409df8cc2");
-    private const string MockSnapshotVersion = "plan-graph-1.0:3da5f48f";
+    private const string MockSnapshotVersion = "plan-graph-1.0:3da5f48f37ac57c91b49ee747c11e45f1a9e9e73d8e892fcd1bd1f9f3f50c620";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -45,11 +45,11 @@ public class GalGameServiceIntegrationTests : IClassFixture<WebApplicationFactor
         _client = _factory.CreateClient();
     }
 
-    private HttpClient CreateClientWithAuth(string? serviceName = null)
+    private HttpClient CreateClientWithAuth(string? serviceName = null, string userId = UserId)
     {
         var client = _factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Gateway-Key", GatewayKey);
-        client.DefaultRequestHeaders.Add("X-User-Id", UserId);
+        client.DefaultRequestHeaders.Add("X-User-Id", userId);
         if (serviceName is not null)
             client.DefaultRequestHeaders.Add("X-Service-Name", serviceName);
         return client;
@@ -122,6 +122,30 @@ public class GalGameServiceIntegrationTests : IClassFixture<WebApplicationFactor
     }
 
     [Fact]
+    public async Task GetPackageContent_BytesMatchManifestChecksumAndETag()
+    {
+        var client = CreateClientWithAuth();
+        var manifestResponse = await client.GetAsync($"/api/v1/game-packages/{GoldenPackageId}");
+        var manifest = await manifestResponse.Content.ReadFromJsonAsync<JsonElement>();
+        var expectedChecksum = manifest.GetProperty("data").GetProperty("checksum").GetString();
+
+        var contentResponse = await client.GetAsync($"/api/v1/game-packages/{GoldenPackageId}/content");
+        var contentBytes = await contentResponse.Content.ReadAsByteArrayAsync();
+        var actualChecksum = Convert.ToHexStringLower(SHA256.HashData(contentBytes));
+
+        Assert.Equal(expectedChecksum, actualChecksum);
+        Assert.Equal($"\"{expectedChecksum}\"", contentResponse.Headers.ETag?.Tag);
+    }
+
+    [Fact]
+    public async Task GetPackage_ForDifferentUser_Returns404()
+    {
+        var client = CreateClientWithAuth(userId: "4bb2a8b6-17b7-4b3b-a106-41ed23a5c763");
+        var response = await client.GetAsync($"/api/v1/game-packages/{GoldenPackageId}");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
     public async Task GetPackageContent_WithMatchingETag_Returns304()
     {
         var client = CreateClientWithAuth();
@@ -186,31 +210,43 @@ public class GalGameServiceIntegrationTests : IClassFixture<WebApplicationFactor
     }
 
     [Fact]
-    public async Task PostGeneration_IdempotencyKey_ReturnsSameJob()
+    public async Task PostGeneration_MissingStyle_Returns400()
     {
         var client = CreateClientWithAuth();
-        client.DefaultRequestHeaders.Add("Idempotency-Key", "test-idem-key-123");
 
         var body = new
         {
             reviewPlanId = MockReviewPlanId,
             snapshotVersion = MockSnapshotVersion,
-            style = "SCIENCE",
             difficulty = "ADVANCED",
             locale = "zh-CN",
             seed = 999
         };
 
-        var resp1 = await client.PostAsJsonAsync("/api/v1/game-generations", body);
-        var json1 = await resp1.Content.ReadFromJsonAsync<JsonElement>();
-        var genId1 = json1.GetProperty("data").GetProperty("generationId").GetString();
+        var response = await client.PostAsJsonAsync("/api/v1/game-generations", body);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("VALIDATION_ERROR", json.GetProperty("error").GetProperty("code").GetString());
+    }
 
-        // 相同 Idempotency-Key → 返回同一 job
-        var resp2 = await client.PostAsJsonAsync("/api/v1/game-generations", body);
-        var json2 = await resp2.Content.ReadFromJsonAsync<JsonElement>();
-        var genId2 = json2.GetProperty("data").GetProperty("generationId").GetString();
+    [Fact]
+    public async Task PostGeneration_ForDifferentPlanOwner_Returns422WithoutLeakingOwner()
+    {
+        var client = CreateClientWithAuth(userId: "4bb2a8b6-17b7-4b3b-a106-41ed23a5c763");
+        var body = new
+        {
+            reviewPlanId = MockReviewPlanId,
+            snapshotVersion = MockSnapshotVersion,
+            style = "CAMPUS",
+            difficulty = "STANDARD",
+            locale = "zh-CN"
+        };
 
-        Assert.Equal(genId1, genId2);
+        var response = await client.PostAsJsonAsync("/api/v1/game-generations", body);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("REVIEW_PLAN_NOT_FOUND", json.GetProperty("error").GetProperty("code").GetString());
+        Assert.DoesNotContain(UserId, await response.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -227,6 +263,32 @@ public class GalGameServiceIntegrationTests : IClassFixture<WebApplicationFactor
         Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
         var json = await resp.Content.ReadFromJsonAsync<JsonElement>();
         Assert.True(json.GetProperty("data").GetProperty("valid").GetBoolean());
+    }
+
+    [Fact]
+    public async Task PostValidation_InvalidPackage_Returns422WithValidationResult()
+    {
+        var client = CreateClientWithAuth(serviceName: "RenderService");
+        var body = new
+        {
+            package = new
+            {
+                schemaVersion = "1.0",
+                packageId = GoldenPackageId,
+                generatorVersion = "gala-0.1.0",
+                reviewPlanId = MockReviewPlanId,
+                snapshotVersion = MockSnapshotVersion,
+                entrySceneId = "missing",
+                scenes = Array.Empty<object>(),
+                assets = Array.Empty<object>()
+            }
+        };
+
+        var response = await client.PostAsJsonAsync("/internal/v1/game-package-validations", body);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.False(json.GetProperty("data").GetProperty("valid").GetBoolean());
+        Assert.NotEmpty(json.GetProperty("data").GetProperty("errors").EnumerateArray());
     }
 
     [Fact]

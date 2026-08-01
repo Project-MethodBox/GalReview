@@ -22,7 +22,7 @@ public class GameGeneratorTests
 
     // 与 PlanGraphClient.MockReviewPlanId / MockSnapshotVersion 一致
     private static readonly Guid MockReviewPlanId = Guid.Parse("8e812950-3311-40a7-93ab-636409df8cc2");
-    private const string MockSnapshotVersion = "plan-graph-1.0:3da5f48f";
+    private const string MockSnapshotVersion = "plan-graph-1.0:3da5f48f37ac57c91b49ee747c11e45f1a9e9e73d8e892fcd1bd1f9f3f50c620";
 
     // ------------------------------------------------------------------------
     // 测试用 PlanGraph：1 个 TARGET 节点 + 1 个 PREREQUISITE 节点
@@ -128,13 +128,14 @@ public class GameGeneratorTests
         var questionId = questionBindings[0].QuestionId!.Value;
         Assert.Contains(pkg.Scenes.SelectMany(s => s.Choices), c => c.QuestionId == questionId);
 
-        // 正确选项 scoreDelta=1，干扰项 scoreDelta=0
+        // 正确性和证据类型显式绑定；scoreDelta 只保留游戏计分策略。
         var scoredChoices = pkg.Scenes
             .SelectMany(s => s.Choices)
             .Where(c => c.QuestionId == questionId)
             .ToList();
-        Assert.Single(scoredChoices, c => c.ScoreDelta == 1);
-        Assert.All(scoredChoices.Where(c => c.ScoreDelta == 0), c => Assert.Equal(questionId, c.QuestionId));
+        Assert.Single(scoredChoices, c => c.Correct is true);
+        Assert.All(scoredChoices, c => Assert.Equal(AnswerKind.CHOICE, c.AnswerKind));
+        Assert.All(scoredChoices.Where(c => c.Correct is false), c => Assert.Equal(questionId, c.QuestionId));
     }
 
     [Fact]
@@ -224,7 +225,7 @@ public class GameGeneratorTests
     }
 
     [Fact]
-    public void Generate_NoQuestionTargetNodes_Throws()
+    public void Generate_NoQuestionTargetNodes_CreatesExplanationOnlyPackage()
     {
         // 构造一个没有 questionTarget=true 节点的 PlanGraph
         var plan = CreateMockPlanGraph() with
@@ -239,7 +240,21 @@ public class GameGeneratorTests
         };
 
         var req = CreateRequest(GameStyle.CAMPUS, Difficulty.BASIC, seed: 1);
-        Assert.Throws<ArgumentException>(() => _generator.Generate(plan, req, "u"));
+        var package = _generator.Generate(plan, req, "u");
+        var questionBindings = package.Scenes
+            .SelectMany(scene => scene.KnowledgeBindings)
+            .Where(binding => binding.Purpose == KnowledgePurpose.QUESTION)
+            .ToArray();
+        var scoringChoices = package.Scenes
+            .SelectMany(scene => scene.Choices)
+            .Where(choice => choice.Correct is not null || choice.AnswerKind is not null)
+            .ToArray();
+
+        Assert.Empty(questionBindings);
+        Assert.Empty(scoringChoices);
+        Assert.Contains(package.Scenes.SelectMany(scene => scene.KnowledgeBindings),
+            binding => binding.Purpose == KnowledgePurpose.EXPLAIN);
+        Assert.True(_validator.Validate(package).Valid);
     }
 
     [Fact]

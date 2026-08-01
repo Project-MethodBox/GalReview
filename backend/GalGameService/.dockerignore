@@ -1,0 +1,7 @@
+**
+
+!GalGame.GalGameService.csproj
+!*.cs
+!appsettings.json
+!Dockerfile
+!.dockerignore

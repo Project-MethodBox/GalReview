@@ -3,7 +3,7 @@
     "packageId":  "868d08a0-3ffd-4966-bff6-7422aad6a648",
     "generatorVersion":  "gala-0.1.0",
     "reviewPlanId":  "8e812950-3311-40a7-93ab-636409df8cc2",
-    "snapshotVersion":  "plan-graph-1.0:3da5f48f",
+    "snapshotVersion":  "plan-graph-1.0:3da5f48f37ac57c91b49ee747c11e45f1a9e9e73d8e892fcd1bd1f9f3f50c620",
     "entrySceneId":  "scene-001",
     "scenes":  [
                    {
@@ -24,7 +24,7 @@
                        "choices":  [
                                        {
                                            "choiceId":  "c-scene-001-1",
-                                           "questionId":  "c3bd304f-dc44-df55-8608-64c20672e90a",
+                                           "questionId":  "c3bd304f-dc44-4f55-8608-64c20672e90a",
                                            "text":  "准备好了，开始吧！",
                                            "nextSceneId":  "scene-002",
                                            "scoreDelta":  0,
@@ -57,7 +57,7 @@
                        "choices":  [
                                        {
                                            "choiceId":  "c-scene-002-1",
-                                           "questionId":  "b8a4c1be-db80-1759-9ecf-8f4ad0cfcfd5",
+                                           "questionId":  "b8a4c1be-db80-4759-9ecf-8f4ad0cfcfd5",
                                            "text":  "了解了，继续。",
                                            "nextSceneId":  "scene-003",
                                            "scoreDelta":  0,
@@ -90,33 +90,39 @@
                        "choices":  [
                                        {
                                            "choiceId":  "c-scene-003-d1",
-                                           "questionId":  "c3a94adf-7a32-2853-bbcf-50ef9da77458",
+                                           "questionId":  "c3a94adf-7a32-4853-bbcf-50ef9da77458",
                                            "text":  "水稻基本生长周期",
                                            "nextSceneId":  "scene-004",
                                            "scoreDelta":  0,
+                                           "answerKind":  "CHOICE",
+                                           "correct":  false,
                                            "knowledgePointId":  "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"
                                        },
                                        {
                                            "choiceId":  "c-scene-003-correct",
-                                           "questionId":  "c3a94adf-7a32-2853-bbcf-50ef9da77458",
+                                           "questionId":  "c3a94adf-7a32-4853-bbcf-50ef9da77458",
                                            "text":  "水稻分蘖期最关键的管理目标是协调群体数量与个体生长，通过水肥调控促进有效分蘖",
                                            "nextSceneId":  "scene-004",
                                            "scoreDelta":  1,
+                                           "answerKind":  "CHOICE",
+                                           "correct":  true,
                                            "knowledgePointId":  "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"
                                        },
                                        {
                                            "choiceId":  "c-scene-003-d2",
-                                           "questionId":  "c3a94adf-7a32-2853-bbcf-50ef9da77458",
+                                           "questionId":  "c3a94adf-7a32-4853-bbcf-50ef9da77458",
                                            "text":  "看似合理但存在关键缺陷",
                                            "nextSceneId":  "scene-004",
                                            "scoreDelta":  0,
+                                           "answerKind":  "CHOICE",
+                                           "correct":  false,
                                            "knowledgePointId":  "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"
                                        }
                                    ],
                        "knowledgeBindings":  [
                                                  {
                                                      "knowledgePointId":  "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",
-                                                     "questionId":  "c3a94adf-7a32-2853-bbcf-50ef9da77458",
+                                                     "questionId":  "c3a94adf-7a32-4853-bbcf-50ef9da77458",
                                                      "purpose":  "QUESTION"
                                                  }
                                              ]

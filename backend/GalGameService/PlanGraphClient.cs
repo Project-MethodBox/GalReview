@@ -1,7 +1,5 @@
 using System.Diagnostics;
-using System.Net.Http.Json;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 
 // ============================================================================
 // PlanGraph 读取客户端（§7.3.1 URGENT 跨服务阻塞项）
@@ -15,8 +13,6 @@ using System.Text.Json.Nodes;
 // 优化项：
 // - 请求耗时日志（Stopwatch）
 // - 超时保护（链接级 CancellationTokenSource）
-// - 响应体大小限制（防止上游返回异常大响应）
-// - Mock PlanGraph 静态缓存（只构造一次）
 // ============================================================================
 
 /// <summary>PlanGraph 读取结果状态</summary>
@@ -28,8 +24,12 @@ public enum PlanGraphFetchStatus
     NotFound,
     /// <summary>snapshotVersion 不匹配（409 SNAPSHOT_VERSION_CONFLICT）</summary>
     SnapshotMismatch,
-    /// <summary>上游服务不可用或返回非契约数据</summary>
-    UpstreamError,
+    /// <summary>上游按契约拒绝了请求参数（映射为 400）</summary>
+    InvalidRequest,
+    /// <summary>上游返回不可解析或违反服务契约的数据（映射为 502）</summary>
+    UpstreamContractInvalid,
+    /// <summary>上游服务或依赖暂不可用（映射为 503）</summary>
+    Unavailable,
 }
 
 /// <summary>PlanGraph 读取结果</summary>
@@ -41,7 +41,12 @@ public sealed record PlanGraphFetchResult(
     public static PlanGraphFetchResult Ok(PlanGraph graph) => new(graph, PlanGraphFetchStatus.Success, null);
     public static PlanGraphFetchResult NotFoundResult(string detail) => new(null, PlanGraphFetchStatus.NotFound, detail);
     public static PlanGraphFetchResult SnapshotMismatchResult(string detail) => new(null, PlanGraphFetchStatus.SnapshotMismatch, detail);
-    public static PlanGraphFetchResult UpstreamErrorResult(string detail) => new(null, PlanGraphFetchStatus.UpstreamError, detail);
+    public static PlanGraphFetchResult InvalidRequestResult(string detail) =>
+        new(null, PlanGraphFetchStatus.InvalidRequest, detail);
+    public static PlanGraphFetchResult UpstreamContractInvalidResult(string detail) =>
+        new(null, PlanGraphFetchStatus.UpstreamContractInvalid, detail);
+    public static PlanGraphFetchResult UnavailableResult(string detail) =>
+        new(null, PlanGraphFetchStatus.Unavailable, detail);
 }
 
 public sealed class PlanGraphClient
@@ -55,20 +60,35 @@ public sealed class PlanGraphClient
     // 额外超时：在 HttpClient 30s 超时基础上，增加 CancellationTokenSource 保护
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
 
-    // Mock 模式使用的固定 reviewPlanId / snapshotVersion（与 contract.md §7.4 一致）
+    // Mock 模式使用 contract.md §6.7 的固定 reviewPlanId / snapshotVersion
     public static readonly Guid MockReviewPlanId = Guid.Parse("8e812950-3311-40a7-93ab-636409df8cc2");
-    public const string MockSnapshotVersion = "plan-graph-1.0:3da5f48f";
+    public const string MockSnapshotVersion = "plan-graph-1.0:3da5f48f37ac57c91b49ee747c11e45f1a9e9e73d8e892fcd1bd1f9f3f50c620";
 
-    // 响应体大小上限：PlanGraph 通常 < 1 MB，10 MB 是防御性上限
-    private const long MaxResponseBytes = 10 * 1024 * 1024;
-
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
-        PropertyNameCaseInsensitive = true,
+        PropertyNameCaseInsensitive = false,
     };
 
-    // Mock PlanGraph 只构造一次（静态缓存）
-    private static readonly PlanGraph CachedMockPlanGraph = BuildMockPlanGraph();
+    private static readonly string[] SuccessEnvelopeProperties = ["data", "meta", "traceId"];
+    private static readonly string[] FailureEnvelopeProperties = ["data", "error", "traceId"];
+    private static readonly string[] ApiErrorProperties = ["code", "message", "details"];
+    private static readonly string[] PlanGraphProperties =
+    [
+        "schemaVersion", "reviewPlanId", "type", "status", "graphId", "graphVersion",
+        "ownerUserId", "selectedChapterIds", "snapshotVersion", "algorithmVersion",
+        "nodes", "edges", "rootPointIds", "estimatedQuestionCount", "estimatedCoverage",
+        "totalWeight", "createdAt", "expiresAt",
+    ];
+    private static readonly string[] PlanNodeProperties =
+    [
+        "pointId", "chapterId", "title", "summary", "tags", "masteryScore", "role",
+        "weight", "selectionReason", "dependencyDepth", "questionTarget",
+        "outsideRequestedChapters", "coversPointIds", "supportsPointIds",
+    ];
+    private static readonly string[] PlanEdgeProperties =
+    [
+        "fromPointId", "toPointId", "type", "confidence", "influenceWeight",
+    ];
 
     public PlanGraphClient(
         IHttpClientFactory httpClientFactory,
@@ -93,7 +113,7 @@ public sealed class PlanGraphClient
         string traceId,
         CancellationToken cancellationToken)
     {
-        // Mock 模式：返回内置 PlanGraph（零分配，使用静态缓存）
+        // Mock 模式：每次构造独立快照，避免可变数组污染后续读取。
         if (_isMockMode)
         {
             return GetMockGraph(reviewPlanId, snapshotVersion);
@@ -121,35 +141,75 @@ public sealed class PlanGraphClient
             switch ((int)response.StatusCode)
             {
                 case 200:
-                    return await HandleSuccessResponse(response, reviewPlanId, traceId, sw, linkedCts.Token);
+                    return await HandleSuccessResponse(response, reviewPlanId, snapshotVersion, linkedCts.Token);
 
                 case 400:
-                    var badRequest = await response.Content.ReadFromJsonAsync<ApiFailure>(JsonOptions, linkedCts.Token);
+                    var badRequest = await ReadFailureResponse(response, linkedCts.Token);
+                    if (badRequest is null || badRequest.Code != "VALIDATION_ERROR")
+                    {
+                        return PlanGraphFetchResult.UpstreamContractInvalidResult(
+                            "KnowledgeService 返回的 400 错误响应不符合契约");
+                    }
                     _logger.LogWarning("PlanGraph fetch returned 400. CorrelationId: {TraceId}, Detail: {Detail}, Elapsed: {Elapsed}ms",
-                        traceId, badRequest?.Error.Message, sw.ElapsedMilliseconds);
-                    return PlanGraphFetchResult.UpstreamErrorResult(
-                        badRequest?.Error.Message ?? "请求参数错误");
+                        traceId, badRequest.Message, sw.ElapsedMilliseconds);
+                    return PlanGraphFetchResult.InvalidRequestResult(badRequest.Message);
 
                 case 403:
+                    var forbidden = await ReadFailureResponse(response, linkedCts.Token);
+                    if (forbidden is null)
+                    {
+                        return PlanGraphFetchResult.UpstreamContractInvalidResult(
+                            "KnowledgeService 返回的 403 错误响应不符合契约");
+                    }
                     _logger.LogError("GalGameService service identity rejected by Gateway. CorrelationId: {TraceId}, Elapsed: {Elapsed}ms",
                         traceId, sw.ElapsedMilliseconds);
-                    return PlanGraphFetchResult.UpstreamErrorResult("服务身份被 Gateway 拒绝");
+                    return PlanGraphFetchResult.UnavailableResult(forbidden.Message);
 
                 case 404:
+                    var notFound = await ReadFailureResponse(response, linkedCts.Token);
+                    if (notFound is null || notFound.Code != "REVIEW_PLAN_NOT_FOUND")
+                    {
+                        return PlanGraphFetchResult.UpstreamContractInvalidResult(
+                            "KnowledgeService 返回的 404 错误响应不符合契约");
+                    }
                     _logger.LogInformation("PlanGraph not found for reviewPlanId={ReviewPlanId}. CorrelationId: {TraceId}, Elapsed: {Elapsed}ms",
                         reviewPlanId, traceId, sw.ElapsedMilliseconds);
-                    return PlanGraphFetchResult.NotFoundResult($"复习计划 {reviewPlanId} 不存在");
+                    return PlanGraphFetchResult.NotFoundResult(notFound.Message);
 
                 case 409:
+                    var conflict = await ReadFailureResponse(response, linkedCts.Token);
+                    if (conflict is null || conflict.Code != "SNAPSHOT_VERSION_CONFLICT")
+                    {
+                        return PlanGraphFetchResult.UpstreamContractInvalidResult(
+                            "KnowledgeService 返回的 409 错误响应不符合契约");
+                    }
                     _logger.LogInformation("Snapshot version mismatch for reviewPlanId={ReviewPlanId}, snapshotVersion={SnapshotVersion}. CorrelationId: {TraceId}",
                         reviewPlanId, snapshotVersion, traceId);
-                    return PlanGraphFetchResult.SnapshotMismatchResult(
-                        $"snapshotVersion \"{snapshotVersion}\" 与 KnowledgeService 中的 PlanGraph 不一致");
+                    return PlanGraphFetchResult.SnapshotMismatchResult(conflict.Message);
+
+                case 502:
+                    _logger.LogError("KnowledgeService or Gateway reported an upstream contract failure. CorrelationId: {TraceId}, Elapsed: {Elapsed}ms",
+                        traceId, sw.ElapsedMilliseconds);
+                    return PlanGraphFetchResult.UpstreamContractInvalidResult(
+                        "KnowledgeService 上游响应不符合契约");
+
+                case >= 500:
+                case 408:
+                case 429:
+                    var unavailable = await ReadFailureResponse(response, linkedCts.Token);
+                    if (unavailable is null)
+                    {
+                        return PlanGraphFetchResult.UpstreamContractInvalidResult(
+                            $"KnowledgeService 返回的 {(int)response.StatusCode} 错误响应不符合契约");
+                    }
+                    _logger.LogError("KnowledgeService unavailable with status {Status}. CorrelationId: {TraceId}, Elapsed: {Elapsed}ms",
+                        response.StatusCode, traceId, sw.ElapsedMilliseconds);
+                    return PlanGraphFetchResult.UnavailableResult(unavailable.Message);
 
                 default:
                     _logger.LogError("Unexpected status {Status} from KnowledgeService. CorrelationId: {TraceId}, Elapsed: {Elapsed}ms",
                         response.StatusCode, traceId, sw.ElapsedMilliseconds);
-                    return PlanGraphFetchResult.UpstreamErrorResult(
+                    return PlanGraphFetchResult.UpstreamContractInvalidResult(
                         $"KnowledgeService 返回意外状态码 {(int)response.StatusCode}");
             }
         }
@@ -160,67 +220,465 @@ public sealed class PlanGraphClient
         catch (OperationCanceledException)
         {
             _logger.LogError("PlanGraph fetch timed out after {Timeout}s. CorrelationId: {TraceId}", RequestTimeout.TotalSeconds, traceId);
-            return PlanGraphFetchResult.UpstreamErrorResult($"KnowledgeService 请求超时（{RequestTimeout.TotalSeconds:F0}s）");
+            return PlanGraphFetchResult.UnavailableResult($"KnowledgeService 请求超时（{RequestTimeout.TotalSeconds:F0}s）");
         }
         catch (HttpRequestException ex)
         {
             _logger.LogError(ex, "Cannot reach KnowledgeService via Gateway. CorrelationId: {TraceId}, Elapsed: {Elapsed}ms",
                 traceId, sw.ElapsedMilliseconds);
-            return PlanGraphFetchResult.UpstreamErrorResult("无法连接 KnowledgeService");
+            return PlanGraphFetchResult.UnavailableResult("无法连接 KnowledgeService");
         }
-        catch (JsonException ex)
+        catch (Exception ex) when (ex is JsonException or NotSupportedException)
         {
             _logger.LogError(ex, "PlanGraph response is not valid JSON. CorrelationId: {TraceId}, Elapsed: {Elapsed}ms",
                 traceId, sw.ElapsedMilliseconds);
-            return PlanGraphFetchResult.UpstreamErrorResult("KnowledgeService 响应不可解析");
+            return PlanGraphFetchResult.UpstreamContractInvalidResult("KnowledgeService 响应不可解析");
         }
     }
 
-    /// <summary>处理 200 响应：解析 ApiSuccess 信封中的 data 字段</summary>
+    /// <summary>处理 200 响应：严格解析 ApiSuccess 信封及其中的 PlanGraph。</summary>
     private static async Task<PlanGraphFetchResult> HandleSuccessResponse(
-        HttpResponseMessage response, Guid reviewPlanId, string traceId, Stopwatch sw, CancellationToken ct)
+        HttpResponseMessage response, Guid reviewPlanId, string snapshotVersion, CancellationToken ct)
     {
-        // 检查 Content-Length 防止异常大响应
-        if (response.Content.Headers.ContentLength is { } contentLength && contentLength > MaxResponseBytes)
-        {
-            return PlanGraphFetchResult.UpstreamErrorResult(
-                $"KnowledgeService 响应体过大（{contentLength} bytes > {MaxResponseBytes} bytes 上限）");
-        }
-
         var json = await response.Content.ReadAsStringAsync(ct);
 
-        // 二次检查：实际读取的字节数（Content-Length 可能缺失）
-        if (json.Length > MaxResponseBytes)
-        {
-            return PlanGraphFetchResult.UpstreamErrorResult(
-                $"KnowledgeService 响应体过大（{json.Length} chars > {MaxResponseBytes} chars 上限）");
-        }
-
-        PlanGraph? graphData;
+        JsonDocument document;
         try
         {
-            var node = JsonNode.Parse(json);
-            graphData = node?["data"]?.Deserialize<PlanGraph>(JsonOptions);
+            document = JsonDocument.Parse(json);
         }
         catch (JsonException)
         {
-            return PlanGraphFetchResult.UpstreamErrorResult("KnowledgeService 返回的 data 字段无法解析为 PlanGraph");
+            return PlanGraphFetchResult.UpstreamContractInvalidResult("KnowledgeService 返回的 200 响应不是有效 JSON");
         }
 
-        if (graphData is null)
+        using (document)
         {
-            return PlanGraphFetchResult.UpstreamErrorResult("KnowledgeService 返回空数据");
-        }
+            var root = document.RootElement;
+            if (!HasRequiredProperties(root, SuccessEnvelopeProperties)
+                || !root.TryGetProperty("meta", out var meta)
+                || meta.ValueKind != JsonValueKind.Object
+                || meta.EnumerateObject().Any()
+                || !root.TryGetProperty("traceId", out var responseTraceId)
+                || responseTraceId.ValueKind != JsonValueKind.String
+                || string.IsNullOrWhiteSpace(responseTraceId.GetString())
+                || !root.TryGetProperty("data", out var data)
+                || !HasValidPlanGraphJsonShape(data))
+            {
+                return PlanGraphFetchResult.UpstreamContractInvalidResult(
+                    "KnowledgeService 返回的成功响应信封或 PlanGraph 结构不符合契约");
+            }
 
-        // 校验返回的 PlanGraph 关键字段
-        if (graphData.ReviewPlanId != reviewPlanId)
-        {
-            return PlanGraphFetchResult.UpstreamErrorResult(
-                $"KnowledgeService 返回的 reviewPlanId({graphData.ReviewPlanId}) 与请求的({reviewPlanId})不一致");
-        }
+            PlanGraph? graphData;
+            try
+            {
+                graphData = data.Deserialize<PlanGraph>(JsonOptions);
+            }
+            catch (Exception exception) when (exception is JsonException or NotSupportedException)
+            {
+                return PlanGraphFetchResult.UpstreamContractInvalidResult(
+                    "KnowledgeService 返回的 data 字段无法解析为 PlanGraph");
+            }
 
-        return PlanGraphFetchResult.Ok(graphData);
+            if (graphData is null)
+            {
+                return PlanGraphFetchResult.UpstreamContractInvalidResult("KnowledgeService 返回空数据");
+            }
+
+            if (graphData.ReviewPlanId != reviewPlanId)
+            {
+                return PlanGraphFetchResult.UpstreamContractInvalidResult(
+                    $"KnowledgeService 返回的 reviewPlanId({graphData.ReviewPlanId}) 与请求的({reviewPlanId})不一致");
+            }
+
+            if (!string.Equals(graphData.SnapshotVersion, snapshotVersion, StringComparison.Ordinal))
+            {
+                return PlanGraphFetchResult.UpstreamContractInvalidResult(
+                    $"KnowledgeService 返回的 snapshotVersion({graphData.SnapshotVersion}) 与请求的({snapshotVersion})不一致");
+            }
+
+            if (!HasValidPlanGraph(graphData))
+            {
+                return PlanGraphFetchResult.UpstreamContractInvalidResult(
+                    "KnowledgeService 返回的 PlanGraph 关键字段或引用关系不符合契约");
+            }
+
+            return PlanGraphFetchResult.Ok(graphData);
+        }
     }
+
+    private static async Task<ValidatedFailure?> ReadFailureResponse(
+        HttpResponseMessage response,
+        CancellationToken cancellationToken)
+    {
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            if (!HasRequiredProperties(root, FailureEnvelopeProperties)
+                || !root.TryGetProperty("data", out var data)
+                || data.ValueKind != JsonValueKind.Null
+                || !root.TryGetProperty("traceId", out var traceId)
+                || traceId.ValueKind != JsonValueKind.String
+                || string.IsNullOrWhiteSpace(traceId.GetString())
+                || !root.TryGetProperty("error", out var error)
+                || !HasRequiredProperties(error, ApiErrorProperties)
+                || !error.TryGetProperty("code", out var code)
+                || code.ValueKind != JsonValueKind.String
+                || string.IsNullOrWhiteSpace(code.GetString())
+                || !error.TryGetProperty("message", out var message)
+                || message.ValueKind != JsonValueKind.String
+                || string.IsNullOrWhiteSpace(message.GetString())
+                || !error.TryGetProperty("details", out var details)
+                || details.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            return new ValidatedFailure(code.GetString()!, message.GetString()!);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static bool HasValidPlanGraphJsonShape(JsonElement data)
+    {
+        if (!HasRequiredProperties(data, PlanGraphProperties)
+            || !HasContractUuid(data, "reviewPlanId")
+            || !HasContractUuid(data, "graphId")
+            || !HasContractUuid(data, "ownerUserId")
+            || !HasContractUuidArray(data, "selectedChapterIds")
+            || !HasContractUuidArray(data, "rootPointIds")
+            || !data.TryGetProperty("nodes", out var nodes)
+            || nodes.ValueKind != JsonValueKind.Array
+            || !data.TryGetProperty("edges", out var edges)
+            || edges.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        foreach (var node in nodes.EnumerateArray())
+        {
+            if (!HasRequiredProperties(node, PlanNodeProperties)
+                || !HasContractUuid(node, "pointId")
+                || !HasContractUuid(node, "chapterId")
+                || !HasContractUuidArray(node, "coversPointIds")
+                || !HasContractUuidArray(node, "supportsPointIds"))
+            {
+                return false;
+            }
+        }
+
+        foreach (var edge in edges.EnumerateArray())
+        {
+            if (!HasRequiredProperties(edge, PlanEdgeProperties)
+                || !HasContractUuid(edge, "fromPointId")
+                || !HasContractUuid(edge, "toPointId"))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool HasRequiredProperties(JsonElement element, IReadOnlyCollection<string> requiredProperties)
+    {
+        if (element.ValueKind != JsonValueKind.Object)
+            return false;
+
+        var required = requiredProperties.ToHashSet(StringComparer.Ordinal);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var property in element.EnumerateObject())
+        {
+            if (required.Contains(property.Name) && !seen.Add(property.Name))
+                return false;
+        }
+
+        return seen.Count == required.Count;
+    }
+
+    private static bool HasContractUuid(JsonElement element, string propertyName)
+    {
+        return element.TryGetProperty(propertyName, out var value)
+            && IsContractUuid(value);
+    }
+
+    private static bool HasContractUuidArray(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var values)
+            || values.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        return values.EnumerateArray().All(IsContractUuid);
+    }
+
+    private static bool IsContractUuid(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.String)
+            return false;
+
+        var raw = value.GetString();
+        return raw is { Length: 36 }
+            && raw[14] == '4'
+            && raw[19] is '8' or '9' or 'a' or 'b'
+            && Guid.TryParseExact(raw, "D", out var parsed)
+            && parsed != Guid.Empty
+            && string.Equals(raw, parsed.ToString("D"), StringComparison.Ordinal);
+    }
+
+    private static bool HasValidPlanGraph(PlanGraph graph)
+    {
+        if (!string.Equals(graph.SchemaVersion, "1.0", StringComparison.Ordinal)
+            || graph.ReviewPlanId == Guid.Empty
+            || graph.GraphId == Guid.Empty
+            || graph.GraphVersion < 1
+            || graph.OwnerUserId == Guid.Empty
+            || graph.SelectedChapterIds is null
+            || graph.SelectedChapterIds.Any(id => id == Guid.Empty)
+            || graph.SelectedChapterIds.Distinct().Count() != graph.SelectedChapterIds.Length
+            || string.IsNullOrWhiteSpace(graph.SnapshotVersion)
+            || graph.Nodes is null
+            || graph.Nodes.Length == 0
+            || graph.Edges is null
+            || graph.RootPointIds is null
+            || graph.RootPointIds.Length == 0
+            || graph.EstimatedQuestionCount < 0
+            || !IsUnitInterval(graph.EstimatedCoverage)
+            || graph.TotalWeight != 1d
+            || graph.CreatedAt == default
+            || graph.ExpiresAt == default
+            || graph.CreatedAt.Offset != TimeSpan.Zero
+            || graph.ExpiresAt.Offset != TimeSpan.Zero
+            || graph.ExpiresAt <= graph.CreatedAt
+            || graph.Status is not ("OPEN" or "COMPLETED" or "EXPIRED"))
+        {
+            return false;
+        }
+
+        var expectedAlgorithmVersion = graph.Type switch
+        {
+            "ASSESSMENT" => "assessment-planner-v1",
+            "LEARNING" => "learning-planner-v1",
+            _ => null,
+        };
+        if (expectedAlgorithmVersion is null
+            || !string.Equals(graph.AlgorithmVersion, expectedAlgorithmVersion, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var pointIds = new HashSet<Guid>();
+        var totalWeight = 0d;
+        foreach (var node in graph.Nodes)
+        {
+            if (node is null
+                || node.PointId == Guid.Empty
+                || node.ChapterId == Guid.Empty
+                || !pointIds.Add(node.PointId)
+                || string.IsNullOrWhiteSpace(node.Title)
+                || node.Summary is null
+                || node.Tags is null
+                || node.Tags.Any(tag => tag is null)
+                || !double.IsFinite(node.MasteryScore)
+                || node.MasteryScore is < 0 or > 100
+                || node.Role is not ("TARGET" or "PREREQUISITE" or "CONTEXT")
+                || !IsUnitInterval(node.Weight)
+                || string.IsNullOrWhiteSpace(node.SelectionReason)
+                || node.DependencyDepth < 0
+                || node.CoversPointIds is null
+                || node.SupportsPointIds is null
+                || node.CoversPointIds.Any(id => id == Guid.Empty)
+                || node.SupportsPointIds.Any(id => id == Guid.Empty))
+            {
+                return false;
+            }
+
+            totalWeight += node.Weight;
+        }
+
+        if (Math.Abs(totalWeight - 1d) > 0.000001d)
+            return false;
+
+        if (graph.Nodes.Any(node =>
+                node.CoversPointIds.Any(id => !pointIds.Contains(id))
+                || node.SupportsPointIds.Any(id => !pointIds.Contains(id))))
+        {
+            return false;
+        }
+
+        if (graph.RootPointIds.Any(id => id == Guid.Empty || !pointIds.Contains(id))
+            || graph.RootPointIds.Distinct().Count() != graph.RootPointIds.Length)
+        {
+            return false;
+        }
+
+        if (graph.Type == "ASSESSMENT")
+        {
+            var questionTargetIds = graph.Nodes
+                .Where(node => node.QuestionTarget)
+                .Select(node => node.PointId)
+                .ToHashSet();
+            if (!questionTargetIds.SetEquals(graph.RootPointIds))
+                return false;
+        }
+
+        var edgeKeys = new HashSet<(Guid From, Guid To, string Type)>();
+        foreach (var edge in graph.Edges)
+        {
+            if (edge is null
+                || edge.FromPointId == Guid.Empty
+                || edge.ToPointId == Guid.Empty
+                || edge.FromPointId == edge.ToPointId
+                || !pointIds.Contains(edge.FromPointId)
+                || !pointIds.Contains(edge.ToPointId)
+                || edge.Type is not ("PREREQUISITE" or "RELATED" or "CONTRASTS")
+                || !IsUnitInterval(edge.Confidence)
+                || !IsUnitInterval(edge.InfluenceWeight)
+                || !edgeKeys.Add((edge.FromPointId, edge.ToPointId, edge.Type)))
+            {
+                return false;
+            }
+        }
+
+        if (!HasAcyclicPrerequisiteGraph(pointIds, graph.Edges))
+            return false;
+
+        if (graph.Type == "LEARNING" && !HasValidLearningStructure(graph))
+            return false;
+
+        return true;
+    }
+
+    private static bool HasAcyclicPrerequisiteGraph(
+        IReadOnlySet<Guid> pointIds,
+        IEnumerable<PlanEdge> edges)
+    {
+        var indegree = pointIds.ToDictionary(pointId => pointId, _ => 0);
+        var adjacency = new Dictionary<Guid, List<Guid>>();
+        foreach (var edge in edges.Where(edge => edge.Type == "PREREQUISITE"))
+        {
+            if (!adjacency.TryGetValue(edge.FromPointId, out var nextIds))
+            {
+                nextIds = [];
+                adjacency[edge.FromPointId] = nextIds;
+            }
+
+            nextIds.Add(edge.ToPointId);
+            indegree[edge.ToPointId]++;
+        }
+
+        var ready = new Queue<Guid>(indegree.Where(pair => pair.Value == 0).Select(pair => pair.Key));
+        var visitedCount = 0;
+        while (ready.TryDequeue(out var current))
+        {
+            visitedCount++;
+            if (!adjacency.TryGetValue(current, out var nextIds))
+                continue;
+
+            foreach (var nextId in nextIds)
+            {
+                indegree[nextId]--;
+                if (indegree[nextId] == 0)
+                    ready.Enqueue(nextId);
+            }
+        }
+
+        return visitedCount == pointIds.Count;
+    }
+
+    private static bool HasValidLearningStructure(PlanGraph graph)
+    {
+        if (graph.SelectedChapterIds.Length == 0)
+            return false;
+
+        var selectedChapters = graph.SelectedChapterIds.ToHashSet();
+        var targets = graph.Nodes
+            .Where(node => node.Role == "TARGET")
+            .Select(node => node.PointId)
+            .ToHashSet();
+        if (targets.Count == 0)
+            return false;
+
+        var outsideWeight = 0d;
+        foreach (var node in graph.Nodes)
+        {
+            var isOutsideSelectedChapters = !selectedChapters.Contains(node.ChapterId);
+            if (node.OutsideRequestedChapters != isOutsideSelectedChapters
+                || (node.Role == "TARGET" && isOutsideSelectedChapters)
+                || (isOutsideSelectedChapters && node.Role != "PREREQUISITE"))
+            {
+                return false;
+            }
+
+            if (isOutsideSelectedChapters)
+                outsideWeight += node.Weight;
+        }
+
+        if (outsideWeight > 0.300001d)
+            return false;
+
+        if (graph.RootPointIds.Any(rootId =>
+                !targets.Contains(rootId)
+                || !selectedChapters.Contains(graph.Nodes.Single(node => node.PointId == rootId).ChapterId)))
+        {
+            return false;
+        }
+
+        var prerequisiteAdjacency = graph.Edges
+            .Where(edge => edge.Type == "PREREQUISITE")
+            .GroupBy(edge => edge.FromPointId)
+            .ToDictionary(group => group.Key, group => group.Select(edge => edge.ToPointId).ToArray());
+
+        foreach (var prerequisite in graph.Nodes.Where(node => node.Role == "PREREQUISITE"))
+        {
+            if (prerequisite.SupportsPointIds.Length == 0
+                || prerequisite.SupportsPointIds.Any(targetId =>
+                    !targets.Contains(targetId)
+                    || !CanReachPoint(prerequisite.PointId, targetId, prerequisiteAdjacency)))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool CanReachPoint(
+        Guid start,
+        Guid target,
+        IReadOnlyDictionary<Guid, Guid[]> adjacency)
+    {
+        var pending = new Stack<Guid>();
+        var visited = new HashSet<Guid> { start };
+        pending.Push(start);
+
+        while (pending.TryPop(out var current))
+        {
+            if (!adjacency.TryGetValue(current, out var nextIds))
+                continue;
+
+            foreach (var nextId in nextIds)
+            {
+                if (nextId == target)
+                    return true;
+                if (visited.Add(nextId))
+                    pending.Push(nextId);
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsUnitInterval(double value) =>
+        double.IsFinite(value) && value is >= 0d and <= 1d;
+
+    private sealed record ValidatedFailure(string Code, string Message);
 
     /// <summary>
     /// 返回内置 Mock PlanGraph。
@@ -237,18 +695,18 @@ public sealed class PlanGraphClient
             return PlanGraphFetchResult.SnapshotMismatchResult(
                 $"Mock 模式下仅支持 snapshotVersion={MockSnapshotVersion}");
 
-        return PlanGraphFetchResult.Ok(CachedMockPlanGraph);
+        return PlanGraphFetchResult.Ok(BuildMockPlanGraph());
     }
 
     /// <summary>
-    /// 构造内置 Mock PlanGraph（数据对应 contract.md §7.4 最小游戏包 Mock 的来源计划）。
+    /// 构造内置 Mock PlanGraph（逐字段对应 contract.md §6.7 PlanGraph Mock）。
     /// 包含 1 个 questionTarget=true 的 TARGET 节点和 1 个 PREREQUISITE 节点。
     /// </summary>
     private static PlanGraph BuildMockPlanGraph()
     {
         var targetPointId = Guid.Parse("d1adc45a-52db-4de2-9cf7-02e1ac0d53cb");
         var prereqPointId = Guid.Parse("84f7d873-e573-4689-b18d-6f82c745d1bf");
-        var chapterId = Guid.Parse("a1b2c3d4-e5f6-7890-abcd-ef1234567890");
+        var chapterId = Guid.Parse("7623c5ae-f377-4247-aaf5-bf73378e74ef");
         var graphId = Guid.Parse("b45d8f8f-4c55-4f28-9de6-2ad7dbb52dc0");
         var ownerUserId = Guid.Parse("7bc4918a-9079-4ea2-9e8e-369ad79a9f20");
 
@@ -257,29 +715,29 @@ public sealed class PlanGraphClient
             new(
                 PointId: prereqPointId,
                 ChapterId: chapterId,
-                Title: "水稻基本生长周期",
-                Summary: "水稻从播种到成熟的完整生长周期，包括幼苗期、分蘖期、拔节期、抽穗期和成熟期。",
-                Tags: new[] { "水稻", "生长周期" },
+                Title: "作物群体与个体关系",
+                Summary: "群体数量与单株生长之间存在资源竞争和补偿关系。",
+                Tags: new[] { "群体结构", "基础" },
                 MasteryScore: 0,
                 Role: "PREREQUISITE",
                 Weight: 0.5,
-                SelectionReason: "PREREQUISITE_FOR_REQUESTED_TARGET",
-                DependencyDepth: 0,
+                SelectionReason: "MAX_PRODUCT_PREREQUISITE_PATH",
+                DependencyDepth: 1,
                 QuestionTarget: false,
                 OutsideRequestedChapters: false,
-                CoversPointIds: Array.Empty<Guid>(),
+                CoversPointIds: new[] { prereqPointId, targetPointId },
                 SupportsPointIds: new[] { targetPointId }),
             new(
                 PointId: targetPointId,
                 ChapterId: chapterId,
-                Title: "水稻分蘖期管理",
-                Summary: "水稻分蘖期最关键的管理目标是协调群体数量与个体生长，通过水肥调控促进有效分蘖。",
+                Title: "水稻分蘖期管理目标",
+                Summary: "协调群体数量与个体生长，形成合理群体结构。",
                 Tags: new[] { "水稻", "分蘖期" },
                 MasteryScore: 0,
                 Role: "TARGET",
                 Weight: 0.5,
                 SelectionReason: "REQUESTED_CHAPTER_FORGETTING_RISK",
-                DependencyDepth: 1,
+                DependencyDepth: 0,
                 QuestionTarget: true,
                 OutsideRequestedChapters: false,
                 CoversPointIds: new[] { targetPointId },
@@ -299,14 +757,14 @@ public sealed class PlanGraphClient
         return new PlanGraph(
             SchemaVersion: "1.0",
             ReviewPlanId: MockReviewPlanId,
-            Type: "ASSESSMENT",
+            Type: "LEARNING",
             Status: "OPEN",
             GraphId: graphId,
             GraphVersion: 1,
             OwnerUserId: ownerUserId,
             SelectedChapterIds: new[] { chapterId },
             SnapshotVersion: MockSnapshotVersion,
-            AlgorithmVersion: "assessment-planner-v1",
+            AlgorithmVersion: "learning-planner-v1",
             Nodes: nodes,
             Edges: edges,
             RootPointIds: new[] { targetPointId },

@@ -32,11 +32,11 @@ public enum JobStatus { QUEUED, RUNNING, SUCCEEDED, FAILED }
 
 /// <summary>POST /api/v1/game-generations 请求体</summary>
 public sealed record GameGenerationRequest(
-    Guid ReviewPlanId,
-    string SnapshotVersion,
-    GameStyle Style,
-    Difficulty Difficulty,
-    string Locale,
+    [property: JsonRequired] Guid ReviewPlanId,
+    [property: JsonRequired] string SnapshotVersion,
+    [property: JsonRequired] GameStyle Style,
+    [property: JsonRequired] Difficulty Difficulty,
+    [property: JsonRequired] string Locale,
     long? Seed);
 
 /// <summary>生成任务（GET/POST /api/v1/game-generations 响应）</summary>
@@ -97,8 +97,13 @@ public sealed record Choice(
     Guid QuestionId,
     string Text,
     string? NextSceneId,
-    int ScoreDelta,
-    Guid KnowledgePointId);
+    [property: JsonRequired] double ScoreDelta,
+    Guid KnowledgePointId,
+    AnswerKind? AnswerKind = null,
+    bool? Correct = null);
+
+/// <summary>作答类型；与 KnowledgeService/RenderService 的 AnswerResult 契约一致。</summary>
+public enum AnswerKind { CHOICE, FILL_BLANK, TRUE_FALSE, SHORT_ANSWER, OTHER }
 
 /// <summary>知识绑定用途</summary>
 public enum KnowledgePurpose { EXPLAIN, QUESTION, FEEDBACK }
@@ -107,20 +112,20 @@ public enum KnowledgePurpose { EXPLAIN, QUESTION, FEEDBACK }
 public sealed record KnowledgeBinding(
     Guid KnowledgePointId,
     Guid? QuestionId,
-    KnowledgePurpose Purpose);
+    KnowledgePurpose? Purpose);
 
 /// <summary>资源类型</summary>
 public enum AssetType { BACKGROUND, CHARACTER, AUDIO, OTHER }
 
 /// <summary>资源引用</summary>
-public sealed record AssetRef(string AssetId, AssetType Type, string Uri);
+public sealed record AssetRef(string AssetId, AssetType? Type, string Uri);
 
 // ============================================================================
 // 校验类型
 // ============================================================================
 
 /// <summary>POST /internal/v1/game-package-validations 请求体</summary>
-public sealed record GamePackageValidationRequest(GamePackage Package);
+public sealed record GamePackageValidationRequest(GamePackage? Package);
 
 /// <summary>校验问题</summary>
 public sealed record ValidationIssue(string Path, string Code, string Message);
@@ -162,7 +167,7 @@ public sealed record PlanNode(
     string Title,
     string Summary,
     string[] Tags,
-    int MasteryScore,
+    double MasteryScore,
     string Role,
     double Weight,
     string SelectionReason,

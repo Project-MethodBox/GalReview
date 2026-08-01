@@ -6,7 +6,7 @@ using System.Text;
 //
 // 从不可变 PlanGraph 生成符合 schema 1.0 的 GamePackage。
 // - 仅为 PlanNode.questionTarget=true 的节点生成计分题目
-// - questionId 确定性生成（UUID v5：相同 pointId + seed → 相同 questionId）
+// - questionId 确定性生成且输出满足公共 UUID v4 契约
 // - 按 style（CAMPUS/FANTASY/SCIENCE）生成剧情模板
 // - 按 difficulty（BASIC/STANDARD/ADVANCED）调整选项数量和讲解深度
 // ============================================================================
@@ -33,7 +33,7 @@ public sealed class GameGenerator
             EntryEmotion: "cheerful",
             QuestionIntro: "来，看看这道题你掌握得怎么样？",
             EndingSceneTitle: "复习结束",
-            EndingDialogue: "做得不错！看来这些知识点你已经掌握了。"),
+            EndingDialogue: "本轮复习内容已经完成，稍后可以查看学习记录。"),
         [GameStyle.FANTASY] = new StyleTemplate(
             GuideSpeaker: "精灵导师艾莉娅",
             EntrySceneTitle: "魔法学院的试炼",
@@ -41,7 +41,7 @@ public sealed class GameGenerator
             EntryEmotion: "mystical",
             QuestionIntro: "魔法的试炼开始了，请回答这个问题：",
             EndingSceneTitle: "试炼完成",
-            EndingDialogue: "你的智慧之光闪耀夺目，试炼圆满完成！"),
+            EndingDialogue: "知识之塔的本轮试炼已经完成！"),
         [GameStyle.SCIENCE] = new StyleTemplate(
             GuideSpeaker: "NEXUS",
             EntrySceneTitle: "空间站知识模块",
@@ -49,7 +49,7 @@ public sealed class GameGenerator
             EntryEmotion: "calm",
             QuestionIntro: "系统已生成评估问题，请作答：",
             EndingSceneTitle: "学习模块结束",
-            EndingDialogue: "学习数据已记录。你的知识掌握度持续提升中。"),
+            EndingDialogue: "本轮学习内容已完成，作答结果将由复习服务记录。"),
     };
 
     public GameGenerator(GamePackageValidator validator, ILogger<GameGenerator> logger)
@@ -62,11 +62,17 @@ public sealed class GameGenerator
     /// 从 PlanGraph 生成游戏包。
     /// </summary>
     /// <exception cref="ArgumentNullException">plan 或 req 为 null</exception>
-    /// <exception cref="ArgumentException">PlanGraph 无 questionTarget=true 节点</exception>
+    /// <exception cref="ArgumentException">PlanGraph 为空或与请求快照不一致</exception>
     public GamePackage Generate(PlanGraph plan, GameGenerationRequest req, string ownerUserId)
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(req);
+
+        if (plan.ReviewPlanId != req.ReviewPlanId
+            || !string.Equals(plan.SnapshotVersion, req.SnapshotVersion, StringComparison.Ordinal))
+        {
+            throw new ArgumentException("PlanGraph 与生成请求的 reviewPlanId/snapshotVersion 不一致", nameof(plan));
+        }
 
         // 空值安全：plan.Nodes 可能为 null（反序列化空数组时）
         var nodes = plan.Nodes ?? Array.Empty<PlanNode>();
@@ -78,10 +84,6 @@ public sealed class GameGenerator
         // 1. 筛选节点
         var targetNodes = nodes.Where(n => n.QuestionTarget).ToList();
         var explainNodes = nodes.Where(n => !n.QuestionTarget).ToList();
-
-        if (targetNodes.Count == 0)
-            throw new ArgumentException(
-                "PlanGraph 中没有 questionTarget=true 的节点，无法生成计分题目", nameof(plan));
 
         // 2. 为每个 target 节点生成确定性 questionId
         var questions = targetNodes.Select(n => new QuestionSpec(
@@ -95,7 +97,7 @@ public sealed class GameGenerator
         // 4. 生成场景序列
         var scenes = new List<Scene>();
         var sceneIndex = 0;
-        var primaryPointId = targetNodes[0].PointId;
+        var primaryPointId = targetNodes.FirstOrDefault()?.PointId ?? nodes[0].PointId;
 
         // 4a. 开场场景
         scenes.Add(CreateEntryScene(template, plan, primaryPointId, ref sceneIndex));
@@ -124,8 +126,8 @@ public sealed class GameGenerator
             SchemaVersion: "1.0",
             PackageId: Guid.NewGuid(),
             GeneratorVersion: GeneratorVersion,
-            ReviewPlanId: req.ReviewPlanId,
-            SnapshotVersion: req.SnapshotVersion,
+            ReviewPlanId: plan.ReviewPlanId,
+            SnapshotVersion: plan.SnapshotVersion,
             EntrySceneId: scenes[0].SceneId,
             Scenes: scenes.ToArray(),
             Assets: Array.Empty<AssetRef>());
@@ -251,7 +253,11 @@ public sealed class GameGenerator
         var dialogue = new DialogueLine[]
         {
             new(template.GuideSpeaker, template.EndingDialogue, "proud"),
-            new(template.GuideSpeaker, $"本次复习共完成 {questions.Count} 道题目，辛苦了！", "warm"),
+            new(template.GuideSpeaker,
+                questions.Count == 0
+                    ? "本次复习已完成知识讲解，辛苦了！"
+                    : $"本次复习共完成 {questions.Count} 道题目，辛苦了！",
+                "warm"),
         };
         return new Scene(
             SceneId: sceneId,
@@ -276,7 +282,9 @@ public sealed class GameGenerator
             Text: correctText,
             NextSceneId: null,
             ScoreDelta: 1,
-            KnowledgePointId: correctNode.PointId);
+            KnowledgePointId: correctNode.PointId,
+            AnswerKind: AnswerKind.CHOICE,
+            Correct: true);
 
         // 干扰项数量
         var distractorCount = difficulty switch
@@ -308,7 +316,9 @@ public sealed class GameGenerator
                     Text: text,
                     NextSceneId: null,
                     ScoreDelta: 0,
-                    KnowledgePointId: correctNode.PointId));
+                    KnowledgePointId: correctNode.PointId,
+                    AnswerKind: AnswerKind.CHOICE,
+                    Correct: false));
             }
         }
 
@@ -326,7 +336,9 @@ public sealed class GameGenerator
                     Text: text,
                     NextSceneId: null,
                     ScoreDelta: 0,
-                    KnowledgePointId: correctNode.PointId));
+                    KnowledgePointId: correctNode.PointId,
+                    AnswerKind: AnswerKind.CHOICE,
+                    Correct: false));
             }
         }
 
@@ -384,23 +396,18 @@ public sealed class GameGenerator
         _ => $"关于「{node.Title}」，哪个说法正确？",
     };
 
-    /// <summary>确定性 UUID v5：相同 pointId + seed → 相同 questionId</summary>
+    /// <summary>确定性 UUID v4 形状：相同 pointId + seed → 相同 questionId。</summary>
     private static Guid DeterministicGuid(Guid pointId, long seed)
     {
-        // 拼接 namespace + pointId + seed 后 SHA-1，取前 16 字节
+        // 对稳定输入取摘要，再显式设置 RFC 4122 version/variant 位。
         Span<byte> buffer = stackalloc byte[16 + 16 + 8]; // Guid(16) + Guid(16) + long(8)
         QuestionNamespace.TryWriteBytes(buffer[..16]);
         pointId.TryWriteBytes(buffer.Slice(16, 16));
         BitConverter.TryWriteBytes(buffer.Slice(32, 8), seed);
 
-        Span<byte> hash = stackalloc byte[20]; // SHA-1 = 20 bytes
-        SHA1.HashData(buffer, hash);
-
-        // 设置 version 5 和 variant 位
-        hash[6] = (byte)((hash[6] & 0x0F) | 0x50);
-        hash[8] = (byte)((hash[8] & 0x3F) | 0x80);
-
-        return new Guid(hash[..16]);
+        Span<byte> hash = stackalloc byte[32];
+        SHA256.HashData(buffer, hash);
+        return UuidV4FromDigest(hash);
     }
 
     /// <summary>为导航 choice 生成确定性 questionId（非计分场景的"继续"按钮）</summary>
@@ -413,10 +420,20 @@ public sealed class GameGenerator
         Buffer.BlockCopy(namespaceBytes, 0, combined, 0, namespaceBytes.Length);
         Buffer.BlockCopy(nameBytes, 0, combined, namespaceBytes.Length, nameBytes.Length);
 
-        var hash = SHA1.HashData(combined);
-        hash[6] = (byte)((hash[6] & 0x0F) | 0x50);
-        hash[8] = (byte)((hash[8] & 0x3F) | 0x80);
-        return new Guid(hash.Take(16).ToArray());
+        Span<byte> hash = stackalloc byte[32];
+        SHA256.HashData(combined, hash);
+        return UuidV4FromDigest(hash);
+    }
+
+    private static Guid UuidV4FromDigest(ReadOnlySpan<byte> digest)
+    {
+        Span<byte> bytes = stackalloc byte[16];
+        digest[..16].CopyTo(bytes);
+        bytes[6] = (byte)((bytes[6] & 0x0F) | 0x40);
+        bytes[8] = (byte)((bytes[8] & 0x3F) | 0x80);
+
+        // ParseExact 使用规范字符串字节序，避免 Guid(byte[]) 的混合端序破坏版本位。
+        return Guid.ParseExact(Convert.ToHexString(bytes), "N");
     }
 
     /// <summary>确定性打乱（基于 questionId 种子，Fisher-Yates）</summary>

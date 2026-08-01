@@ -14,6 +14,16 @@ describe('当前服务接口路由适配', () => {
     ['POST', '/api/v1/knowledge-graph-builds', 'knowledgeService', 'user'],
     ['GET', '/api/v1/knowledge-graph-builds/0957574f', 'knowledgeService', 'user'],
     ['GET', '/api/v1/knowledge-graphs/3a7f', 'knowledgeService', 'user'],
+    ['POST', '/api/v1/game-generations', 'galGameService', 'user'],
+    ['GET', '/api/v1/game-generations/0957574f', 'galGameService', 'user'],
+    ['GET', '/api/v1/game-packages/3a7f', 'galGameService', 'user'],
+    ['GET', '/api/v1/game-packages/3a7f/content', 'galGameService', 'user'],
+    [
+      'POST',
+      '/internal/v1/game-package-validations',
+      'galGameService',
+      'service',
+    ],
   ])(
     '%s %s 应路由到 %s 并采用 %s 身份',
     (method, path, service, auth) => {
@@ -39,6 +49,23 @@ describe('当前服务接口路由适配', () => {
     ).toBe('generation');
     expect(
       resolveRoute('GET', '/api/v1/knowledge-graph-builds/0957574f')
+        ?.rateLimitCategory,
+    ).toBe('general');
+  });
+
+  it('游戏创建使用 generation 限流，状态轮询和游戏包读取使用 general 限流', () => {
+    expect(
+      resolveRoute('POST', '/api/v1/game-generations')?.rateLimitCategory,
+    ).toBe('generation');
+    expect(
+      resolveRoute('GET', '/api/v1/game-generations/0957574f')
+        ?.rateLimitCategory,
+    ).toBe('general');
+    expect(
+      resolveRoute('GET', '/api/v1/game-packages/3a7f')?.rateLimitCategory,
+    ).toBe('general');
+    expect(
+      resolveRoute('GET', '/api/v1/game-packages/3a7f/content')
         ?.rateLimitCategory,
     ).toBe('general');
   });

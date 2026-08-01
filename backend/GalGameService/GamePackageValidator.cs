@@ -9,15 +9,6 @@ using System.Text.Json.Serialization;
 
 public sealed class GamePackageValidator
 {
-    /// <summary>场景数量上限</summary>
-    public const int MaxScenes = 100;
-    /// <summary>单场景对话行上限</summary>
-    public const int MaxDialoguePerScene = 200;
-    /// <summary>单场景选项上限</summary>
-    public const int MaxChoicesPerScene = 6;
-    /// <summary>请求体 JSON 最大字节数（防止异常大包攻击）</summary>
-    public const int MaxPackageJsonBytes = 2 * 1024 * 1024; // 2 MB
-
     // ========================================================================
     // 静态缓存：JsonSerializerOptions 只创建一次，避免每次 ComputeChecksum 重复分配
     // ========================================================================
@@ -30,7 +21,7 @@ public sealed class GamePackageValidator
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             WriteIndented = false,
-            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+            DefaultIgnoreCondition = JsonIgnoreCondition.Never,
         };
         options.Converters.Add(new JsonStringEnumConverter());
         return options;
@@ -58,7 +49,7 @@ public sealed class GamePackageValidator
         {
             foreach (var scene in package.Scenes)
             {
-                if (!string.IsNullOrWhiteSpace(scene.SceneId))
+                if (scene is not null && !string.IsNullOrWhiteSpace(scene.SceneId))
                     sceneIds.Add(scene.SceneId);
             }
         }
@@ -73,10 +64,8 @@ public sealed class GamePackageValidator
         // ---- 逐场景校验（单遍收集跨场景数据） ----
         var seenSceneIds = new HashSet<string>(StringComparer.Ordinal);
         var questionToPoints = new Dictionary<Guid, Guid>();
-        var choiceQuestionIds = new HashSet<Guid>();
-        // questionId → (correctCount, sceneIdx, choiceIdx)
-        var questionCorrectCounts = new Dictionary<Guid, (int Count, int SceneIdx, int ChoiceIdx)>();
-        var bindingQuestionIds = new List<(Guid QuestionId, int SceneIdx, int BindingIdx)>();
+        var allChoices = new List<(Choice Choice, string Path, int SceneIdx)>();
+        var questionBindings = new List<(Guid QuestionId, Guid PointId, int SceneIdx, int BindingIdx)>();
 
         if (package.Scenes is not null)
         {
@@ -84,17 +73,21 @@ public sealed class GamePackageValidator
             {
                 ValidateScene(
                     package.Scenes[i], i, sceneIds,
-                    seenSceneIds, questionToPoints, choiceQuestionIds,
-                    questionCorrectCounts, bindingQuestionIds,
+                    seenSceneIds, questionToPoints,
+                    allChoices, questionBindings,
                     issues);
             }
         }
 
         // ---- 跨场景后置校验 ----
         // 收集所有 QUESTION 绑定的 questionId（只有这些需要检查正确选项数量）
-        var scoringQuestionIds = bindingQuestionIds.Select(b => b.QuestionId).ToHashSet();
-        ValidateOrphanBindings(bindingQuestionIds, choiceQuestionIds, issues);
-        ValidateQuestionCorrectness(questionCorrectCounts, scoringQuestionIds, issues);
+        var scoringQuestionKeys = questionBindings
+            .Select(binding => (binding.SceneIdx, binding.QuestionId))
+            .ToHashSet();
+        ValidateQuestionBindings(questionBindings, allChoices, issues);
+        ValidateScoringChoices(allChoices, scoringQuestionKeys, issues);
+        ValidateQuestionCorrectness(allChoices, scoringQuestionKeys, issues);
+        ValidateQuestionSceneReachability(package, questionBindings, issues);
 
         // ---- assets 校验（独立于 scenes，防止 scenes=null 时 assets 被跳过） ----
         ValidateAssets(package.Assets, issues);
@@ -116,21 +109,22 @@ public sealed class GamePackageValidator
 
         if (package.PackageId == Guid.Empty)
             issues.Add(new("packageId", "INVALID_PACKAGE_ID", "packageId 不能为空 GUID"));
+        else if (!IsUuidV4(package.PackageId))
+            issues.Add(new("packageId", "INVALID_UUID_VERSION", "packageId 必须为 UUID v4"));
 
         if (string.IsNullOrWhiteSpace(package.GeneratorVersion))
             issues.Add(new("generatorVersion", "MISSING_GENERATOR_VERSION", "generatorVersion 不能为空"));
 
         if (package.ReviewPlanId == Guid.Empty)
             issues.Add(new("reviewPlanId", "INVALID_REVIEW_PLAN_ID", "reviewPlanId 不能为空 GUID"));
+        else if (!IsUuidV4(package.ReviewPlanId))
+            issues.Add(new("reviewPlanId", "INVALID_UUID_VERSION", "reviewPlanId 必须为 UUID v4"));
 
         if (string.IsNullOrWhiteSpace(package.SnapshotVersion))
             issues.Add(new("snapshotVersion", "MISSING_SNAPSHOT_VERSION", "snapshotVersion 不能为空"));
 
         if (package.Scenes is null || package.Scenes.Length == 0)
             issues.Add(new("scenes", "SCENE_COUNT_OUT_OF_RANGE", "scenes 不能为空"));
-        else if (package.Scenes.Length > MaxScenes)
-            issues.Add(new("scenes", "SCENE_COUNT_OUT_OF_RANGE",
-                $"场景数量 {package.Scenes.Length} 超过上限 {MaxScenes}"));
     }
 
     private static void ValidateScene(
@@ -138,9 +132,8 @@ public sealed class GamePackageValidator
         HashSet<string> sceneIds,
         HashSet<string> seenSceneIds,
         Dictionary<Guid, Guid> questionToPoints,
-        HashSet<Guid> choiceQuestionIds,
-        Dictionary<Guid, (int Count, int SceneIdx, int ChoiceIdx)> questionCorrectCounts,
-        List<(Guid QuestionId, int SceneIdx, int BindingIdx)> bindingQuestionIds,
+        List<(Choice Choice, string Path, int SceneIdx)> allChoices,
+        List<(Guid QuestionId, Guid PointId, int SceneIdx, int BindingIdx)> questionBindings,
         List<ValidationIssue> issues)
     {
         var scenePath = $"scenes[{index}]";
@@ -163,9 +156,6 @@ public sealed class GamePackageValidator
             issues.Add(new($"{scenePath}.dialogue", "DIALOGUE_COUNT_OUT_OF_RANGE", "dialogue 不能为 null"));
         else if (scene.Dialogue.Length == 0)
             issues.Add(new($"{scenePath}.dialogue", "DIALOGUE_COUNT_OUT_OF_RANGE", "dialogue 不能为空数组"));
-        else if (scene.Dialogue.Length > MaxDialoguePerScene)
-            issues.Add(new($"{scenePath}.dialogue", "DIALOGUE_COUNT_OUT_OF_RANGE",
-                $"对话数量 {scene.Dialogue.Length} 超过上限 {MaxDialoguePerScene}"));
         else
         {
             for (var d = 0; d < scene.Dialogue.Length; d++)
@@ -187,9 +177,6 @@ public sealed class GamePackageValidator
         // choices
         if (scene.Choices is null)
             issues.Add(new($"{scenePath}.choices", "CHOICE_COUNT_OUT_OF_RANGE", "choices 不能为 null"));
-        else if (scene.Choices.Length > MaxChoicesPerScene)
-            issues.Add(new($"{scenePath}.choices", "CHOICE_COUNT_OUT_OF_RANGE",
-                $"选项数量 {scene.Choices.Length} 超过上限 {MaxChoicesPerScene}"));
         else
         {
             var seenChoiceIds = new HashSet<string>(StringComparer.Ordinal);
@@ -204,13 +191,18 @@ public sealed class GamePackageValidator
                 }
                 ValidateChoice(
                     choice, cPath, sceneIds,
-                    questionToPoints, choiceQuestionIds, questionCorrectCounts,
-                    seenChoiceIds, index, c, issues);
+                    questionToPoints,
+                    allChoices, seenChoiceIds, index, issues);
             }
         }
 
         // knowledgeBindings
-        if (scene.KnowledgeBindings is not null)
+        if (scene.KnowledgeBindings is null)
+        {
+            issues.Add(new($"{scenePath}.knowledgeBindings", "MISSING_KNOWLEDGE_BINDINGS",
+                "knowledgeBindings 不能为 null"));
+        }
+        else
         {
             for (var b = 0; b < scene.KnowledgeBindings.Length; b++)
             {
@@ -224,14 +216,25 @@ public sealed class GamePackageValidator
                 if (binding.KnowledgePointId == Guid.Empty)
                     issues.Add(new($"{bPath}.knowledgePointId", "EMPTY_BINDING_FIELD",
                         "knowledgePointId 不能为空 GUID"));
+                else if (!IsUuidV4(binding.KnowledgePointId))
+                    issues.Add(new($"{bPath}.knowledgePointId", "INVALID_UUID_VERSION",
+                        "knowledgePointId 必须为 UUID v4"));
 
-                if (binding.Purpose == KnowledgePurpose.QUESTION)
+                if (binding.Purpose is null)
+                {
+                    issues.Add(new($"{bPath}.purpose", "MISSING_BINDING_PURPOSE",
+                        "purpose 不能为空"));
+                }
+                else if (binding.Purpose == KnowledgePurpose.QUESTION)
                 {
                     if (binding.QuestionId is null || binding.QuestionId == Guid.Empty)
                         issues.Add(new($"{bPath}.questionId", "QUESTION_BINDING_MISSING_QUESTION_ID",
                             "purpose=QUESTION 的绑定必须提供 questionId"));
+                    else if (!IsUuidV4(binding.QuestionId.Value))
+                        issues.Add(new($"{bPath}.questionId", "INVALID_UUID_VERSION",
+                            "questionId 必须为 UUID v4"));
                     else
-                        bindingQuestionIds.Add((binding.QuestionId.Value, index, b));
+                        questionBindings.Add((binding.QuestionId.Value, binding.KnowledgePointId, index, b));
                 }
             }
         }
@@ -241,10 +244,9 @@ public sealed class GamePackageValidator
         Choice choice, string path,
         HashSet<string> sceneIds,
         Dictionary<Guid, Guid> questionToPoints,
-        HashSet<Guid> choiceQuestionIds,
-        Dictionary<Guid, (int Count, int SceneIdx, int ChoiceIdx)> questionCorrectCounts,
+        List<(Choice Choice, string Path, int SceneIdx)> allChoices,
         HashSet<string> seenChoiceIds,
-        int sceneIdx, int choiceIdx,
+        int sceneIdx,
         List<ValidationIssue> issues)
     {
         // 字段非空
@@ -256,20 +258,19 @@ public sealed class GamePackageValidator
 
         if (choice.QuestionId == Guid.Empty)
             issues.Add(new($"{path}.questionId", "EMPTY_CHOICE_FIELD", "questionId 不能为空 GUID"));
+        else if (!IsUuidV4(choice.QuestionId))
+            issues.Add(new($"{path}.questionId", "INVALID_UUID_VERSION", "questionId 必须为 UUID v4"));
 
         if (string.IsNullOrWhiteSpace(choice.Text))
             issues.Add(new($"{path}.text", "EMPTY_CHOICE_FIELD", "text 不能为空"));
 
         if (choice.KnowledgePointId == Guid.Empty)
             issues.Add(new($"{path}.knowledgePointId", "EMPTY_CHOICE_FIELD", "knowledgePointId 不能为空 GUID"));
+        else if (!IsUuidV4(choice.KnowledgePointId))
+            issues.Add(new($"{path}.knowledgePointId", "INVALID_UUID_VERSION",
+                "knowledgePointId 必须为 UUID v4"));
 
-        // ScoreDelta 范围：0（错误）或 1（正确），不允许负数或过大值
-        if (choice.ScoreDelta < 0)
-            issues.Add(new($"{path}.scoreDelta", "INVALID_SCORE_DELTA",
-                $"scoreDelta 不能为负数，实际为 {choice.ScoreDelta}"));
-        else if (choice.ScoreDelta > 1)
-            issues.Add(new($"{path}.scoreDelta", "INVALID_SCORE_DELTA",
-                $"scoreDelta 最大为 1，实际为 {choice.ScoreDelta}"));
+        allChoices.Add((choice, path, sceneIdx));
 
         // nextSceneId 引用有效性
         if (!string.IsNullOrWhiteSpace(choice.NextSceneId) && !sceneIds.Contains(choice.NextSceneId))
@@ -279,7 +280,6 @@ public sealed class GamePackageValidator
         // questionId 跨场景一致性
         if (choice.QuestionId != Guid.Empty)
         {
-            choiceQuestionIds.Add(choice.QuestionId);
             if (questionToPoints.TryGetValue(choice.QuestionId, out var existingPoint))
             {
                 if (existingPoint != choice.KnowledgePointId)
@@ -291,65 +291,159 @@ public sealed class GamePackageValidator
                 questionToPoints[choice.QuestionId] = choice.KnowledgePointId;
             }
 
-            // 统计每题正确选项数量：先确保 questionId 在字典中（初始 count=0），
-            // 这样无正确选项的题目也能被 ValidateQuestionCorrectness 检测到。
-            if (!questionCorrectCounts.TryGetValue(choice.QuestionId, out var entry))
-                entry = (0, sceneIdx, choiceIdx);
-
-            if (choice.ScoreDelta > 0)
-                questionCorrectCounts[choice.QuestionId] = (entry.Count + 1, entry.SceneIdx, entry.ChoiceIdx);
-            else
-                questionCorrectCounts[choice.QuestionId] = entry;
         }
     }
 
-    /// <summary>校验孤儿绑定：purpose=QUESTION 的 questionId 必须在 choices 中出现</summary>
-    private static void ValidateOrphanBindings(
-        List<(Guid QuestionId, int SceneIdx, int BindingIdx)> bindingQuestionIds,
-        HashSet<Guid> choiceQuestionIds,
+    /// <summary>校验 QUESTION 绑定唯一性、choice 存在性及 pointId 双向一致性。</summary>
+    private static void ValidateQuestionBindings(
+        List<(Guid QuestionId, Guid PointId, int SceneIdx, int BindingIdx)> bindings,
+        List<(Choice Choice, string Path, int SceneIdx)> choices,
         List<ValidationIssue> issues)
     {
-        foreach (var (qId, sIdx, bIdx) in bindingQuestionIds)
+        var seen = new HashSet<Guid>();
+        foreach (var sceneGroup in bindings.GroupBy(binding => binding.SceneIdx))
         {
-            if (!choiceQuestionIds.Contains(qId))
-                issues.Add(new($"scenes[{sIdx}].knowledgeBindings[{bIdx}].questionId",
-                    "ORPHAN_QUESTION_BINDING",
-                    $"questionId {qId} 在 QUESTION 绑定中声明，但未在任何 choice 中使用"));
-        }
-    }
-
-    /// <summary>校验每题恰好一个正确选项（仅检查 QUESTION 绑定的 questionId）</summary>
-    private static void ValidateQuestionCorrectness(
-        Dictionary<Guid, (int Count, int SceneIdx, int ChoiceIdx)> questionCorrectCounts,
-        HashSet<Guid> scoringQuestionIds,
-        List<ValidationIssue> issues)
-    {
-        // 只检查有 QUESTION 绑定的 questionId（导航 choice 不需要正确选项）
-        foreach (var qId in scoringQuestionIds)
-        {
-            if (!questionCorrectCounts.TryGetValue(qId, out var entry))
+            if (sceneGroup.Count() > 1)
             {
-                // QUESTION 绑定存在但没有任何 choice 使用该 questionId
-                // （这会被 ORPHAN_QUESTION_BINDING 捕获，这里不重复报错）
+                var duplicate = sceneGroup.Skip(1).First();
+                issues.Add(new(
+                    $"scenes[{duplicate.SceneIdx}].knowledgeBindings[{duplicate.BindingIdx}]",
+                    "MULTIPLE_QUESTIONS_IN_SCENE",
+                    "一个场景只能声明一个 QUESTION knowledgeBinding"));
+            }
+        }
+
+        foreach (var (qId, pointId, sIdx, bIdx) in bindings)
+        {
+            var path = $"scenes[{sIdx}].knowledgeBindings[{bIdx}].questionId";
+            if (!seen.Add(qId))
+                issues.Add(new(path, "DUPLICATE_QUESTION_BINDING",
+                    $"questionId {qId} 在包内声明了多个 QUESTION 绑定"));
+
+            var matchingChoices = choices
+                .Where(item => item.SceneIdx == sIdx && item.Choice.QuestionId == qId)
+                .ToArray();
+            if (matchingChoices.Length == 0)
+            {
+                issues.Add(new(path, "ORPHAN_QUESTION_BINDING",
+                    $"questionId {qId} 在 QUESTION 绑定所在场景中没有对应 choice"));
+            }
+            else if (matchingChoices.Any(item => item.Choice.KnowledgePointId != pointId))
+            {
+                issues.Add(new(path, "QUESTION_BINDING_POINT_MISMATCH",
+                    $"QUESTION 绑定的 knowledgePointId {pointId} 与同场景 choice 不一致"));
+            }
+
+            foreach (var item in choices.Where(item => item.SceneIdx == sIdx && item.Choice.QuestionId != qId))
+            {
+                issues.Add(new(item.Path, "QUESTION_SCENE_CHOICE_MISMATCH",
+                    $"QUESTION 场景中的所有 choice 必须使用 questionId {qId}"));
+            }
+        }
+    }
+
+    /// <summary>计分题必须显式携带 Render 可直接使用的 answerKind 与正确性。</summary>
+    private static void ValidateScoringChoices(
+        List<(Choice Choice, string Path, int SceneIdx)> choices,
+        HashSet<(int SceneIdx, Guid QuestionId)> scoringQuestionKeys,
+        List<ValidationIssue> issues)
+    {
+        foreach (var (choice, path, sceneIdx) in choices)
+        {
+            var isScoring = scoringQuestionKeys.Contains((sceneIdx, choice.QuestionId));
+            if (!isScoring && (choice.Correct is not null || choice.AnswerKind is not null))
+            {
+                issues.Add(new(path, "SCORING_CHOICE_WITHOUT_QUESTION_BINDING",
+                    "带 answerKind/correct 的 choice 必须具有同场景 QUESTION knowledgeBinding"));
                 continue;
             }
 
-            var (count, sIdx, cIdx) = entry;
-            if (count == 0)
-                issues.Add(new($"scenes[{sIdx}].choices[{cIdx}].questionId",
+            if (!isScoring)
+                continue;
+
+            if (choice.AnswerKind is null)
+                issues.Add(new($"{path}.answerKind", "MISSING_ANSWER_KIND",
+                    "QUESTION choice 必须提供 answerKind"));
+            else if (choice.AnswerKind != AnswerKind.CHOICE)
+                issues.Add(new($"{path}.answerKind", "ANSWER_KIND_MISMATCH",
+                    "当前 Choice schema 的 answerKind 必须为 CHOICE"));
+
+            if (choice.Correct is null)
+                issues.Add(new($"{path}.correct", "MISSING_CORRECTNESS",
+                    "QUESTION choice 必须明确 correct"));
+        }
+    }
+
+    /// <summary>校验每题至少有一个正确选项。</summary>
+    private static void ValidateQuestionCorrectness(
+        List<(Choice Choice, string Path, int SceneIdx)> choices,
+        HashSet<(int SceneIdx, Guid QuestionId)> scoringQuestionKeys,
+        List<ValidationIssue> issues)
+    {
+        foreach (var (sceneIdx, questionId) in scoringQuestionKeys)
+        {
+            var matchingChoices = choices
+                .Where(item => item.SceneIdx == sceneIdx && item.Choice.QuestionId == questionId)
+                .ToArray();
+            if (matchingChoices.Length > 0 && matchingChoices.All(item => item.Choice.Correct is not true))
+                issues.Add(new(matchingChoices[0].Path + ".questionId",
                     "NO_CORRECT_CHOICE",
-                    $"questionId {qId} 没有任何 scoreDelta>0 的正确选项"));
-            else if (count > 1)
-                issues.Add(new($"scenes[{sIdx}].choices[{cIdx}].questionId",
-                    "MULTIPLE_CORRECT_CHOICES",
-                    $"questionId {qId} 有 {count} 个 scoreDelta>0 的正确选项，应为 1 个"));
+                    $"questionId {questionId} 没有 correct=true 的选项"));
+        }
+    }
+
+    private static void ValidateQuestionSceneReachability(
+        GamePackage package,
+        List<(Guid QuestionId, Guid PointId, int SceneIdx, int BindingIdx)> bindings,
+        List<ValidationIssue> issues)
+    {
+        if (package.Scenes is null || package.Scenes.Length == 0
+            || string.IsNullOrWhiteSpace(package.EntrySceneId))
+            return;
+
+        var scenesById = package.Scenes
+            .Where(scene => scene is not null && !string.IsNullOrWhiteSpace(scene.SceneId))
+            .GroupBy(scene => scene.SceneId, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+        if (!scenesById.ContainsKey(package.EntrySceneId))
+            return;
+
+        var reachable = new HashSet<string>(StringComparer.Ordinal) { package.EntrySceneId };
+        var pending = new Queue<string>();
+        pending.Enqueue(package.EntrySceneId);
+        while (pending.TryDequeue(out var sceneId))
+        {
+            var scene = scenesById[sceneId];
+            foreach (var nextSceneId in (scene.Choices ?? Array.Empty<Choice>())
+                         .Select(choice => choice?.NextSceneId)
+                         .Where(next => !string.IsNullOrWhiteSpace(next)))
+            {
+                if (nextSceneId is not null && scenesById.ContainsKey(nextSceneId) && reachable.Add(nextSceneId))
+                    pending.Enqueue(nextSceneId);
+            }
+        }
+
+        foreach (var binding in bindings)
+        {
+            var scene = package.Scenes[binding.SceneIdx];
+            if (scene is not null && !reachable.Contains(scene.SceneId))
+            {
+                issues.Add(new(
+                    $"scenes[{binding.SceneIdx}].knowledgeBindings[{binding.BindingIdx}]",
+                    "UNREACHABLE_QUESTION_SCENE",
+                    "QUESTION 场景必须能从 entrySceneId 到达"));
+            }
         }
     }
 
     /// <summary>校验 assets（独立于 scenes，确保 scenes=null 时仍执行）</summary>
     private static void ValidateAssets(AssetRef[]? assets, List<ValidationIssue> issues)
     {
-        if (assets is null) return;
+        if (assets is null)
+        {
+            issues.Add(new("assets", "MISSING_ASSETS", "assets 不能为 null"));
+            return;
+        }
 
         var seenAssetIds = new HashSet<string>(StringComparer.Ordinal);
         for (var a = 0; a < assets.Length; a++)
@@ -368,8 +462,15 @@ public sealed class GamePackageValidator
                     $"assetId \"{asset.AssetId}\" 重复"));
             if (string.IsNullOrWhiteSpace(asset.Uri))
                 issues.Add(new($"{aPath}.uri", "EMPTY_ASSET_FIELD", "uri 不能为空"));
+            if (asset.Type is null)
+                issues.Add(new($"{aPath}.type", "MISSING_ASSET_TYPE", "type 不能为空"));
         }
     }
+
+    private static bool IsUuidV4(Guid value)
+        => value != Guid.Empty
+           && value.ToString("D")[14] == '4'
+           && value.ToString("D")[19] is '8' or '9' or 'a' or 'b';
 
     // ========================================================================
     // 序列化与 checksum

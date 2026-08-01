@@ -17,7 +17,7 @@ public class InMemoryGameStoreTests
 
     private static GameGenerationRequest CreateRequest() => new(
         ReviewPlanId: MockReviewPlanId,
-        SnapshotVersion: "plan-graph-1.0:3da5f48f",
+        SnapshotVersion: "plan-graph-1.0:3da5f48f37ac57c91b49ee747c11e45f1a9e9e73d8e892fcd1bd1f9f3f50c620",
         Style: GameStyle.CAMPUS,
         Difficulty: Difficulty.STANDARD,
         Locale: "zh-CN",
@@ -26,7 +26,7 @@ public class InMemoryGameStoreTests
     [Fact]
     public void Constructor_SeedsGoldenPackage()
     {
-        var store = new InMemoryGameStore();
+        var store = new InMemoryGameStore(seedGoldenPackage: true);
         var manifest = store.GetManifest(GoldenPackageId);
         Assert.NotNull(manifest);
         Assert.Equal("1.0", manifest!.SchemaVersion);

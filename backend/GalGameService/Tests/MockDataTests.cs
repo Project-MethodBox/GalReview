@@ -257,7 +257,7 @@ public class MockDataTests
 
     [Theory]
     [MemberData(nameof(AllMockFiles))]
-    public void EachQuestion_HasExactlyOneCorrectChoice(string fileName)
+    public void EachQuestion_HasExactlyOneExplicitCorrectChoice(string fileName)
     {
         var pkg = LoadMockPackage(fileName);
 
@@ -276,7 +276,7 @@ public class MockDataTests
         {
             var correctCount = pkg.Scenes
                 .SelectMany(s => s.Choices)
-                .Count(c => c.QuestionId == qId && c.ScoreDelta > 0);
+                .Count(c => c.QuestionId == qId && c.Correct is true);
 
             Assert.Equal(1, correctCount);
         }
@@ -336,7 +336,7 @@ public class MockDataTests
     {
         var pkg = LoadMockPackage(fileName);
 
-        // 对每个 QUESTION 场景：正确选项 1 个，干扰项 scoreDelta=0
+        // 对每个 QUESTION 场景：正确性由 correct 表示，游戏分数另行校验。
         foreach (var scene in pkg.Scenes)
         {
             var isQuestion = scene.KnowledgeBindings
@@ -344,10 +344,11 @@ public class MockDataTests
             if (!isQuestion)
                 continue;
 
-            var correctCount = scene.Choices.Count(c => c.ScoreDelta > 0);
-            var distractorCount = scene.Choices.Count(c => c.ScoreDelta == 0);
+            var correctCount = scene.Choices.Count(c => c.Correct is true);
+            var distractorCount = scene.Choices.Count(c => c.Correct is false);
 
             Assert.Equal(1, correctCount);
+            Assert.All(scene.Choices, choice => Assert.Equal(AnswerKind.CHOICE, choice.AnswerKind));
             Assert.True(distractorCount >= 2,
                 $"{fileName}: 场景 {scene.SceneId} 的干扰项数量 {distractorCount} 应 >= 2");
         }

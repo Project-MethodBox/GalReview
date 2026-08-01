@@ -21,7 +21,7 @@
 | `GET` | `/api/v1/game-generations/{generationId}` | 查询生成任务 | `200/400/401/404` |
 | `GET` | `/api/v1/game-packages/{packageId}` | 读取游戏包清单 | `200/400/401/404` |
 | `GET` | `/api/v1/game-packages/{packageId}/content` | 下载完整 JSON | `200/304/400/401/404` |
-| `POST` | `/internal/v1/game-package-validations` | 校验游戏包（服务间） | `200/400/403` |
+| `POST` | `/internal/v1/game-package-validations` | 校验游戏包（服务间） | `200/400/403/422` |
 | `GET` | `/healthz` | 存活探针 | `200` |
 | `GET` | `/readyz` | 就绪探针 | `200` |
 
@@ -62,10 +62,24 @@ GalGameService/
 `GameGenerator` 从 PlanGraph 生成符合 schema 1.0 的 GamePackage：
 
 - 仅为 `PlanNode.questionTarget=true` 的节点生成计分题目
-- `questionId` 使用 UUID v5 确定性生成（相同 pointId + seed → 相同 questionId）
+- `questionId` 确定性生成并编码为 UUID v4（相同 pointId + seed → 相同 questionId）
 - 3 种剧情风格：CAMPUS（校园）、FANTASY（奇幻）、SCIENCE（科幻）
 - 3 种难度：BASIC（4 选项）、STANDARD（4 选项）、ADVANCED（3 选项）
 - 场景序列：开场 → 知识点讲解 → 题目 → 结束
+
+`purpose=QUESTION` 场景中的选项显式携带题型与正确性。`scoreDelta` 只表示游戏内分数变化，
+判题以 `correct` 为准，不能根据分数推断答案正确性或知识点掌握度：
+
+```json
+{
+  "choiceId": "c-scene-003-correct",
+  "questionId": "0aeb0c5d-4e43-485e-9af0-79e0ddc902a0",
+  "answerKind": "CHOICE",
+  "correct": true,
+  "scoreDelta": 1,
+  "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"
+}
+```
 
 ### 3. 校验器
 
@@ -97,8 +111,8 @@ dotnet run --project backend/GalGameService/GalGame.GalGameService.csproj
 # 启动核心服务（含 GalGameService）
 docker compose up -d --build
 
-# 服务地址
-http://localhost:5105/readyz
+# 对外入口为 Gateway；GalGameService 在 compose 网络内使用 5105 端口
+http://localhost:5000/readyz
 ```
 
 ### 测试
@@ -120,28 +134,31 @@ dotnet test backend/GalGameService/Tests/GalGame.GalGameService.Tests.csproj
 | 参数 | 值 |
 |---|---|
 | reviewPlanId | `8e812950-3311-40a7-93ab-636409df8cc2` |
-| snapshotVersion | `plan-graph-1.0:3da5f48f` |
+| snapshotVersion | `plan-graph-1.0:3da5f48f37ac57c91b49ee747c11e45f1a9e9e73d8e892fcd1bd1f9f3f50c620` |
 | goldenPackageId | `f2561bb2-b88c-47ef-b0ae-8f283ff64f1b` |
 | goldenQuestionId | `6428a20a-66dd-44c9-944f-d7b36fa9c95a` |
 | knowledgePointId | `d1adc45a-52db-4de2-9cf7-02e1ac0d53cb` |
 | ownerUserId | `7bc4918a-9079-4ea2-9e8e-369ad79a9f20` |
 
-## 冒烟测试示例
+## 经 Gateway 调用
+
+公共接口使用用户访问令牌；调用方不能自行发送 `X-User-Id` 或 `X-Gateway-Key`。服务间接口同样先进入
+Gateway，由 Gateway 校验源服务密钥后再为 GalGameService 注入受信请求头。
 
 ```bash
-# 读取黄金游戏包清单
-curl -s http://localhost:5105/api/v1/game-packages/f2561bb2-b88c-47ef-b0ae-8f283ff64f1b \
-  -H "X-Gateway-Key: moonstone-local-gateway-key" \
-  -H "X-User-Id: 7bc4918a-9079-4ea2-9e8e-369ad79a9f20"
+export GATEWAY_BASE_URL=http://localhost:5000
+export ACCESS_TOKEN='<access-token>'
+export REVIEW_PLAN_ID='<review-plan-id>'
+export SNAPSHOT_VERSION='plan-graph-1.0:3da5f48f37ac57c91b49ee747c11e45f1a9e9e73d8e892fcd1bd1f9f3f50c620'
+export RENDER_SERVICE_KEY='<render-service-key>'
 
-# 创建生成任务（Mock 模式）
-curl -s -X POST http://localhost:5105/api/v1/game-generations \
-  -H "X-Gateway-Key: moonstone-local-gateway-key" \
-  -H "X-User-Id: 7bc4918a-9079-4ea2-9e8e-369ad79a9f20" \
+# 创建生成任务
+curl -s -X POST "$GATEWAY_BASE_URL/api/v1/game-generations" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "reviewPlanId": "8e812950-3311-40a7-93ab-636409df8cc2",
-    "snapshotVersion": "plan-graph-1.0:3da5f48f",
+    "reviewPlanId": "'"$REVIEW_PLAN_ID"'",
+    "snapshotVersion": "'"$SNAPSHOT_VERSION"'",
     "style": "CAMPUS",
     "difficulty": "STANDARD",
     "locale": "zh-CN",
@@ -149,9 +166,12 @@ curl -s -X POST http://localhost:5105/api/v1/game-generations \
   }'
 
 # 校验游戏包（服务间）
-curl -s -X POST http://localhost:5105/internal/v1/game-package-validations \
-  -H "X-Gateway-Key: moonstone-local-gateway-key" \
+curl -s -X POST "$GATEWAY_BASE_URL/internal/v1/game-package-validations" \
   -H "X-Service-Name: RenderService" \
+  -H "X-Service-Key: $RENDER_SERVICE_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"package": { ... }}'
+  --data-binary @game-package-validation.json
 ```
+
+若只启动单个 GalGameService 并使用 `MOONSTONE_MODE=Mock`，可以直接访问 `localhost:5105`
+排查服务内部行为；这种方式绕过 Gateway，仅限本机调试，不是集成或部署调用方式。
