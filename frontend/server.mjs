@@ -54,36 +54,102 @@ function logProxyFailure(event, request, traceId, details) {
   }))
 }
 
+// 网关早期拒绝（401/413/429）到达时客户端请求体往往仍在上传。收尾规则
+// （与网关 bodyDrain 中间件同构）：响应头和信封字节立即转发——响应带
+// Content-Length，客户端凭它即刻完成读取；但 response.end() 延迟到客户端
+// 请求体排空完成后再调用——否则 Node 会对"请求未完成"的连接 destroySoon
+// （RST），信封可能被冲掉。排空前先把请求流从上游腿 unpipe（上游已停止
+// 收体，pipe 背压会把流冻结）。排空有上限、有超时，越界则在响应完成后
+// 显式断开（明示降级）。
+const DRAIN_MAX_BYTES = 12 * 1024 * 1024
+const DRAIN_TIMEOUT_MS = 10_000
+
+function endAfterDrain(request, response, upstream) {
+  if (request.complete || request.readableEnded || request.destroyed) {
+    response.end()
+    return
+  }
+  request.unpipe(upstream)
+  let drained = 0
+  let settled = false
+  const finish = (forceClose) => () => {
+    if (settled) return
+    settled = true
+    clearTimeout(timer)
+    request.removeListener('data', onData)
+    request.removeListener('end', graceful)
+    request.removeListener('close', graceful)
+    response.end(() => {
+      if (forceClose && !request.destroyed) {
+        setImmediate(() => request.socket?.destroy())
+      }
+    })
+  }
+  const graceful = finish(false)
+  const forceful = finish(true)
+  const onData = (chunk) => {
+    drained += chunk.length
+    if (drained > DRAIN_MAX_BYTES) forceful()
+  }
+  const timer = setTimeout(forceful, DRAIN_TIMEOUT_MS)
+  timer.unref()
+  request.on('data', onData)
+  request.once('end', graceful)
+  request.once('close', graceful)
+  request.resume()
+}
+
 function proxyToGateway(request, response) {
   const target = new URL(request.url || '/', gateway)
   const traceId = getCorrelationId(request)
   const headers = { ...request.headers, host: target.host, 'x-correlation-id': traceId }
+  // 崩溃防护：早期拒绝后上游/客户端连接的迟到错误（如网关排空超时 RST）
+  // 不能变成未捕获异常打崩整个前端进程
+  request.on('error', () => {})
+  response.on('error', () => {})
+  let settled = false // 单飞：正常转发与 503 兜底二选一，杜绝二次 writeHead
   const upstream = httpRequest(target, { method: request.method, headers }, (upstreamResponse) => {
+    if (settled) {
+      upstreamResponse.resume()
+      return
+    }
+    settled = true
     const status = upstreamResponse.statusCode || 502
     if (status >= 500) {
       logProxyFailure('frontend_gateway_response_error', request, traceId, { status })
     }
+    upstreamResponse.on('error', () => {})
     response.writeHead(status, upstreamResponse.headers)
-    upstreamResponse.pipe(response)
+    upstreamResponse.on('data', (chunk) => {
+      response.write(chunk)
+    })
+    upstreamResponse.on('end', () => {
+      endAfterDrain(request, response, upstream)
+    })
   })
   upstream.setTimeout(180_000, () => upstream.destroy(new Error('Gateway request timed out')))
+  upstream.on('socket', (socket) => socket.on('error', () => {}))
   upstream.on('error', (error) => {
     logProxyFailure('frontend_gateway_transport_error', request, traceId, {
       code: typeof error.code === 'string' ? error.code : 'UNKNOWN',
     })
-    if (response.headersSent) {
-      response.destroy()
+    if (settled || response.headersSent) {
+      if (!response.writableEnded) response.destroy()
       return
     }
-    response.writeHead(503, {
-      'Content-Type': 'application/json; charset=utf-8',
-      'X-Correlation-Id': traceId,
-    })
-    response.end(JSON.stringify({
+    settled = true
+    const payload = JSON.stringify({
       data: null,
       error: { code: 'SERVICE_UNAVAILABLE', message: 'API Gateway 暂时不可用。', details: {} },
       traceId,
-    }))
+    })
+    response.writeHead(503, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Length': Buffer.byteLength(payload),
+      'X-Correlation-Id': traceId,
+    })
+    response.write(payload)
+    endAfterDrain(request, response, upstream)
   })
   request.pipe(upstream)
 }

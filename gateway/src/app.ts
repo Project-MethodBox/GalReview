@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import type { GatewayConfig } from './config.js';
 import { traceContextMiddleware } from './middleware/traceContext.js';
+import { createBodyDrain } from './middleware/bodyDrain.js';
 import { headerSanitizerMiddleware } from './middleware/headerSanitizer.js';
 import { createAuthenticationMiddleware } from './middleware/authentication.js';
 import { createServiceIdentityMiddleware } from './middleware/serviceIdentity.js';
@@ -34,6 +35,11 @@ export function createApp(config: GatewayConfig): express.Express {
   // ===== 全局中间件 =====
   // 1. 链路追踪
   app.use(traceContextMiddleware);
+
+  // 1.5 早期拒绝（401/403/404/413/429/5xx）时排空 in-flight 请求体：
+  // 保证错误信封完整送达客户端（vite/前端代理不再 ECONNABORTED 变裸 5xx），
+  // 连接以 FIN 优雅关闭而非 RST；正常代理与无体请求为 no-op
+  app.use(createBodyDrain());
 
   // 2. CORS（只允许明确的前端源）
   app.use(

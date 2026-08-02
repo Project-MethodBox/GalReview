@@ -34,6 +34,8 @@ const sessionsEnabled = gatewayBaseUrl.length > 0 && gatewayServiceKey.length > 
 // at the package root next to package.json.
 const distDirectory = new URL('./', import.meta.url)
 const adapter = await readFile(new URL('adapter.js', distDirectory))
+const stage = await readFile(new URL('stage.js', distDirectory))
+const stageDemo = await readFile(new URL('../demo/stage-demo.html', distDirectory))
 const wasm = Buffer.from(
   (await readFile(new URL('../runtime.wasm.base64', distDirectory), 'utf8')).trim(),
   'base64',
@@ -339,6 +341,27 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
       'X-Correlation-Id': correlationId,
     })
     response.end(adapter)
+    return
+  }
+  // Visual-novel stage engine (WebGPU + procedural shaders) and its
+  // self-contained demo page; both are public runtime resources like the
+  // adapter and reuse the same-origin adapter/wasm via relative imports.
+  if (request.method === 'GET' && pathname === '/api/v1/render-runtime/stage.js') {
+    response.writeHead(200, {
+      'Content-Type': 'application/javascript; charset=utf-8',
+      'Content-Length': stage.length,
+      'X-Correlation-Id': correlationId,
+    })
+    response.end(stage)
+    return
+  }
+  if (request.method === 'GET' && pathname === '/api/v1/render-runtime/stage-demo') {
+    response.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Content-Length': stageDemo.length,
+      'X-Correlation-Id': correlationId,
+    })
+    response.end(stageDemo)
     return
   }
   if (pathname.startsWith('/api/v1/review-sessions')) {

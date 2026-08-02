@@ -76,11 +76,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: gateway/package-lock.json
 
-      # 仓库不提交 package-lock.json（见 gateway/.gitignore），
-      # 因此不用 npm 缓存、用 npm install 而非 npm ci
       - name: Install dependencies
-        run: npm install --no-package-lock
+        run: npm ci
 
       # tsc 类型检查 + 产物构建
       - name: Build

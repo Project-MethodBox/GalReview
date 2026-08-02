@@ -2,6 +2,7 @@
 
 !GalGame.GalGameService.csproj
 !*.cs
+!Narrative/**
 !appsettings.json
 !Dockerfile
 !.dockerignore

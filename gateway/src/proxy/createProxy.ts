@@ -148,8 +148,14 @@ export function createProxyForRoute(
           status,
         }));
 
-        res.writeHead(status, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(buildApiFailure(errorCode, message, traceId)));
+        const payload = JSON.stringify(buildApiFailure(errorCode, message, traceId));
+        // 显式 Content-Length：避免 chunked 编码下客户端需等待终结块才能
+        // 判定响应完成（bodyDrain 会先冲刷信封、延迟终结以排空请求体）
+        res.writeHead(status, {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(payload),
+        });
+        res.end(payload);
       },
     },
   };
