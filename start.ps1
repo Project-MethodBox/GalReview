@@ -1,5 +1,8 @@
 # Minimal local launcher for the MoonStone development stack.
-param([switch]$Verify)
+param(
+    [switch]$Verify,
+    [switch]$GalGameMock
+)
 
 $ErrorActionPreference = 'Stop'
 
@@ -9,8 +12,9 @@ $runtimeDirectory = Join-Path $projectRoot '.runtime'
 $bugReportDirectory = Join-Path $projectRoot 'logs'
 $gatewayPort = 5000
 $gatewayBaseUrl = "http://127.0.0.1:$gatewayPort"
-$moonStonePorts = $gatewayPort, 5101, 5102, 5103, 5104, 5105, 5106, 5121, 5174
+$moonStonePorts = $gatewayPort, 5101, 5102, 5103, 5104, 5105, 5106, 5121
 $isMockMode = [string]::Equals($env:MOONSTONE_MODE, 'Mock', [System.StringComparison]::OrdinalIgnoreCase)
+$useGalGameMock = $isMockMode -or $GalGameMock
 $neo4jPassword = if ([string]::IsNullOrWhiteSpace($env:NEO4J_PASSWORD)) { 'knowledge-dev-password' } else { $env:NEO4J_PASSWORD }
 
 function Normalize-ProcessPath {
@@ -193,7 +197,10 @@ function Start-MoonStoneStack {
     }
 
     $galGameArguments = "run --project `"$backendRoot\GalGameService\GalGame.GalGameService.csproj`" -- --urls http://127.0.0.1:5105 --Gateway:BaseUrl $gatewayBaseUrl --Gateway:ServiceKey moonstone-local-gateway-key"
-    if ($isMockMode) { $galGameArguments += ' --MOONSTONE_MODE Mock' }
+    if ($useGalGameMock) {
+        $galGameArguments += ' --MOONSTONE_MODE Mock --GalGameStore:Provider Memory'
+        if ($GalGameMock) { $galGameArguments += ' --GalGameMock:UseFixedStory true' }
+    }
     $services += Start-LocalService -Name 'galgame-service' -FilePath 'dotnet' -Arguments $galGameArguments -HealthUrl 'http://127.0.0.1:5105/healthz'
 
     $env:PORT = '5106'
@@ -202,7 +209,6 @@ function Start-MoonStoneStack {
     $env:Gateway__ServiceKey = 'moonstone-local-gateway-key'
     $services += Start-LocalService -Name 'render-service' -FilePath 'npm.cmd' -Arguments 'run start' -HealthUrl 'http://127.0.0.1:5106/healthz' -WorkingDirectory $renderServiceRoot
     $services += Start-LocalService -Name 'new-frontend' -FilePath 'npm.cmd' -Arguments 'run dev' -HealthUrl 'http://127.0.0.1:5121/' -WorkingDirectory (Join-Path $projectRoot 'frontend')
-    $services += Start-LocalService -Name 'account-frontend' -FilePath 'node' -Arguments '.\AccountFrontend\server.js' -HealthUrl 'http://127.0.0.1:5174/login'
 
     $failed = @()
     foreach ($service in $services) {
@@ -221,14 +227,14 @@ function Start-MoonStoneStack {
 try {
     Normalize-ProcessPath
     do {
-        Write-Host 'MoonStone services are starting and being checked...' -ForegroundColor Yellow
+        Write-Host 'QZWL services are starting and being checked...' -ForegroundColor Yellow
         $failed = Start-MoonStoneStack
         if ($failed.Count -gt 0) {
             throw "Startup failed. Review: $($failed -join '; ')"
         }
 
         Write-Host ''
-        Write-Host 'MoonStone services are ready:' -ForegroundColor Green
+        Write-Host 'QZWL services are ready:' -ForegroundColor Green
         Write-Host "  Gateway:           http://localhost:$gatewayPort"
         Write-Host '  UserService:       http://localhost:5101'
         Write-Host '  AuthService:       http://localhost:5102'
@@ -236,8 +242,7 @@ try {
         Write-Host '  KnowledgeService:  http://localhost:5104'
         Write-Host '  GalGameService:    http://localhost:5105'
         Write-Host '  RenderService:     http://localhost:5106'
-        Write-Host '  New Frontend:      http://localhost:5121'
-        Write-Host '  Legacy Account UI: http://localhost:5174/login'
+        Write-Host '  Frontend:      http://localhost:5121'
         Write-Host ''
         Write-Host 'Press Ctrl+R to restart, or Enter to stop services.'
 
