@@ -193,6 +193,9 @@ services:
       context: ./backend/RenderService
     environment:
       PORT: 5106
+      Gateway__BaseUrl: http://gateway:5000
+      Gateway__ServiceName: RenderService
+      Gateway__ServiceKey: ${RENDER_SERVICE_KEY:-moonstone-local-gateway-key}
     restart: unless-stopped
 
   gateway:

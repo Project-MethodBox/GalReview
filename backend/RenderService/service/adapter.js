@@ -1,7 +1,25 @@
+// RenderService browser adapter (contract.md §8.3).
+//
+// Exports the frozen factory surface: createWasmAdapter() -> WasmAdapter.
+// When the served runtime.wasm exports the complete RenderService
+// runtime-abi v1, every call is driven by the C++ core inside the WASM
+// instance. When the artifact is a placeholder (or an unsupported ABI
+// version), the adapter falls back to the local JS shell behaviour so the
+// SHELL-mode browser experience keeps working. The frontend must keep
+// treating RuntimeInput / RenderEvent / RuntimeState as passthrough JSON
+// until contract.md §8.5 is ratified across the team.
 const DEFAULT_WASM_URL = "/api/v1/render-runtime/runtime.wasm";
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const PURPOSES = new Set(["EXPLAIN", "QUESTION", "FEEDBACK"]);
 const ASSET_TYPES = new Set(["BACKGROUND", "CHARACTER", "AUDIO", "OTHER"]);
+
+// RenderService runtime-abi v1 (see backend/RenderService/README.md).
+const REQUIRED_ABI_EXPORTS = [
+  "memory", "initialize", "loadPackage", "startSession", "dispatchInput",
+  "renderFrame", "serializeState", "getLastError", "dispose",
+  "rtAbiVersion", "rtVersion", "rtAlloc", "rtFree",
+];
+const SUPPORTED_ABI_VERSIONS = new Set([1]);
 
 function issue(path, code, message) {
   return { path, code, message };
@@ -19,6 +37,9 @@ function isUuidV4(value) {
   return typeof value === "string" && UUID_V4.test(value);
 }
 
+// Reference JS implementation of the GamePackage schema 1.0 rules. The C++
+// core mirrors it check-for-check; parity is enforced by the test suites on
+// both sides. Kept exported for local-shell fallback and diagnostics.
 export function validateGamePackage(gamePackage) {
   const errors = [];
   if (!isObject(gamePackage)) {
@@ -197,16 +218,130 @@ export function validateGamePackage(gamePackage) {
   return { valid: errors.length === 0, errors };
 }
 
-async function instantiateWasm(url) {
-  const response = await fetch(url, { credentials: "same-origin" });
-  if (!response.ok) throw new Error(`Unable to load RenderService WASM: HTTP ${response.status}`);
-  const bytes = await response.arrayBuffer();
-  return WebAssembly.instantiate(bytes, {});
+// ---------------------------------------------------------------------------
+
+function stubImports(module) {
+  // The standalone reactor imports at most a couple of notification hooks
+  // (e.g. env.emscripten_notify_memory_growth). Every function import gets a
+  // no-op so artifact evolution cannot break instantiation.
+  const imports = {};
+  for (const descriptor of WebAssembly.Module.imports(module)) {
+    if (descriptor.kind === "function") {
+      imports[descriptor.module] = imports[descriptor.module] || {};
+      imports[descriptor.module][descriptor.name] = () => 0;
+    }
+  }
+  return imports;
 }
 
-export async function createWasmAdapter(options = {}) {
+async function loadWasmModule(options) {
+  if (options.wasmBytes) {
+    return WebAssembly.compile(options.wasmBytes);
+  }
   const wasmUrl = options.wasmUrl || DEFAULT_WASM_URL;
-  const wasm = await instantiateWasm(wasmUrl);
+  const response = await fetch(wasmUrl, { credentials: "same-origin" });
+  if (!response.ok) throw new Error(`Unable to load RenderService WASM: HTTP ${response.status}`);
+  return WebAssembly.compile(await response.arrayBuffer());
+}
+
+function runtimeErrorFrom(lastError) {
+  const error = new Error(`RenderService runtime error ${lastError.code}: ${lastError.message}`);
+  error.code = lastError.code;
+  return error;
+}
+
+// WASM-driven adapter: all logic lives in the C++ core; this layer only
+// marshals UTF-8 strings across the runtime-abi v1 memory rules.
+function createNativeAdapter(instance) {
+  const exports = instance.exports;
+  exports._initialize?.(); // WASI reactor crt bootstrap (optional export)
+
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+  const heap = () => new Uint8Array(exports.memory.buffer); // growth-safe view
+
+  function readCString(pointer) {
+    const memory = heap();
+    let end = pointer;
+    while (memory[end] !== 0) end += 1;
+    return decoder.decode(memory.subarray(pointer, end));
+  }
+
+  function withCString(text, call) {
+    const bytes = encoder.encode(text);
+    const pointer = exports.rtAlloc(bytes.length + 1);
+    try {
+      const memory = heap();
+      memory.set(bytes, pointer);
+      memory[pointer + bytes.length] = 0;
+      return call(pointer);
+    } finally {
+      exports.rtFree(pointer);
+    }
+  }
+
+  // Returned pointers are runtime-owned and only valid until the next ABI
+  // call, so every string result is copied out immediately.
+  const callString = (name, text) => withCString(text, (p) => readCString(exports[name](p)));
+  const callStatus = (name, text) => withCString(text, (p) => exports[name](p));
+  const lastError = () => JSON.parse(readCString(exports.getLastError()));
+
+  let disposed = false;
+  const ensureActive = () => {
+    if (disposed) throw new Error("WasmAdapter has been disposed");
+  };
+
+  return {
+    engine: "wasm",
+    runtimeVersion: readCString(exports.rtVersion()),
+    abiVersion: exports.rtAbiVersion(),
+    async initialize(config = {}) {
+      ensureActive();
+      if (callStatus("initialize", JSON.stringify(config ?? {})) !== 0) {
+        throw runtimeErrorFrom(lastError());
+      }
+    },
+    loadPackage(gamePackage) {
+      ensureActive();
+      return JSON.parse(callString("loadPackage", JSON.stringify(gamePackage ?? null)));
+    },
+    startSession(session) {
+      ensureActive();
+      if (callStatus("startSession", JSON.stringify(session ?? null)) !== 0) {
+        throw runtimeErrorFrom(lastError());
+      }
+    },
+    dispatchInput(input) {
+      ensureActive();
+      return JSON.parse(callString("dispatchInput", JSON.stringify(input ?? null)));
+    },
+    renderFrame(deltaMs) {
+      ensureActive();
+      exports.renderFrame(Number(deltaMs) || 0);
+    },
+    serializeState() {
+      ensureActive();
+      const state = JSON.parse(readCString(exports.serializeState()));
+      if (state === null) throw runtimeErrorFrom(lastError());
+      return state;
+    },
+    lastError() {
+      ensureActive();
+      return lastError();
+    },
+    dispose() {
+      if (disposed) return;
+      exports.dispose();
+      disposed = true;
+    },
+    _wasmInstance: instance,
+  };
+}
+
+// Local JS shell: preserves the pre-ABI behaviour for placeholder artifacts,
+// so a deployment whose runtime.wasm lacks runtime-abi v1 still supports the
+// SHELL-mode browser experience (validate + frozen local session).
+function createLocalAdapter(instance) {
   let gamePackage = null;
   let session = null;
   let runtimeState = null;
@@ -217,6 +352,9 @@ export async function createWasmAdapter(options = {}) {
   };
 
   return {
+    engine: "js",
+    runtimeVersion: "cpp-js-shell-0.1.0",
+    abiVersion: 0,
     async initialize(_config = {}) {
       ensureActive();
     },
@@ -245,7 +383,7 @@ export async function createWasmAdapter(options = {}) {
     },
     dispatchInput(_input) {
       ensureActive();
-      // RuntimeInput / RenderEvent are still OWNER-TBD in contract.md §8.3.
+      // The local shell keeps RuntimeInput/RenderEvent as passthrough JSON.
       return [];
     },
     renderFrame(_deltaMs) {
@@ -256,14 +394,31 @@ export async function createWasmAdapter(options = {}) {
       if (!session || !runtimeState) throw new Error("startSession must be called first");
       return structuredClone(runtimeState);
     },
+    lastError() {
+      ensureActive();
+      return { code: "NO_ERROR", message: "", details: {} };
+    },
     dispose() {
       gamePackage = null;
       session = null;
       runtimeState = null;
       disposed = true;
     },
-    // Kept private-by-convention for diagnostics; the module is intentionally not
-    // advertised as the complete C++ ABI until contract.md §8.5 is resolved.
-    _wasmInstance: wasm.instance
+    _wasmInstance: instance,
   };
+}
+
+export async function createWasmAdapter(options = {}) {
+  const module = await loadWasmModule(options);
+  const exportNames = new Set(WebAssembly.Module.exports(module).map((entry) => entry.name));
+  const instance = await WebAssembly.instantiate(module, stubImports(module));
+
+  if (REQUIRED_ABI_EXPORTS.every((name) => exportNames.has(name))) {
+    const abiVersion = instance.exports.rtAbiVersion();
+    if (SUPPORTED_ABI_VERSIONS.has(abiVersion)) {
+      return createNativeAdapter(instance);
+    }
+    console.warn(`RenderService WASM ABI v${abiVersion} is not supported by this adapter; falling back to the local JS shell.`);
+  }
+  return createLocalAdapter(instance);
 }
