@@ -311,7 +311,7 @@ export default function ReviewPage() {
   }
 
   if (!initial.plan) {
-    return <AppShell><main className="page review-page"><PageHeader title="复习" description="生成计划后，GalGame 会在这里开始。" /><section className="empty-state"><h2>还没有复习计划</h2><p>从一份资料开始，选择本次要测试或学习的章节。</p><Link className="button button--primary" to="/materials">创建计划</Link></section></main></AppShell>
+    return <AppShell><main className="page review-page"><PageHeader title="复习" description="选择复习范围并生成计划后，即可开始本次复习。" /><section className="empty-state"><h2>还没有复习计划</h2><p>先选择一份资料，再确定本次需要测试或学习的章节。</p><Link className="button button--primary" to="/materials">创建计划</Link></section></main></AppShell>
   }
 
   return (
@@ -323,7 +323,7 @@ export default function ReviewPage() {
         <section className="review-setup workspace-card">
           <span className="section-label">生成设置</span>
           <h2>准备 GalGame</h2>
-          <p>预计 {initial.plan.estimatedQuestionCount} 道题。故事风格只影响呈现，题目仍来自当前计划快照。</p>
+          <p>预计 {initial.plan.estimatedQuestionCount} 道题。故事风格不会改变本次复习的知识范围。</p>
           <label>故事风格<select value={style} onChange={(event) => setStyle(event.target.value as GameStyle)}><option value="CAMPUS">校园</option><option value="FANTASY">幻想</option><option value="SCIENCE">科幻</option></select></label>
           <label>难度<select value={difficulty} onChange={(event) => setDifficulty(event.target.value as Difficulty)}><option value="BASIC">基础</option><option value="STANDARD">标准</option><option value="ADVANCED">进阶</option></select></label>
           {gamePackage && session ? <button className="primary-button" type="button" disabled={busy} onClick={() => void resumeRuntime()}>恢复会话</button> : <button className="primary-button" type="button" disabled={busy} onClick={() => void generateAndStart()}>{busy ? '准备中…' : '生成并开始'}</button>}

@@ -18,7 +18,6 @@ export default function SettingsPage() {
   const stored = readProfile()
   const [profile, setProfile] = useState<UserProfile | null>(stored)
   const [displayName, setDisplayName] = useState(stored?.displayName || '')
-  const [locale, setLocale] = useState(stored?.locale || 'zh-CN')
   const [subjectText, setSubjectText] = useState(stored?.preferredSubjectCodes.join(', ') || '')
   const [preferences, setPreferences] = useState<UserPreferencesInput>(defaults)
   const [passwords, setPasswords] = useState({ current: '', next: '', confirm: '' })
@@ -35,7 +34,6 @@ export default function SettingsPage() {
       saveReducedMotion(nextPreferences.reducedMotion)
       setProfile(nextProfile)
       setDisplayName(nextProfile.displayName)
-      setLocale(nextProfile.locale)
       setSubjectText(nextProfile.preferredSubjectCodes.join(', '))
       setPreferences(nextPreferences)
       setMessage('设置已同步。')
@@ -54,7 +52,7 @@ export default function SettingsPage() {
     if (subjects.length > 10 || subjects.some((item) => !/^[A-Z][A-Z0-9_]{0,31}$/.test(item))) return setError('学科代码最多 10 项，只能使用大写字母、数字和下划线。')
     start('profile')
     try {
-      const next = await api.updateCurrentUser({ displayName: displayName.trim(), locale, preferredSubjectCodes: subjects })
+      const next = await api.updateCurrentUser({ displayName: displayName.trim(), locale: 'zh-CN', preferredSubjectCodes: subjects })
       saveProfile(next); setProfile(next); setSubjectText(next.preferredSubjectCodes.join(', ')); setMessage('个人资料已保存。')
     } catch (reason) { setError(reason instanceof Error ? reason.message : '个人资料保存失败。') } finally { setBusy(null) }
   }
@@ -99,13 +97,13 @@ export default function SettingsPage() {
             <form className="form-section" onSubmit={submitProfile}>
               <header><h2>个人资料</h2><p>显示名称会出现在主页，学科代码用于资料分类。</p></header>
               <label>显示名称<input maxLength={64} required value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>
-              <label>界面语言<select value={locale} onChange={(event) => setLocale(event.target.value)}><option value="zh-CN">简体中文</option><option value="en-US">English</option></select></label>
+              <div className="settings-language"><span>界面语言</span><strong>简体中文</strong></div>
               <label>偏好学科<input value={subjectText} onChange={(event) => setSubjectText(event.target.value)} placeholder="GENERAL, AGRONOMY" /><small>逗号或空格分隔，最多 10 项。</small></label>
               <button className="button button--primary" disabled={busy !== null} type="submit">{busy === 'profile' ? '正在保存' : '保存资料'}</button>
             </form>
 
             <form className="form-section" onSubmit={submitPreferences}>
-              <header><h2>学习偏好</h2><p>每日目标、默认难度和动态效果会同步到服务端。</p></header>
+              <header><h2>学习偏好</h2><p>每日目标、内容难度和动态效果会用于后续复习。</p></header>
               <label>每日目标（分钟）<input type="number" min={5} max={180} step={1} value={preferences.dailyGoalMinutes} onChange={(event) => setPreferences((current) => ({ ...current, dailyGoalMinutes: Number(event.target.value) }))} /></label>
               <label>内容难度<select value={preferences.contentDifficulty} onChange={(event) => setPreferences((current) => ({ ...current, contentDifficulty: event.target.value as ContentDifficulty }))}><option value="BASIC">基础</option><option value="STANDARD">标准</option><option value="ADVANCED">进阶</option></select></label>
               <label className="toggle-field"><span><strong>减少动态效果</strong><small>关闭页面位移和非必要过渡。</small></span><input type="checkbox" checked={preferences.reducedMotion} onChange={(event) => setPreferences((current) => ({ ...current, reducedMotion: event.target.checked }))} /></label>

@@ -9,10 +9,10 @@ export default function FeaturePlaceholderPage({ title, description }: { title: 
       <button className="placeholder-page__back" type="button" onClick={() => navigate('/home')}><BackIcon />返回主页</button>
       <section>
         <BrandMark compact />
-        <p>功能接口预留</p>
+        <p>功能准备中</p>
         <h1>{title}</h1>
         <p>{description}</p>
-        <button type="button" onClick={() => navigate('/home')}>完成测试并返回</button>
+        <button type="button" onClick={() => navigate('/home')}>返回主页</button>
       </section>
     </main>
   )
