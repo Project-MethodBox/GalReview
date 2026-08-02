@@ -3,11 +3,20 @@ import { useNavigate } from 'react-router'
 import AppShell, { PageHeader } from '../components/AppShell'
 import { api } from '../lib/api'
 import { clearSession, readProfile, saveProfile } from '../lib/session'
-import { readColorTheme, readReducedMotion, saveColorTheme, saveReducedMotion, type ColorTheme } from '../lib/theme'
+import { readReducedMotion, saveReducedMotion } from '../lib/theme'
 import { resetWorkflow } from '../lib/workflow'
 import type { ContentDifficulty, UserPreferencesInput, UserProfile } from '../types/api'
 
 const defaults: UserPreferencesInput = { dailyGoalMinutes: 30, contentDifficulty: 'STANDARD', reducedMotion: readReducedMotion() }
+
+type SettingsSection = 'profile' | 'learning' | 'security' | 'danger'
+
+const settingsSections: { id: SettingsSection; label: string }[] = [
+  { id: 'profile', label: '个人资料' },
+  { id: 'learning', label: '学习偏好' },
+  { id: 'security', label: '账户安全' },
+  { id: 'danger', label: '账户注销' },
+]
 
 function parseSubjects(value: string) {
   return [...new Set(value.split(/[,，\s]+/).map((item) => item.trim().toUpperCase()).filter(Boolean))]
@@ -20,11 +29,11 @@ export default function SettingsPage() {
   const [displayName, setDisplayName] = useState(stored?.displayName || '')
   const [subjectText, setSubjectText] = useState(stored?.preferredSubjectCodes.join(', ') || '')
   const [preferences, setPreferences] = useState<UserPreferencesInput>(defaults)
-  const [colorTheme, setColorTheme] = useState<ColorTheme>(readColorTheme())
   const [passwords, setPasswords] = useState({ current: '', next: '', confirm: '' })
   const [deletion, setDeletion] = useState({ password: '', confirmation: '' })
+  const [activeSection, setActiveSection] = useState<SettingsSection>('profile')
   const [busy, setBusy] = useState<string | null>('load')
-  const [message, setMessage] = useState('正在同步设置。')
+  const [message, setMessage] = useState('')
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -37,7 +46,6 @@ export default function SettingsPage() {
       setDisplayName(nextProfile.displayName)
       setSubjectText(nextProfile.preferredSubjectCodes.join(', '))
       setPreferences(nextPreferences)
-      setMessage('设置已同步。')
     }).catch((reason: unknown) => {
       if (active) setError(reason instanceof Error ? reason.message : '设置读取失败。')
     }).finally(() => { if (active) setBusy(null) })
@@ -45,11 +53,6 @@ export default function SettingsPage() {
   }, [])
 
   function start(section: string) { setBusy(section); setError(''); setMessage('') }
-
-  function changeColorTheme(value: ColorTheme) {
-    setColorTheme(value)
-    saveColorTheme(value)
-  }
 
   async function submitProfile(event: FormEvent) {
     event.preventDefault()
@@ -101,20 +104,24 @@ export default function SettingsPage() {
         <div className="settings-layout">
           <aside className="settings-index" aria-label="设置分类">
             <h2>设置</h2>
-            <nav>
-              <a href="#appearance-settings">外观</a>
-              <a href="#profile-settings">个人资料</a>
-              <a href="#learning-settings">学习偏好</a>
-              <a href="#security-settings">账户安全</a>
-              <a href="#danger-settings">账户注销</a>
+            <nav role="tablist" aria-orientation="vertical">
+              {settingsSections.map((section) => (
+                <button
+                  key={section.id}
+                  className={activeSection === section.id ? 'active' : ''}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeSection === section.id}
+                  aria-controls={`${section.id}-settings`}
+                  onClick={() => setActiveSection(section.id)}
+                >
+                  {section.label}
+                </button>
+              ))}
             </nav>
           </aside>
-          <section className="settings-main">
-            <section className="form-section" id="appearance-settings">
-              <header><h2>外观</h2></header>
-              <label className="toggle-field"><span><strong>深色模式</strong></span><input type="checkbox" role="switch" aria-label="深色模式" checked={colorTheme === 'dark'} onChange={(event) => changeColorTheme(event.target.checked ? 'dark' : 'light')} /></label>
-            </section>
-
+          <section className="settings-main" role="tabpanel" aria-live="polite">
+            {activeSection === 'profile' ? (
             <form className="form-section" id="profile-settings" onSubmit={submitProfile}>
               <header><h2>个人资料</h2></header>
               <label>显示名称<input maxLength={64} required value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>
@@ -122,7 +129,9 @@ export default function SettingsPage() {
               <label>偏好学科<input value={subjectText} onChange={(event) => setSubjectText(event.target.value)} placeholder="GENERAL, AGRONOMY" /><small>逗号或空格分隔，最多 10 项。</small></label>
               <button className="button button--primary" disabled={busy !== null} type="submit">{busy === 'profile' ? '正在保存' : '保存资料'}</button>
             </form>
+            ) : null}
 
+            {activeSection === 'learning' ? (
             <form className="form-section" id="learning-settings" onSubmit={submitPreferences}>
               <header><h2>学习偏好</h2></header>
               <label>每日目标（分钟）<input type="number" min={5} max={180} step={1} value={preferences.dailyGoalMinutes} onChange={(event) => setPreferences((current) => ({ ...current, dailyGoalMinutes: Number(event.target.value) }))} /></label>
@@ -130,7 +139,9 @@ export default function SettingsPage() {
               <label className="toggle-field"><span><strong>减少动态效果</strong><small>关闭页面位移和非必要过渡。</small></span><input type="checkbox" role="switch" aria-label="减少动态效果" checked={preferences.reducedMotion} onChange={(event) => setPreferences((current) => ({ ...current, reducedMotion: event.target.checked }))} /></label>
               <button className="button button--primary" disabled={busy !== null} type="submit">{busy === 'preferences' ? '正在保存' : '保存偏好'}</button>
             </form>
+            ) : null}
 
+            {activeSection === 'security' ? (
             <form className="form-section" id="security-settings" onSubmit={submitPassword}>
               <header><h2>修改密码</h2><p>输入当前密码后设置至少 8 个字符的新密码。</p></header>
               <label>当前密码<input type="password" autoComplete="current-password" value={passwords.current} onChange={(event) => setPasswords((current) => ({ ...current, current: event.target.value }))} /></label>
@@ -138,13 +149,14 @@ export default function SettingsPage() {
               <label>确认新密码<input type="password" autoComplete="new-password" minLength={8} value={passwords.confirm} onChange={(event) => setPasswords((current) => ({ ...current, confirm: event.target.value }))} /></label>
               <button className="button button--primary" disabled={busy !== null} type="submit">{busy === 'password' ? '正在修改' : '修改密码'}</button>
             </form>
-          </section>
+            ) : null}
 
-          <aside className="settings-side">
+            {activeSection === 'danger' ? (
             <form className="side-section danger-section" id="danger-settings" onSubmit={deleteAccount}><h2>永久注销账户</h2><p>操作立即生效且不可恢复。</p><label>当前密码<input type="password" autoComplete="current-password" value={deletion.password} onChange={(event) => setDeletion((current) => ({ ...current, password: event.target.value }))} /></label><label>输入“永久注销”<input value={deletion.confirmation} onChange={(event) => setDeletion((current) => ({ ...current, confirmation: event.target.value }))} /></label><button className="button button--danger" disabled={busy !== null || deletion.confirmation !== '永久注销' || !deletion.password} type="submit">{busy === 'delete' ? '正在注销' : '永久注销账户'}</button></form>
-          </aside>
+            ) : null}
+          </section>
         </div>
-        <p className={error ? 'status-line status-line--error' : 'status-line'} role="status">{error || message}</p>
+        {error || message ? <p className={error ? 'status-line status-line--error' : 'status-line'} role="status">{error || message}</p> : null}
       </main>
     </AppShell>
   )

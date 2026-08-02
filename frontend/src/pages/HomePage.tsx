@@ -4,6 +4,7 @@ import AppShell, { PageHeader } from '../components/AppShell'
 import { GraphIcon, KnowledgeIcon, MaterialsIcon, ReviewIcon } from '../components/icons'
 import { api } from '../lib/api'
 import { readProfile, saveProfile } from '../lib/session'
+import { readColorTheme, saveColorTheme, type ColorTheme } from '../lib/theme'
 import { readWorkflow } from '../lib/workflow'
 
 function resumeState() {
@@ -18,9 +19,15 @@ function resumeState() {
 export default function HomePage() {
   const location = useLocation()
   const [profile, setProfile] = useState(readProfile())
+  const [colorTheme, setColorTheme] = useState<ColorTheme>(readColorTheme())
   const [message, setMessage] = useState((location.state as { message?: string } | null)?.message || '')
   const resume = resumeState()
   const workflow = readWorkflow()
+
+  function changeColorTheme(value: ColorTheme) {
+    setColorTheme(value)
+    saveColorTheme(value)
+  }
 
   useEffect(() => {
     if (profile) return
@@ -30,19 +37,24 @@ export default function HomePage() {
   return (
     <AppShell>
       <main className="page home-dashboard">
-        <PageHeader title="主页" />
+        <PageHeader title="主页" actions={(
+          <label className="toggle-field home-theme-toggle">
+            <span><strong>深色模式</strong></span>
+            <input type="checkbox" role="switch" aria-label="深色模式" checked={colorTheme === 'dark'} onChange={(event) => changeColorTheme(event.target.checked ? 'dark' : 'light')} />
+          </label>
+        )} />
         {message ? <p className="status-line" role="status">{message}</p> : null}
 
         <section className="home-welcome">
           <div className="home-welcome__intro">
             <div><span>{resume.step}</span><h2>欢迎回来，{profile?.displayName || '学习者'}</h2><p>{resume.detail}</p></div>
-            <Link className="button button--primary" to={resume.to}>{resume.action}</Link>
+            {resume.action === '选择复习范围' ? null : <Link className="button button--primary" to={resume.to}>{resume.action}</Link>}
           </div>
           <div className="home-quick-actions" aria-label="页面快捷入口">
-            <Link to="/materials"><span className="quick-action-icon"><MaterialsIcon /></span><span><strong>资料</strong><small>采章入卷</small></span><i aria-hidden="true">→</i></Link>
-            <Link to="/knowledge"><span className="quick-action-icon"><KnowledgeIcon /></span><span><strong>知识点</strong><small>循章识要</small></span><i aria-hidden="true">→</i></Link>
-            <Link to="/knowledge-graph"><span className="quick-action-icon"><GraphIcon /></span><span><strong>知识图谱</strong><small>观脉寻源</small></span><i aria-hidden="true">→</i></Link>
-            <Link to="/review"><span className="quick-action-icon"><ReviewIcon /></span><span><strong>复习</strong><small>温故知新</small></span><i aria-hidden="true">→</i></Link>
+            <Link to="/materials"><span className="quick-action-icon quick-action-icon--materials"><MaterialsIcon /></span><span><strong>资料</strong><small>采章入卷</small></span><i aria-hidden="true">→</i></Link>
+            <Link to="/knowledge"><span className="quick-action-icon quick-action-icon--knowledge"><KnowledgeIcon /></span><span><strong>知识点</strong><small>循章识要</small></span><i aria-hidden="true">→</i></Link>
+            <Link to="/knowledge-graph"><span className="quick-action-icon quick-action-icon--graph"><GraphIcon /></span><span><strong>知识图谱</strong><small>观脉寻源</small></span><i aria-hidden="true">→</i></Link>
+            <Link to="/review"><span className="quick-action-icon quick-action-icon--review"><ReviewIcon /></span><span><strong>复习</strong><small>温故知新</small></span><i aria-hidden="true">→</i></Link>
           </div>
         </section>
 

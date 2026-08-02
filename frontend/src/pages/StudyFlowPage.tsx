@@ -40,11 +40,13 @@ export default function StudyFlowPage() {
   const [force, setForce] = useState(false)
   const [search, setSearch] = useState('')
   const [busy, setBusy] = useState(false)
-  const [progress, setProgress] = useState(initial.graph ? '图谱已就绪，可以选择复习范围。' : '选择文件或已上传资料。')
+  const [progress, setProgress] = useState(initial.graph ? '' : '选择文件或已上传资料。')
   const [error, setError] = useState('')
   const [preview, setPreview] = useState<ExtractedTextDocument>()
   const [previewName, setPreviewName] = useState('')
   const [previewBusy, setPreviewBusy] = useState(false)
+  const [flowStep, setFlowStep] = useState<'materials' | 'scope'>('materials')
+  const [flowAnimation, setFlowAnimation] = useState<'idle' | 'exit' | 'enter'>('idle')
 
   useEffect(() => {
     void api.getAllMaterials().then(setMaterials).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : '资料列表读取失败。'))
@@ -52,6 +54,16 @@ export default function StudyFlowPage() {
 
   const visibleMaterials = useMemo(() => materials.filter((item) => item.status !== 'DELETED' && item.displayName.toLowerCase().includes(search.trim().toLowerCase())), [materials, search])
   const selectedChapters = useMemo(() => chapters.filter((chapter) => selectedChapterIds.includes(chapter.chapterId)), [chapters, selectedChapterIds])
+
+  function moveToStep(nextStep: 'materials' | 'scope') {
+    if (nextStep === flowStep || flowAnimation !== 'idle') return
+    setFlowAnimation('exit')
+    window.setTimeout(() => {
+      setFlowStep(nextStep)
+      setFlowAnimation('enter')
+      window.setTimeout(() => setFlowAnimation('idle'), 300)
+    }, 220)
+  }
 
   async function processMaterial(source: Material) {
     setBusy(true); setError(''); setMaterial(source)
@@ -106,7 +118,7 @@ export default function StudyFlowPage() {
     if ((file.type.startsWith('image/') || /\.(png|jpe?g)$/i.test(file.name)) && !enableOcr) return setError('图片资料需要先开启 OCR。')
     setBusy(true); setError(''); setProgress('正在上传资料。')
     try {
-      resetWorkflow(); setGraph(undefined); setChapters([]); setSelectedChapterIds([])
+      resetWorkflow(); setGraph(undefined); setChapters([]); setSelectedChapterIds([]); setFlowStep('materials')
       const uploaded = await api.uploadMaterial(file, displayName || file.name, subjectCode)
       setMaterial(uploaded); setMaterials((current) => [uploaded, ...current.filter((item) => item.materialId !== uploaded.materialId)]); updateWorkflow({ material: uploaded })
       setProgress('文件上传完成，正在处理资料。')
@@ -147,7 +159,7 @@ export default function StudyFlowPage() {
     try {
       await api.deleteMaterial(item.materialId)
       setMaterials((current) => current.filter((entry) => entry.materialId !== item.materialId))
-      if (material?.materialId === item.materialId) { resetWorkflow(); setMaterial(undefined); setGraph(undefined); setChapters([]); setSelectedChapterIds([]) }
+      if (material?.materialId === item.materialId) { resetWorkflow(); setMaterial(undefined); setGraph(undefined); setChapters([]); setSelectedChapterIds([]); setFlowStep('materials') }
       setProgress('资料已删除。')
     } catch (reason) { setError(reason instanceof Error ? reason.message : '资料删除失败。') } finally { setBusy(false) }
   }
@@ -169,37 +181,44 @@ export default function StudyFlowPage() {
   return (
     <AppShell>
       <main className="page materials-page">
-        <PageHeader title="资料与学习计划" actions={graph ? <Link className="button" to="/knowledge-graph">查看图谱</Link> : null} />
+        <PageHeader title="资料与学习计划" />
 
-        <div className="process-layout">
+        <div className={`process-layout process-layout--${flowStep} process-layout--${flowAnimation}`}>
           <section className="process-primary">
-            <form className="form-section upload-panel" onSubmit={upload}>
-              <header><h2>上传资料</h2><p>文件上限为 10 MiB。图片和扫描件需要开启 OCR 才能识别文字。</p></header>
+            <details className="form-section upload-panel" open>
+              <summary><span><h2>上传资料</h2><p>文件上限为 10 MiB。图片和扫描件需要开启 OCR 才能识别文字。</p></span><i aria-hidden="true" /></summary>
+              <form className="upload-panel__form" onSubmit={upload}>
               <label>文件<input type="file" accept=".pdf,.docx,.md,.markdown,.html,.htm,.txt,.png,.jpg,.jpeg" onChange={(event) => setFile(event.target.files?.[0] || null)} /></label>
               <label>资料名称<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder={file?.name || '选填'} /></label>
               <label>学科代码<input value={subjectCode} onChange={(event) => setSubjectCode(event.target.value.toUpperCase())} pattern="[A-Z][A-Z0-9_]{0,31}" placeholder="GENERAL" /></label>
               <div className="option-row">
                 <label className="toggle-field"><span><strong>启用 OCR</strong><small>仅在图片或扫描件需要时开启。</small></span><input type="checkbox" role="switch" aria-label="启用 OCR" checked={enableOcr} onChange={(event) => setEnableOcr(event.target.checked)} /></label>
-                <label className="inline-select-field"><span>OCR 模式</span><select aria-label="OCR 模式" disabled={!enableOcr} value={ocrMode} onChange={(event) => setOcrMode(event.target.value as 'quick' | 'standard')}><option value="standard">标准识别</option><option value="quick">快速识别</option></select></label>
+                <label className="inline-select-field"><span>OCR 模式</span><select aria-label="OCR 模式" disabled={!enableOcr} value={ocrMode} onChange={(event) => setOcrMode(event.target.value as 'quick' | 'standard')}><option value="standard">标准</option><option value="quick">快速</option></select></label>
               </div>
               <label className="toggle-field compact-toggle"><span><strong>重新提取</strong><small>再次处理已完成的资料并更新提取结果。</small></span><input type="checkbox" role="switch" aria-label="重新提取" checked={force} onChange={(event) => setForce(event.target.checked)} /></label>
               <button className="button button--primary" disabled={busy} type="submit">{busy ? '正在处理' : '上传并构建图谱'}</button>
-            </form>
+              </form>
+            </details>
 
             <section className="material-library">
               <header><div><h2>资料库</h2><p>{materials.filter((item) => item.status !== 'DELETED').length} 份资料</p></div><input aria-label="搜索资料" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索资料" /></header>
               <div className="material-table">
-                {visibleMaterials.map((item) => <article className={material?.materialId === item.materialId ? 'selected' : ''} key={item.materialId}><button className="material-open" type="button" disabled={busy} onClick={() => void processMaterial(item)}><span><strong>{item.displayName}</strong><small>{item.originalFileName}</small></span><em>{item.status}</em></button><div className="material-actions">{item.status === 'READY' ? <button type="button" disabled={previewBusy} onClick={() => void openTextPreview(item)}>文本</button> : null}<button className="material-delete" type="button" disabled={busy || item.status === 'PROCESSING'} onClick={() => void deleteMaterial(item)}>删除</button></div></article>)}
+                {visibleMaterials.map((item) => <article className={material?.materialId === item.materialId ? 'selected' : ''} key={item.materialId}><button className="material-open" type="button" disabled={busy} onClick={() => void processMaterial(item)}><span><strong>{item.displayName}</strong><small>{item.originalFileName}</small></span><em className={`material-status material-status--${item.status.toLowerCase()}`}>{item.status}</em></button><div className="material-actions">{item.status === 'READY' ? <button type="button" disabled={previewBusy} onClick={() => void openTextPreview(item)}>文本</button> : null}<button className="material-delete" type="button" disabled={busy || item.status === 'PROCESSING'} onClick={() => void deleteMaterial(item)}>删除</button></div></article>)}
                 {!visibleMaterials.length ? <p className="empty-row">没有匹配的资料。</p> : null}
               </div>
             </section>
+            {graph && flowStep === 'materials' ? <button className="button button--primary flow-next-button" type="button" disabled={busy} onClick={() => moveToStep('scope')}>选择复习范围 →</button> : null}
           </section>
 
-          <aside className="plan-panel">
-            <header><span>下一步</span><h2>选择复习范围</h2></header>
-            {!graph ? null : <>
+          {graph && flowStep === 'scope' ? <aside className="plan-panel">
+            <>
+              <header>
+                <span>复习范围</span>
+                <h2>选择复习范围</h2>
+              </header>
+              <p className="flow-scope-intro">图谱已准备完成。选择章节后，可设置并创建复习计划。</p>
               <dl className="plan-summary"><div><dt>学科</dt><dd>{graph.subjectCode}</dd></div><div><dt>知识点</dt><dd>{graph.pointCount}</dd></div><div><dt>关系</dt><dd>{graph.relationCount}</dd></div></dl>
-              <div className="segmented-control"><button className={planType === 'ASSESSMENT' ? 'active' : ''} type="button" onClick={() => setPlanType('ASSESSMENT')}>全面测试</button><button className={planType === 'LEARNING' ? 'active' : ''} type="button" onClick={() => setPlanType('LEARNING')}>章节学习</button></div>
+              <div className={`segmented-control plan-type-switch plan-type-switch--${planType === 'ASSESSMENT' ? 'assessment' : 'learning'}`}><button className={`plan-type-button plan-type-button--assessment${planType === 'ASSESSMENT' ? ' is-active' : ''}`} type="button" onClick={() => setPlanType('ASSESSMENT')}>全面测试</button><button className={`plan-type-button plan-type-button--learning${planType === 'LEARNING' ? ' is-active' : ''}`} type="button" onClick={() => setPlanType('LEARNING')}>章节学习</button></div>
               <div className="chapter-actions"><button type="button" onClick={() => setSelectedChapterIds(chapters.map((item) => item.chapterId))}>全选</button><button type="button" onClick={() => setSelectedChapterIds([])}>清空</button></div>
               <div className="chapter-picker">{chapters.map((chapter) => <label key={chapter.chapterId} style={{ paddingLeft: `${chapter.depth * 14}px` }}><input type="checkbox" checked={selectedChapterIds.includes(chapter.chapterId)} onChange={() => setSelectedChapterIds((current) => current.includes(chapter.chapterId) ? current.filter((id) => id !== chapter.chapterId) : [...current, chapter.chapterId])} /><span>{chapter.title}</span></label>)}</div>
               <details className="plan-options">
@@ -214,10 +233,11 @@ export default function StudyFlowPage() {
                 </div>}
               </details>
               <button className="button button--primary" type="button" disabled={busy || selectedChapters.length === 0} onClick={() => void createPlan()}>创建{planType === 'ASSESSMENT' ? '测试' : '学习'}计划</button>
-            </>}
-          </aside>
+              <div className="flow-back-row"><button className="button flow-back-button" type="button" onClick={() => moveToStep('materials')}>← 返回</button></div>
+            </>
+          </aside> : null}
         </div>
-        <p className={error ? 'status-line status-line--error' : 'status-line'} role="status">{error || progress}</p>
+        {error || progress ? <p className={error ? 'status-line status-line--error' : 'status-line'} role="status">{error || progress}</p> : null}
         {preview ? <div className="preview-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreview(undefined) }}>
           <section className="text-preview" role="dialog" aria-modal="true" aria-labelledby="text-preview-title">
             <header><div><span>提取文本</span><h2 id="text-preview-title">{previewName}</h2><p>{preview.textLength.toLocaleString('zh-CN')} 字符 · {preview.parserVersion}</p></div><button type="button" aria-label="关闭文本预览" onClick={() => setPreview(undefined)}>关闭</button></header>
