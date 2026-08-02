@@ -309,8 +309,8 @@ app.Run();
 
 static void EnsureAllowedServicePort(int port, string settingName)
 {
-    if (port is < 5000 or > 5300)
-        throw new InvalidOperationException($"{settingName} port must be between 5000 and 5300.");
+    if (port != 3306 && port is < 5000 or > 5300)
+        throw new InvalidOperationException($"{settingName} port must be 3306 or between 5000 and 5300.");
 }
 
 static async Task<bool> CreateProfileAsync(HttpClient client, string key, string correlationId, string userId, string displayName, CancellationToken cancellation)
