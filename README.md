@@ -117,7 +117,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PortPolicy.ps
 
 # Gateway
 cd gateway
-npm ci
+npm install
 npm run build
 npm test
 
