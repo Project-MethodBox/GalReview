@@ -10,4 +10,7 @@
     <Content Remove="Tests\**" />
     <EmbeddedResource Remove="Tests\**" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="MongoDB.Driver" Version="3.10.0" />
+  </ItemGroup>
 </Project>

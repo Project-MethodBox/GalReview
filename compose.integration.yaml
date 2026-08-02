@@ -183,8 +183,13 @@ services:
       Gateway__ServiceKey: ${GALGAME_SERVICE_KEY:-moonstone-local-gateway-key}
       InternalAccess__ValidationAllowedServices__0: RenderService
       InternalAccess__PackageReaderAllowedServices__0: RenderService
+      ConnectionStrings__GameDatabase: mongodb://mongo:5253
+      MongoDb__Database: qzwl_galgame
+      GalGameStore__Provider: MongoDB
     depends_on:
       knowledge-service:
+        condition: service_healthy
+      mongo:
         condition: service_healthy
     restart: unless-stopped
 
@@ -193,9 +198,6 @@ services:
       context: ./backend/RenderService
     environment:
       PORT: 5106
-      Gateway__BaseUrl: http://gateway:5000
-      Gateway__ServiceName: RenderService
-      Gateway__ServiceKey: ${RENDER_SERVICE_KEY:-moonstone-local-gateway-key}
     restart: unless-stopped
 
   gateway:

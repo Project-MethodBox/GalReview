@@ -1,0 +1,376 @@
+{
+    "schemaVersion": "1.0",
+    "packageId": "8453064f-b6d7-4fca-8847-ef137168c0f2",
+    "generatorVersion": "gala-0.1.0",
+    "reviewPlanId": "8e812950-3311-40a7-93ab-636409df8cc2",
+    "snapshotVersion": "plan-graph-1.0:3da5f48f37ac57c91b49ee747c11e45f1a9e9e73d8e892fcd1bd1f9f3f50c620",
+    "entrySceneId": "scene-001",
+    "scenes": [
+        {
+            "sceneId": "scene-001",
+            "title": "图书馆的自习时光",
+            "dialogue": [
+                {
+                    "speakerId": "林学姐",
+                    "text": "嘿，学弟！今天又是复习日呢。学姐已经占到图书馆老位置啦，窗边的那个，阳光正好。",
+                    "emotion": "cheerful"
+                },
+                {
+                    "speakerId": "林学姐",
+                    "text": "今天我们要系统复习「水稻」的相关知识，从生长周期到田间管理，一共三道题。",
+                    "emotion": "encouraging"
+                },
+                {
+                    "speakerId": "林学姐",
+                    "text": "放心，学姐会带你一步步走完的。每道题之前我都会先帮你梳理知识点，不用紧张。准备好了就开始吧！",
+                    "emotion": "warm"
+                }
+            ],
+            "choices": [
+                {
+                    "choiceId": "c-scene-001-1",
+                    "questionId": "ec09b73b-7097-4eeb-8896-a08b3036ec1c",
+                    "text": "准备好了，开始吧！",
+                    "nextSceneId": "scene-002",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"
+                }
+            ],
+            "knowledgeBindings": [
+                {
+                    "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",
+                    "purpose": "FEEDBACK",
+                    "questionId": null
+                }
+            ]
+        },
+        {
+            "sceneId": "scene-002",
+            "title": "知识点讲解：水稻基本生长周期",
+            "dialogue": [
+                {
+                    "speakerId": "林学姐",
+                    "text": "在正式做题之前，我们先回顾一下「水稻基本生长周期」，这可是后面所有题目的基础。",
+                    "emotion": "thoughtful"
+                },
+                {
+                    "speakerId": "林学姐",
+                    "text": "水稻从播种到成熟，完整经历五个阶段：幼苗期、分蘖期、拔节期、抽穗期和成熟期。每个阶段都有不同的生理特征和管理重点。",
+                    "emotion": "explaining"
+                },
+                {
+                    "speakerId": "林学姐",
+                    "text": "比如分蘖期关注群体数量，抽穗期关注水分供应。记住这个大框架，等下做题就不会一头雾水了。",
+                    "emotion": "informative"
+                }
+            ],
+            "choices": [
+                {
+                    "choiceId": "c-scene-002-1",
+                    "questionId": "802d68e4-5f8c-4a84-a191-21c6a61a0cc3",
+                    "text": "了解了，继续。",
+                    "nextSceneId": "scene-003",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "84f7d873-e573-4689-b18d-6f82c745d1bf"
+                }
+            ],
+            "knowledgeBindings": [
+                {
+                    "knowledgePointId": "84f7d873-e573-4689-b18d-6f82c745d1bf",
+                    "purpose": "EXPLAIN",
+                    "questionId": null
+                }
+            ]
+        },
+        {
+            "sceneId": "scene-003",
+            "title": "复习题：水稻分蘖期管理",
+            "dialogue": [
+                {
+                    "speakerId": "林学姐",
+                    "text": "好，第一道题来了！这道题考的是分蘖期的管理。想想刚才讲过的五个阶段，分蘖期排在第二位，它的管理目标是什么呢？",
+                    "emotion": "challenging"
+                },
+                {
+                    "speakerId": "林学姐",
+                    "text": "根据所学内容，关于「水稻分蘖期管理」最准确的描述是？",
+                    "emotion": "questioning"
+                }
+            ],
+            "choices": [
+                {
+                    "choiceId": "c-scene-003-d2",
+                    "questionId": "bfc7e572-f1df-4474-8965-f0066db84f10",
+                    "text": "分蘖期管理的核心是尽早追施大量氮肥，使分蘖数越多越好",
+                    "nextSceneId": "scene-004",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",
+                    "answerKind": "CHOICE",
+                    "correct": false
+                },
+                {
+                    "choiceId": "c-scene-003-correct",
+                    "questionId": "bfc7e572-f1df-4474-8965-f0066db84f10",
+                    "text": "协调群体数量与个体生长，通过水肥调控促进有效分蘖，控制无效分蘖",
+                    "nextSceneId": "scene-004",
+                    "scoreDelta": 1,
+                    "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",
+                    "answerKind": "CHOICE",
+                    "correct": true
+                },
+                {
+                    "choiceId": "c-scene-003-d3",
+                    "questionId": "bfc7e572-f1df-4474-8965-f0066db84f10",
+                    "text": "分蘖期不需要水分管理，保持自然降雨即可",
+                    "nextSceneId": "scene-004",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",
+                    "answerKind": "CHOICE",
+                    "correct": false
+                },
+                {
+                    "choiceId": "c-scene-003-d1",
+                    "questionId": "bfc7e572-f1df-4474-8965-f0066db84f10",
+                    "text": "分蘖期应深水灌溉以促进分蘖芽萌发，水深保持 10cm 以上",
+                    "nextSceneId": "scene-004",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",
+                    "answerKind": "CHOICE",
+                    "correct": false
+                }
+            ],
+            "knowledgeBindings": [
+                {
+                    "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",
+                    "purpose": "QUESTION",
+                    "questionId": "bfc7e572-f1df-4474-8965-f0066db84f10"
+                }
+            ]
+        },
+        {
+            "sceneId": "scene-004",
+            "title": "中场小憩",
+            "dialogue": [
+                {
+                    "speakerId": "林学姐",
+                    "text": "做得不错！第一道题不管答对答错都没关系，重点是理解分蘖期管理的核心思路——「协调群体与个体」。",
+                    "emotion": "warm"
+                },
+                {
+                    "speakerId": "林学姐",
+                    "text": "接下来学姐再带你回顾拔节期和抽穗期的知识，然后出第二道题。深呼吸，继续！",
+                    "emotion": "encouraging"
+                }
+            ],
+            "choices": [
+                {
+                    "choiceId": "c-scene-004-1",
+                    "questionId": "f27afa70-8308-4114-9832-a6c4db2db385",
+                    "text": "好的，继续！",
+                    "nextSceneId": "scene-005",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"
+                }
+            ],
+            "knowledgeBindings": [
+                {
+                    "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",
+                    "purpose": "FEEDBACK",
+                    "questionId": null
+                }
+            ]
+        },
+        {
+            "sceneId": "scene-005",
+            "title": "知识点讲解：水稻拔节期与抽穗期",
+            "dialogue": [
+                {
+                    "speakerId": "林学姐",
+                    "text": "分蘖期之后就是拔节期和抽穗期了。这两个阶段对水分和养分的需求很高，是决定产量的关键期。",
+                    "emotion": "thoughtful"
+                },
+                {
+                    "speakerId": "林学姐",
+                    "text": "拔节期是茎秆快速伸长的阶段，此时需要保持田间有浅水层，同时注意防止倒伏，适当控制氮肥，避免茎秆徒长而柔弱。",
+                    "emotion": "explaining"
+                },
+                {
+                    "speakerId": "林学姐",
+                    "text": "抽穗期则是决定穗粒数的关键时期，需要保证充足的水分供应和适当的追肥。两个阶段共同决定了最终的产量构成。",
+                    "emotion": "informative"
+                }
+            ],
+            "choices": [
+                {
+                    "choiceId": "c-scene-005-1",
+                    "questionId": "88a62541-f6b3-4a09-800d-38082f95e282",
+                    "text": "明白了，出题吧！",
+                    "nextSceneId": "scene-006",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "f6a7b8c9-d0e1-4f2a-3b4c-5d6e7f8090a0"
+                }
+            ],
+            "knowledgeBindings": [
+                {
+                    "knowledgePointId": "f6a7b8c9-d0e1-4f2a-3b4c-5d6e7f8090a0",
+                    "purpose": "EXPLAIN",
+                    "questionId": null
+                }
+            ]
+        },
+        {
+            "sceneId": "scene-006",
+            "title": "复习题：水稻拔节期管理要点",
+            "dialogue": [
+                {
+                    "speakerId": "林学姐",
+                    "text": "第二道题来了！这次考的是拔节期的管理要点。关键词是「浅水层」「防倒伏」「控氮肥」，想想为什么。",
+                    "emotion": "challenging"
+                },
+                {
+                    "speakerId": "林学姐",
+                    "text": "根据所学内容，关于「水稻拔节期管理」最准确的描述是？",
+                    "emotion": "questioning"
+                }
+            ],
+            "choices": [
+                {
+                    "choiceId": "c-scene-006-d2",
+                    "questionId": "851660b2-30b1-4751-8d11-6cb8675aa946",
+                    "text": "拔节期主要管理目标是促进分蘖大量发生，增加有效穗数",
+                    "nextSceneId": "scene-007",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "f6a7b8c9-d0e1-4f2a-3b4c-5d6e7f8090a0",
+                    "answerKind": "CHOICE",
+                    "correct": false
+                },
+                {
+                    "choiceId": "c-scene-006-correct",
+                    "questionId": "851660b2-30b1-4751-8d11-6cb8675aa946",
+                    "text": "拔节期需保持田间浅水层，注意防止倒伏，适当控制氮肥以防茎秆徒长",
+                    "nextSceneId": "scene-007",
+                    "scoreDelta": 1,
+                    "knowledgePointId": "f6a7b8c9-d0e1-4f2a-3b4c-5d6e7f8090a0",
+                    "answerKind": "CHOICE",
+                    "correct": true
+                },
+                {
+                    "choiceId": "c-scene-006-d3",
+                    "questionId": "851660b2-30b1-4751-8d11-6cb8675aa946",
+                    "text": "拔节期对水分和养分需求不大，可以减少灌溉和施肥",
+                    "nextSceneId": "scene-007",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "f6a7b8c9-d0e1-4f2a-3b4c-5d6e7f8090a0",
+                    "answerKind": "CHOICE",
+                    "correct": false
+                },
+                {
+                    "choiceId": "c-scene-006-d1",
+                    "questionId": "851660b2-30b1-4751-8d11-6cb8675aa946",
+                    "text": "拔节期应排水晒田至土壤开裂，促进根系向深层下扎",
+                    "nextSceneId": "scene-007",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "f6a7b8c9-d0e1-4f2a-3b4c-5d6e7f8090a0",
+                    "answerKind": "CHOICE",
+                    "correct": false
+                }
+            ],
+            "knowledgeBindings": [
+                {
+                    "knowledgePointId": "f6a7b8c9-d0e1-4f2a-3b4c-5d6e7f8090a0",
+                    "purpose": "QUESTION",
+                    "questionId": "851660b2-30b1-4751-8d11-6cb8675aa946"
+                }
+            ]
+        },
+        {
+            "sceneId": "scene-007",
+            "title": "最后一道题：水稻成熟期判断",
+            "dialogue": [
+                {
+                    "speakerId": "林学姐",
+                    "text": "还有最后一道题！这次考成熟期的判断标准。提示：成熟期不是只看叶子颜色那么简单哦。",
+                    "emotion": "playful"
+                },
+                {
+                    "speakerId": "林学姐",
+                    "text": "关于「水稻成熟期的判断标准」，以下哪个说法是正确的？",
+                    "emotion": "questioning"
+                }
+            ],
+            "choices": [
+                {
+                    "choiceId": "c-scene-007-d3",
+                    "questionId": "418fb93b-c9cb-4d43-9ccb-8909bf7480c2",
+                    "text": "成熟期判断与籽粒含水量无关，主要看穗部颜色变化",
+                    "nextSceneId": "scene-008",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "c9d0e1f2-a3b4-4c5d-6e7f-8090a1b2c3d3",
+                    "answerKind": "CHOICE",
+                    "correct": false
+                },
+                {
+                    "choiceId": "c-scene-007-correct",
+                    "questionId": "418fb93b-c9cb-4d43-9ccb-8909bf7480c2",
+                    "text": "水稻成熟期分为乳熟期、蜡熟期和完熟期，完熟期籽粒含水量降至 20%~25%，是最佳收获期",
+                    "nextSceneId": "scene-008",
+                    "scoreDelta": 1,
+                    "knowledgePointId": "c9d0e1f2-a3b4-4c5d-6e7f-8090a1b2c3d3",
+                    "answerKind": "CHOICE",
+                    "correct": true
+                },
+                {
+                    "choiceId": "c-scene-007-d2",
+                    "questionId": "418fb93b-c9cb-4d43-9ccb-8909bf7480c2",
+                    "text": "乳熟期籽粒充满乳浆时是最佳收获期，此时产量最高",
+                    "nextSceneId": "scene-008",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "c9d0e1f2-a3b4-4c5d-6e7f-8090a1b2c3d3",
+                    "answerKind": "CHOICE",
+                    "correct": false
+                },
+                {
+                    "choiceId": "c-scene-007-d1",
+                    "questionId": "418fb93b-c9cb-4d43-9ccb-8909bf7480c2",
+                    "text": "成熟期只需观察叶片是否全部变黄即可决定收获时间",
+                    "nextSceneId": "scene-008",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "c9d0e1f2-a3b4-4c5d-6e7f-8090a1b2c3d3",
+                    "answerKind": "CHOICE",
+                    "correct": false
+                }
+            ],
+            "knowledgeBindings": [
+                {
+                    "knowledgePointId": "c9d0e1f2-a3b4-4c5d-6e7f-8090a1b2c3d3",
+                    "purpose": "QUESTION",
+                    "questionId": "418fb93b-c9cb-4d43-9ccb-8909bf7480c2"
+                }
+            ]
+        },
+        {
+            "sceneId": "scene-008",
+            "title": "复习结束",
+            "dialogue": [
+                {
+                    "speakerId": "林学姐",
+                    "text": "太棒了！三道题全部完成，你对水稻生长周期和田间管理的理解又加深了不少呢。",
+                    "emotion": "proud"
+                },
+                {
+                    "speakerId": "林学姐",
+                    "text": "本次复习涵盖分蘖期、拔节期和成熟期三个核心知识点。学姐会记住你的进度，下次根据薄弱环节出题。",
+                    "emotion": "warm"
+                },
+                {
+                    "speakerId": "林学姐",
+                    "text": "好啦，去喝杯水休息一下吧，下次复习见！",
+                    "emotion": "cheerful"
+                }
+            ],
+            "choices": [],
+            "knowledgeBindings": []
+        }
+    ],
+    "assets": []
+}
