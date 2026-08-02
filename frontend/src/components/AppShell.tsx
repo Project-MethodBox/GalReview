@@ -3,7 +3,6 @@ import { Link, NavLink, useLocation, useNavigate } from 'react-router'
 import { api } from '../lib/api'
 import { clearSession, readProfile, readSession } from '../lib/session'
 import { resetWorkflow } from '../lib/workflow'
-import BrandMark from './BrandMark'
 import { GraphIcon, HomeIcon, KnowledgeIcon, LogoutIcon, MaterialsIcon, ReviewIcon, SettingsIcon } from './icons'
 
 const navigation = [
@@ -37,7 +36,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
     <div className="app-shell">
       <header className="app-rail">
         <Link className="rail-brand" to="/home" aria-label="千知万理主页" title="千知万理">
-          <BrandMark compact />
+          <img className="brand-mark brand-mark--compact" src="/brand-logo.svg" alt="" aria-hidden="true" />
           <span><strong>千知万理</strong><small>GalReview</small></span>
         </Link>
         <nav className="rail-nav" aria-label="主要导航">
@@ -54,7 +53,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         </div>
       </header>
       <header className="mobile-shell-head">
-        <Link to="/home" aria-label="千知万理主页"><BrandMark compact /><strong>千知万理</strong></Link>
+        <Link to="/home" aria-label="千知万理主页"><img className="brand-mark brand-mark--compact" src="/brand-logo.svg" alt="" aria-hidden="true" /><strong>千知万理</strong></Link>
         <span>{currentNavigation?.label || '工作台'}</span>
         <button type="button" aria-label="退出登录" onClick={() => void logout()}><LogoutIcon /></button>
       </header>
@@ -76,14 +75,9 @@ export function PageHeader({
   description?: string
   actions?: ReactNode
 }) {
-  const location = useLocation()
-  const navigationItem = navigation.find((item) => item.to === location.pathname)
-  const HeaderIcon = navigationItem?.icon
-
   return (
     <header className="page-header">
       <div className="page-header__copy">
-        {HeaderIcon ? <span className="page-header__icon" aria-hidden="true"><HeaderIcon /></span> : null}
         <div><h1>{title}</h1>{description ? <p>{description}</p> : null}</div>
       </div>
       {actions ? <div className="page-header__actions">{actions}</div> : null}

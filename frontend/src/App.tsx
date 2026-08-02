@@ -31,6 +31,20 @@ const routeDepth: Record<string, number> = {
   '/settings': 3,
 }
 
+const pageTitles: Record<string, string> = {
+  '/login': '登录',
+  '/register': '注册',
+  '/forgot-password': '找回密码',
+  '/admin/login': '管理员登录',
+  '/admin': '观测台',
+  '/home': '起点',
+  '/materials': '藏书阁',
+  '/knowledge': '拾知',
+  '/knowledge-graph': '知网',
+  '/review': '回响',
+  '/settings': '我的',
+}
+
 function Protected({ children }: { children: ReactNode }) {
   const session = readSession()
   const [ready, setReady] = useState(false)
@@ -76,6 +90,10 @@ function AnimatedRoutes() {
 
   useEffect(() => {
     previousPath.current = location.pathname
+  }, [location.pathname])
+
+  useEffect(() => {
+    document.title = `${pageTitles[location.pathname] ?? '页面未找到'} · 千知万理`
   }, [location.pathname])
 
   return (

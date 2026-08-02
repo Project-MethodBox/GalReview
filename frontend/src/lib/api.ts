@@ -574,6 +574,8 @@ export const api = {
   createGameGeneration(plan: PlanGraph, style: GameStyle, difficulty: Difficulty): Promise<GameGenerationJob> {
     return request('/game-generations', {
       method: 'POST',
+      // 比 Gateway 超时略长，优先展示后端的结构化失败信息。
+      timeoutMs: 65_000,
       body: json({
         reviewPlanId: plan.reviewPlanId,
         snapshotVersion: plan.snapshotVersion,

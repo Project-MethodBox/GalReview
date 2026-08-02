@@ -78,7 +78,7 @@ export default function KnowledgePointsPage() {
   return (
     <AppShell>
       <main className="page knowledge-page">
-        <PageHeader title="知识点" actions={<><button className="button" type="button" disabled={loading} onClick={() => setRefreshVersion((value) => value + 1)}>刷新掌握度</button><Link className="button" to="/knowledge-graph">查看图谱</Link></>} />
+        <PageHeader title="知识点" actions={<><button className="button button--quiet" type="button" disabled={loading} onClick={() => setRefreshVersion((value) => value + 1)}>刷新掌握度</button><span className="quiet-action-divider" aria-hidden="true" /><Link className="button button--quiet" to="/knowledge-graph">查看图谱</Link></>} />
         {!workflow.graph ? <section className="empty-state"><h2>还没有知识点</h2><Link className="button button--primary" to="/materials">上传资料</Link></section> : <>
           <section className="data-strip" aria-label="知识点概况">
             <div><span>知识点</span><strong>{points.length || workflow.graph.pointCount}</strong></div>
@@ -95,7 +95,7 @@ export default function KnowledgePointsPage() {
               <p>显示 {visiblePoints.length} / {points.length}</p>
             </aside>
             <section className="knowledge-list" aria-label="知识点列表">
-              {loading ? <p className="empty-row" role="status">正在读取知识点…</p> : visiblePoints.map((point) => {
+              {loading ? <p className="empty-row knowledge-list__status" role="status">正在读取知识点…</p> : visiblePoints.map((point) => {
                 const expanded = expandedId === point.pointId
                 return <article key={point.pointId} className={expanded ? 'expanded' : ''}>
                   <button type="button" aria-expanded={expanded} onClick={() => void toggleDetails(point)}>
