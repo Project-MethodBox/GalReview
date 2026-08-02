@@ -771,3 +771,52 @@ FileService，因此界面所见的纯文本/HTML Bad Gateway 来源于仓库外
 
 部署侧新增 `deploy/nginx/galreview.conf.example`：外层请求体允许 12 MiB，上传读写超时为
 190 秒并关闭请求缓冲。应用仍按契约拒绝超过 10 MiB 的单文件。
+
+## 18. 2026-08-02 GalGame 叙事提示词重构
+
+### 18.1 变更边界
+
+本轮没有改变 Gateway 路由、请求体、异步任务状态、GamePackage schema 1.0 或 RenderService
+读取方式。原 `GameGenerator` 继续负责确定性骨架；新增 `galgame-narrative-v2` 叙事层，只能
+重写 scene title、dialogue 与 choice 显示文本。所有 ID、跳转、知识绑定、`correct`、
+`scoreDelta`、assets、reviewPlanId 和 snapshotVersion 均由代码锁定。
+
+提示词按“整包共同主线”工作，要求知识作为线索、规则、工具、争议或行动依据改变剧情，禁止
+退化为“知识点讲解—来看看这道题—本轮复习结束”。内部草稿使用 `groundingQuotes` 核对事实
+出处，使用 `knowledgeUse` 说明知识怎样改变当前局面；两者在最终 GamePackage 中删除。
+
+### 18.2 自动化与真实模型验证
+
+| 项目 | 结果 |
+|---|---:|
+| GalGameService 全量测试 | 348 / 348 |
+| 新增叙事单元/集成测试 | 15 个，全部通过 |
+| DeepSeek `deepseek-v4-pro` 真实 JSON Output | 通过 |
+| GalGameService build | 通过，0 warning / 0 error |
+| `docker compose config --quiet` | 通过 |
+| `scripts/Test-PortPolicy.ps1` | 通过 |
+| GalGameService 镜像重建 | 未执行；本机 Docker Linux engine 未运行，Compose 静态解析已通过 |
+
+真实模型测试使用仓库测试 PlanGraph（CAMPUS / STANDARD），以
+`GALGAME_RUN_LIVE_LLM_TEST=1` 显式启用，API key 只从宿主 `DSAPI` 读取。最终草稿通过：
+
+- sceneId/choiceId 集合完整且无新增；
+- EXPLAIN/QUESTION 的依据可逐字回溯到绑定节点；
+- 对白包含对应概念锚点，且没有暴露权重、掌握度或内部 ID；
+- 装配前后所有锁定字段保持不变；
+- 最终 GamePackage 通过现有跨字段校验器。
+
+第一次校准暴露出“强迫对白逐字复述依据会重新产生教材腔”的问题，因此最终实现把原文引用
+保留为隐藏审计字段，只要求对白自然包含概念锚点，并增加“删除知识后剧情是否仍能原样成立”
+与“删除选择后事件是否仍以相同方式推进”两项提示词拒收检查。真实模型复测通过。
+
+### 18.3 异常路径
+
+测试覆盖恶意 summary 提示注入、缺失/伪造 scene 或 choice ID、错误 promptVersion、无依据
+题目、知识场景没有 grounding、模板化问答文本、非法草稿整包回退，以及第一次失败后的一次
+有界修复。Mock 模式强制关闭外部调用；模型超时、HTTP 错误、空响应、非 JSON、修复后仍非法
+时均不保存半成品，继续返回契约有效的确定性包。供应商响应正文、异常详情和 API key 不进入
+公开 job error。
+
+本轮没有重新执行文件上传、文本提取、KnowledgeService 构图、浏览器渲染和 mastery 全流程；
+这些接口及数据结构未变，沿用本报告前述已通过结果。
