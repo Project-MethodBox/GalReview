@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react'
 import type { KnowledgePoint, KnowledgeRelation } from '../types/api'
 
-const NODE_WIDTH = 184
-const NODE_HEIGHT = 72
-const COLUMN_GAP = 112
-const ROW_GAP = 28
-const CANVAS_PADDING = 54
+const NODE_WIDTH = 128
+const NODE_HEIGHT = 46
+const COLUMN_GAP = 44
+const ROW_GAP = 22
+const CANVAS_PADDING = 46
 const MASTERY_COMPLETE_SCORE = 60
 
 interface PositionedPoint {
@@ -158,7 +158,7 @@ export default function KnowledgeDag({ points, relations, selectedPointId, onSel
     const viewport = viewportRef.current
     if (!viewport || !points.length) return
     const bounds = viewport.getBoundingClientRect()
-    const scale = clamp(Math.min((bounds.width - 48) / layout.width, (bounds.height - 48) / layout.height), .05, 1)
+    const scale = clamp(Math.min((bounds.width - 48) / layout.width, (bounds.height - 48) / layout.height), .72, 1)
     setTransform({ x: (bounds.width - layout.width * scale) / 2, y: (bounds.height - layout.height * scale) / 2, scale })
   }, [layout.height, layout.width, points.length])
 
@@ -207,7 +207,7 @@ export default function KnowledgeDag({ points, relations, selectedPointId, onSel
   }
 
   return (
-    <div className="dag-shell">
+    <div className={`dag-shell${selectedPointId ? ' has-selection' : ''}`}>
       <div className="dag-toolbar" aria-label="图谱操作">
         <div className="dag-legend" aria-label="节点颜色说明"><span className="available">可学习</span><span className="path">学习路径</span><span className="target">当前目标</span></div>
         <div className="dag-zoom-controls"><button type="button" aria-label="缩小图谱" onClick={() => zoomAt(transform.scale / 1.18)}>−</button><span>{Math.round(transform.scale * 100)}%</span><button type="button" aria-label="放大图谱" onClick={() => zoomAt(transform.scale * 1.18)}>＋</button><button type="button" onClick={fitGraph}>适应画布</button></div>
@@ -232,9 +232,9 @@ export default function KnowledgeDag({ points, relations, selectedPointId, onSel
               const source = layout.nodeById.get(edge.fromPointId)
               const target = layout.nodeById.get(edge.toPointId)
               if (!source || !target) return null
-              const startX = source.x + NODE_WIDTH
+              const startX = source.x + 13
               const startY = source.y + NODE_HEIGHT / 2
-              const endX = target.x
+              const endX = target.x + 13
               const endY = target.y + NODE_HEIGHT / 2
               const bend = Math.max(48, (endX - startX) * .48)
               const highlighted = highlights.pathEdgeIds.has(edge.relationId)
@@ -253,6 +253,8 @@ export default function KnowledgeDag({ points, relations, selectedPointId, onSel
               onPointerDown={(event) => event.stopPropagation()}
               onClick={() => onSelect(point.pointId)}
               aria-pressed={selected}
+              aria-label={`${point.title}，掌握度 ${Math.round(point.mastery.score)}`}
+              title={`${point.title} · 掌握度 ${Math.round(point.mastery.score)}`}
             ><span>{point.title}</span><small>掌握度 {Math.round(point.mastery.score)}</small></button>
           })}
         </div>

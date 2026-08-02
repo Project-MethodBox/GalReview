@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router'
 import ActionButton from '../components/ActionButton'
-import AuthLayout, { AuthHeading } from '../components/AuthLayout'
+import AuthLayout, { AuthEntryHeading } from '../components/AuthLayout'
 import FormField from '../components/FormField'
 import { api } from '../lib/api'
 import { clearSession, saveProfile, saveSession } from '../lib/session'
@@ -47,20 +47,21 @@ export default function RegisterPage() {
   return (
     <AuthLayout page="register">
       <form className="auth-form" onSubmit={submit} noValidate>
-        <AuthHeading title="注册" subtitle="邀请码由管理员提供。" />
-        <FormField label="用户名" autoComplete="nickname" placeholder="在此处输入您的用户名" value={form.displayName} onChange={(event) => update('displayName', event.target.value)} onClear={() => update('displayName', '')} error={errors.displayName} />
-        <FormField label="邮箱" type="email" autoComplete="email" placeholder="在此处输入您的邮箱" value={form.email} onChange={(event) => update('email', event.target.value)} onClear={() => update('email', '')} error={errors.email} />
-        <FormField label="密码" autoComplete="new-password" placeholder="在此处输入您的密码" value={form.password} onChange={(event) => update('password', event.target.value)} error={errors.password} passwordToggle />
+        <AuthEntryHeading kicker="创建学习账户" title="开始使用 千知万理" subtitle="注册后直接进入你的复习主页。" />
+        <FormField label="你的名字" autoComplete="nickname" value={form.displayName} onChange={(event) => update('displayName', event.target.value)} onClear={() => update('displayName', '')} error={errors.displayName} />
+        <FormField label="邮箱" type="email" autoComplete="email" value={form.email} onChange={(event) => update('email', event.target.value)} onClear={() => update('email', '')} error={errors.email} />
+        <FormField label="密码" autoComplete="new-password" value={form.password} onChange={(event) => update('password', event.target.value)} error={errors.password} passwordToggle />
+        <p className="auth-entry-field-help">至少 8 个字符</p>
         <FormField
           label="注册邀请码"
           autoComplete="off"
-          placeholder="请输入管理员提供的邀请码"
           value={form.invitationCode}
           onChange={(event) => update('invitationCode', event.target.value)}
           error={errors.invitationCode}
         />
-        <div className="auth-form__actions"><ActionButton type="submit" disabled={busy}>{busy ? '创建中' : '创建'}</ActionButton></div>
-        <button className="auth-form__back-link" type="button" onClick={() => navigate('/login')}>已有账户，返回登录</button>
+        <p className="auth-entry-field-help">由千知万理项目成员提供</p>
+        <div className="auth-form__actions"><ActionButton type="submit" disabled={busy}><span>{busy ? '创建中' : '创建账户并进入'}</span><b aria-hidden="true">→</b></ActionButton></div>
+        <p className="auth-entry-switch">已经有账户？<button type="button" onClick={() => navigate('/login')}>直接登录</button></p>
         {message ? <p className="form-message" role="status">{message}</p> : null}
       </form>
     </AuthLayout>

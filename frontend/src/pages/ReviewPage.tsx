@@ -397,7 +397,7 @@ export default function ReviewPage() {
   }
 
   if (!initial.plan) {
-    return <AppShell><main className="page review-page"><PageHeader title="复习" description="选择复习范围并生成计划后，即可开始本次复习。" /><section className="empty-state"><h2>还没有复习计划</h2><p>先选择一份资料，再确定本次需要测试或学习的章节。</p><Link className="button button--primary" to="/materials">创建计划</Link></section></main></AppShell>
+    return <AppShell><main className="page review-page"><PageHeader title="复习" /><section className="empty-state"><h2>还没有复习计划</h2><Link className="button button--primary" to="/materials">创建计划</Link></section></main></AppShell>
   }
 
   return (
