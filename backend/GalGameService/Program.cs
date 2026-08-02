@@ -79,6 +79,28 @@ builder.Services.AddSingleton<GameGenerator>();
 var app = builder.Build();
 
 // ============================================================================
+// 启动恢复：将因服务重启而卡在 RUNNING/QUEUED 的生成任务标记为 FAILED
+// ============================================================================
+if (useMongoStore)
+{
+    try
+    {
+        var store = app.Services.GetRequiredService<IGameStore>();
+        var recovered = store.RecoverStaleJobs();
+        if (recovered > 0)
+        {
+            var startupLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("GalGameService");
+            startupLogger.LogWarning("Startup recovery: {Count} stale job(s) marked as FAILED", recovered);
+        }
+    }
+    catch (Exception ex)
+    {
+        var startupLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("GalGameService");
+        startupLogger.LogWarning(ex, "Startup recovery failed; stale jobs may remain in RUNNING/QUEUED state");
+    }
+}
+
+// ============================================================================
 // 中间件
 // ============================================================================
 
