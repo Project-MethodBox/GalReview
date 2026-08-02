@@ -4,6 +4,7 @@ import HomeFeatureCard from '../components/HomeFeatureCard'
 import { BookIcon, ClockIcon, FullscreenIcon, SettingsIcon } from '../components/icons'
 import { api } from '../lib/api'
 import { clearSession, readProfile, readSession, saveProfile } from '../lib/session'
+import { readTheme, saveTheme } from '../lib/theme'
 import { resetWorkflow } from '../lib/workflow'
 
 export default function HomePage() {
@@ -12,7 +13,8 @@ export default function HomePage() {
   const [profile, setProfile] = useState(readProfile())
   const session = readSession()
   const [message, setMessage] = useState((location.state as { message?: string } | null)?.message || '')
-  const [dark, setDark] = useState(document.documentElement.dataset.theme === 'dark')
+  const [dark, setDark] = useState(readTheme() === 'dark')
+  const avatarInitial = Array.from(profile?.displayName.trim() || '学')[0]
 
   useEffect(() => {
     if (!message) return
@@ -33,7 +35,7 @@ export default function HomePage() {
   function toggleTheme() {
     const next = !dark
     setDark(next)
-    document.documentElement.dataset.theme = next ? 'dark' : 'light'
+    saveTheme(next ? 'dark' : 'light')
   }
 
   async function toggleFullscreen() {
@@ -63,15 +65,21 @@ export default function HomePage() {
           <nav className="toolbar" aria-label="快捷导航">
             <button type="button" aria-label="切换全屏" onClick={toggleFullscreen}><FullscreenIcon /></button>
             <Link to="/materials" aria-label="资料库"><BookIcon /></Link>
-            <Link to="/review" aria-label="复习记录"><ClockIcon /></Link>
+            <Link to="/review" aria-label="开始复习"><ClockIcon /></Link>
             <span className="toolbar__divider" />
-            <button type="button" aria-label="切换明暗主题" onClick={toggleTheme}><SettingsIcon /></button>
+            <button type="button" aria-label={dark ? '切换浅色主题' : '切换深色主题'} aria-pressed={dark} onClick={toggleTheme}><SettingsIcon /></button>
           </nav>
-          <Link className="profile-pill" to="/settings">
+          <div className="profile-pill" aria-label="当前用户">
             <span><strong>{profile?.displayName || '学习者'}</strong><small>Level 1</small></span>
             <span><strong>学习档案</strong><small>{profile?.preferredSubjectCodes[0] || '待完善'}</small></span>
-            <img src="/profile-avatar.svg" alt="用户头像" />
-          </Link>
+            {profile?.avatarUrl ? (
+              <img src={profile.avatarUrl} alt="用户头像" />
+            ) : (
+              <span className="profile-pill__avatar" role="img" aria-label={`${profile?.displayName || '学习者'}的头像`}>
+                {avatarInitial}
+              </span>
+            )}
+          </div>
         </div>
       </header>
 

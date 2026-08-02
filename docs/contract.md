@@ -1892,7 +1892,8 @@ KnowledgeService 在宿主机的默认目标为 `http://localhost:5080`；集成
 - 所有稳定分支判断使用 `error.code` 或显式状态字段。
 
 当前页面路由为 `/login`、`/register`、`/forgot-password`、`/home`、`/materials`、
-`/knowledge-graph` 和 `/review`。`/materials` 只按 5.2 的非 OCR 请求上传、提取并构图，
+`/knowledge`、`/knowledge-graph` 和 `/review`。`/knowledge` 使用 6.1 已有分页接口展示完整知识点列表，
+`/knowledge-graph` 展示章节、知识点与关系；两页必须持续读取 `nextCursor`，不得把首个 100 条结果冒充完整图谱。`/materials` 只按 5.2 的非 OCR 请求上传、提取并构图，
 随后创建 Assessment 或 Learning Plan；`/review` 依次调用 GalGame 生成、游戏包读取、
 Render runtime 资源。manifest 为 `runtimeMode=SHELL` 时只在浏览器本地创建临时会话并
 完成壳体验，不调用 ReviewSession/progress/events/result，也不更新 mastery；只有

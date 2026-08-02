@@ -1,9 +1,9 @@
 import { useEffect, useRef, type ReactNode } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router'
-import FeaturePlaceholderPage from './pages/FeaturePlaceholderPage'
 import ForgotPasswordPage from './pages/ForgotPasswordPage'
 import HomePage from './pages/HomePage'
 import KnowledgeGraphPage from './pages/KnowledgeGraphPage'
+import KnowledgePointsPage from './pages/KnowledgePointsPage'
 import LoginPage from './pages/LoginPage'
 import NotFoundPage from './pages/NotFoundPage'
 import RegisterPage from './pages/RegisterPage'
@@ -20,7 +20,6 @@ const routeDepth: Record<string, number> = {
   '/knowledge': 3,
   '/knowledge-graph': 3,
   '/review': 3,
-  '/settings': 3,
 }
 
 function Protected({ children }: { children: ReactNode }) {
@@ -49,10 +48,9 @@ function AnimatedRoutes() {
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/home" element={<Protected><HomePage /></Protected>} />
         <Route path="/materials" element={<Protected><StudyFlowPage /></Protected>} />
-        <Route path="/knowledge" element={<Protected><KnowledgeGraphPage /></Protected>} />
+        <Route path="/knowledge" element={<Protected><KnowledgePointsPage /></Protected>} />
         <Route path="/knowledge-graph" element={<Protected><KnowledgeGraphPage /></Protected>} />
         <Route path="/review" element={<Protected><ReviewPage /></Protected>} />
-        <Route path="/settings" element={<Protected><FeaturePlaceholderPage title="个人设置" description="个人资料、学习目标、难度和减少动态效果的入口。" /></Protected>} />
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </div>
