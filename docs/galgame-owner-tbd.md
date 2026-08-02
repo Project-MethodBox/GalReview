@@ -81,6 +81,38 @@ MongoDB 连接配置：
 - `MaxJobs=10000` 容量限制：超限时清理最旧的 10% 已完成 job
 
 `readyz` 端点在使用 MongoDB 存储时会执行 `ping` 命令检查连接可用性，不可用时返回 503。
+响应还包含以下叙事生成状态字段：
+
+| 字段 | 说明 |
+|---|---|
+| `narrativeEnabled` | 叙事模型是否实际可用（`CanCallProvider`：`Enabled` + `ApiKey` + HTTPS 端点三者同时满足） |
+| `narrativeModel` | 当前配置的模型名称（如 `deepseek-v4-pro`） |
+| `narrativePromptVersion` | Prompt 版本（如 `galgame-narrative-v2`） |
+
+## 叙事生成（§7.3.2）
+
+`NarrativeGenerationService` 在确定性骨架生成后，调用 OpenAI 兼容端点（DeepSeek）重写
+场景叙事文本。模型不可用或草稿不合法时自动降级为确定性骨架，保证生成流程不中断。
+
+配置项位于 `appsettings.json` 的 `NarrativeGeneration` 节：
+
+| 配置项 | 默认值 | 说明 |
+|---|---|---|
+| `Enabled` | `false` | 是否启用叙事模型调用 |
+| `Endpoint` | `https://api.deepseek.com/chat/completions` | OpenAI 兼容端点 |
+| `Model` | `deepseek-v4-pro` | 模型名称 |
+| `ApiKey` | （空） | API 密钥 |
+| `PromptVersion` | `galgame-narrative-v2` | Prompt 版本标识 |
+| `TimeoutSeconds` | `120` | 单次请求超时（10-300 秒） |
+| `MaxOutputTokens` | `16000` | 最大输出 token 数 |
+| `Temperature` | `0.75` | 采样温度 |
+| `MaxDraftAttempts` | `2` | 最大草稿尝试次数（1-2） |
+
+Mock 模式下 `Enabled` 被强制设为 `false`，不发起任何外部调用。
+
+DI 注册链：`NarrativeGenerationOptions`（单例）→ `NarrativePromptBuilder` →
+`NarrativeDraftValidator` → `INarrativeModelClient`（`DeepSeekNarrativeClient`）→
+`NarrativeGenerationService`。HttpClient 名称为 `"narrative"`，超时和缓冲上限由配置驱动。
 
 ## 已完成联调
 
@@ -89,5 +121,7 @@ MongoDB 连接配置：
 - Assessment 游戏包已在容器链路中创建，并通过 C++ / JS 基础壳完成浏览器本地游玩；Render 证据回传尚未实现；
 - 完整包 checksum、ETag、QUESTION 绑定、显式正确性和 INTERNAL owner 校验已有自动化或
   集成测试。
+- 跨副本任务恢复：服务启动时自动将 RUNNING/QUEUED 状态的残留任务标记为 FAILED。
+- 叙事生成服务已接入 `Program.cs` 生成流程（§7.3.2）。
 
-仍未完成：`GamePackageReady v1` 消息发布，以及跨副本任务恢复。
+仍未完成：`GamePackageReady v1` 消息发布。

@@ -21,20 +21,28 @@
 | `GET` | `/api/v1/game-generations/{generationId}` | 查询生成任务 | `200/400/401/404` |
 | `GET` | `/api/v1/game-packages/{packageId}` | 读取游戏包清单 | `200/400/401/404` |
 | `GET` | `/api/v1/game-packages/{packageId}/content` | 下载完整 JSON | `200/304/400/401/404` |
+| `GET` | `/internal/v1/game-packages/{packageId}` | 读取权威游戏包（服务间） | `200/400/403/404` |
 | `POST` | `/internal/v1/game-package-validations` | 校验游戏包（服务间） | `200/400/403/422` |
 | `GET` | `/healthz` | 存活探针 | `200` |
-| `GET` | `/readyz` | 就绪探针 | `200` |
+| `GET` | `/readyz` | 就绪探针（含叙事状态） | `200/503` |
 
 ## 文件结构
 
 ```
 GalGameService/
-├── Program.cs                  # 服务入口：中间件链 + 5 个端点
+├── Program.cs                  # 服务入口：中间件链 + 端点 + DI 注册
 ├── Contracts.cs                # 数据类型（GamePackage、Scene、Choice 等）
 ├── GameGenerator.cs            # 游戏包生成器（3 风格 × 3 难度）
 ├── GamePackageValidator.cs     # 校验器（15 类规则 + SHA-256 checksum）
 ├── InMemoryGameStore.cs        # Mock 内存存储 + 黄金游戏包
+├── MongoGameStore.cs           # MongoDB 持久化存储 + 启动恢复
 ├── PlanGraphClient.cs          # PlanGraph 读取客户端（§7.3.1 URGENT）
+├── Narrative/                  # 叙事生成（§7.3.2）
+│   ├── NarrativeGenerationService.cs   # 叙事生成编排（骨架 + 模型重写 + 降级）
+│   ├── DeepSeekNarrativeClient.cs       # OpenAI 兼容端点调用（DeepSeek）
+│   ├── NarrativePromptBuilder.cs        # Prompt 构建 + 修复引导
+│   ├── NarrativeDraftValidator.cs       # 草稿校验 + 字段合并
+│   └── NarrativeGenerationOptions.cs    # 配置选项
 ├── GalGame.GalGameService.csproj
 ├── Dockerfile
 ├── appsettings.json
@@ -57,12 +65,14 @@ GalGameService/
     ├── GalGame.GalGameService.Tests.csproj
     ├── GamePackageValidatorTests.cs      # 校验器测试
     ├── GameGeneratorTests.cs             # 生成器测试
+    ├── GameGeneratorEnhancementTests.cs   # 生成质量增强测试
     ├── PlanGraphClientTests.cs           # PlanGraph 客户端测试
     ├── MockDataTests.cs                  # mock 数据场景逻辑与计分规则
     ├── UserInteractionSimulationTests.cs # 用户交互模拟与得分验证
     ├── BoundaryTests.cs                  # 边界输入（特殊字符/超长文本）
     ├── GalGameServiceIntegrationTests.cs # WebApplicationFactory 集成测试
     ├── InMemoryGameStoreTests.cs         # 内存存储测试
+    ├── MongoGameStoreTests.cs            # MongoDB 存储测试
     ├── InvalidPackageTests.cs            # 错误包负向测试（精确错误码断言）
     └── GamePackageSchemaTests.cs         # JSON Schema 契约测试
 ```
