@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router'
 import ForgotPasswordPage from './pages/ForgotPasswordPage'
+import AdminLoginPage from './pages/AdminLoginPage'
+import AdminPage from './pages/AdminPage'
 import HomePage from './pages/HomePage'
 import KnowledgeGraphPage from './pages/KnowledgeGraphPage'
 import KnowledgePointsPage from './pages/KnowledgePointsPage'
@@ -10,13 +12,17 @@ import RegisterPage from './pages/RegisterPage'
 import ReviewPage from './pages/ReviewPage'
 import SettingsPage from './pages/SettingsPage'
 import StudyFlowPage from './pages/StudyFlowPage'
-import { readSession } from './lib/session'
+import { api, ApiClientError } from './lib/api'
+import { clearSession, readSession } from './lib/session'
+import { readAdminSession } from './lib/adminSession'
 import { recoverWorkflow } from './lib/workflowRecovery'
 
 const routeDepth: Record<string, number> = {
   '/login': 0,
   '/register': 1,
   '/forgot-password': 1,
+  '/admin/login': 0,
+  '/admin': 1,
   '/home': 2,
   '/materials': 3,
   '/knowledge': 3,
@@ -28,17 +34,35 @@ const routeDepth: Record<string, number> = {
 function Protected({ children }: { children: ReactNode }) {
   const session = readSession()
   const [ready, setReady] = useState(false)
+  const [valid, setValid] = useState(Boolean(session))
 
   useEffect(() => {
     if (!session) return
     let active = true
-    void recoverWorkflow().catch(() => undefined).finally(() => { if (active) setReady(true) })
+    void api.getSession(session.session.sessionId).then((remoteSession) => {
+      if (remoteSession.status !== 'ACTIVE') {
+        throw new ApiClientError('登录状态已失效，请重新登录。', 'AUTH_REQUIRED', 401)
+      }
+      return recoverWorkflow()
+    }).then(() => {
+      if (active) setValid(true)
+    }).catch((reason: unknown) => {
+      if (!active) return
+      if (reason instanceof ApiClientError && (reason.status === 401 || reason.status === 404)) {
+        clearSession()
+        setValid(false)
+      }
+    }).finally(() => { if (active) setReady(true) })
     return () => { active = false }
   }, [session?.session.sessionId])
 
-  if (!session) return <Navigate replace to="/login" state={{ message: '请先登录。' }} />
+  if (!session || !valid) return <Navigate replace to="/login" state={{ message: '登录状态已失效，请重新登录。' }} />
   if (!ready) return <main className="app-loading" role="status"><span>正在恢复学习资料</span></main>
   return children
+}
+
+function AdminProtected({ children }: { children: ReactNode }) {
+  return readAdminSession() ? children : <Navigate replace to="/admin/login" />
 }
 
 function AnimatedRoutes() {
@@ -61,6 +85,8 @@ function AnimatedRoutes() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/admin/login" element={<AdminLoginPage />} />
+        <Route path="/admin" element={<AdminProtected><AdminPage /></AdminProtected>} />
         <Route path="/home" element={<Protected><HomePage /></Protected>} />
         <Route path="/materials" element={<Protected><StudyFlowPage /></Protected>} />
         <Route path="/knowledge" element={<Protected><KnowledgePointsPage /></Protected>} />

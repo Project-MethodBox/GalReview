@@ -83,6 +83,38 @@ export interface MaterialPage {
   nextCursor: string | null
 }
 
+export interface TextSourceSpan {
+  startOffset: number
+  endOffset: number
+  pageNumber: number | null
+  paragraphIndex: number | null
+  sourceLabel: string | null
+}
+
+export interface TextDocumentBlock {
+  kind: string
+  level: number | null
+  text: string
+  source: TextSourceSpan
+}
+
+export interface ExtractedTextDocument {
+  materialId: Uuid
+  ownerUserId: Uuid
+  status: string
+  text: string
+  encoding: string
+  normalization: string
+  lineEnding: string
+  textChecksum: string
+  textLength: number
+  parserVersion: string
+  sourceMapVersion: string
+  sourceMap: TextSourceSpan[]
+  blocks: TextDocumentBlock[]
+  createdAt: DateTime
+}
+
 export interface IngestionJob {
   jobId: Uuid
   materialId: Uuid
@@ -174,6 +206,13 @@ export interface KnowledgePoint {
   subjectCode: string
   tags: string[]
   confidence: number
+  sourceReferences: Array<{
+    materialId: Uuid
+    startOffset: number
+    endOffset: number
+    location: string
+    quote: string | null
+  }>
   mastery: MasteryRecord
   createdAt: DateTime
   updatedAt: DateTime
@@ -198,6 +237,11 @@ export interface KnowledgeRelation {
 
 export interface KnowledgeRelationPage {
   items: KnowledgeRelation[]
+  nextCursor: string | null
+}
+
+export interface MasteryRecordPage {
+  items: MasteryRecord[]
   nextCursor: string | null
 }
 
@@ -261,6 +305,32 @@ export interface GameGenerationJob {
   error: ApiErrorDetail | null
   createdAt: DateTime
   updatedAt: DateTime
+}
+
+export interface AdminUser {
+  id: Uuid
+  email: string
+  displayName: string
+  isActive: boolean
+}
+
+export type InvitationType = 'single-use' | 'multi-use' | 'time-window'
+
+export interface AdminInvitation {
+  code: string
+  type: InvitationType
+  maxUses: number
+  usedCount: number
+  validFrom: DateTime | null
+  validTo: DateTime | null
+  createdAt: DateTime
+}
+
+export interface CreateInvitationInput {
+  type: InvitationType
+  maxUses?: number
+  validFrom?: DateTime
+  validTo?: DateTime
 }
 
 export interface GamePackageManifest {
@@ -368,11 +438,15 @@ export interface ReviewResult {
 }
 
 export interface WasmAdapter {
+  readonly engine?: 'wasm' | 'js'
+  readonly runtimeVersion?: string
+  readonly abiVersion?: number
   initialize(config: Record<string, unknown>): Promise<void>
   loadPackage(gamePackage: GamePackage): { valid: boolean; errors: Array<{ path: string; code: string; message: string }> }
   startSession(bootstrap: Record<string, unknown>): void
   dispatchInput(input: Record<string, unknown>): Array<Record<string, unknown>>
   renderFrame(deltaMs: number): void
   serializeState(): Record<string, unknown>
+  lastError?(): { code: string; message: string; details: Record<string, unknown> }
   dispose(): void
 }

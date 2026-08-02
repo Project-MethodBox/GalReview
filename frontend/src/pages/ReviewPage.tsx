@@ -11,6 +11,7 @@ import type {
   AnswerResult,
   Difficulty,
   GameChoice,
+  GameGenerationJob,
   GamePackage,
   GameScene,
   GameStyle,
@@ -31,6 +32,10 @@ function generationError(error: { message: string } | null): Error {
 
 function attemptsFromAnswers(answers: AnswerResult[]): Record<string, number> {
   return Object.fromEntries(answers.map((answer) => [answer.questionId, answer.attemptNumber]))
+}
+
+function runtimeEvent(events: Array<Record<string, unknown>>, type: string) {
+  return events.find((event) => event.type === type)
 }
 
 function createShellSession(gamePackage: GamePackage): ReviewSession {
@@ -56,8 +61,9 @@ export default function ReviewPage() {
   const resultKeyRef = useRef(initial.resultIdempotencyKey || createUuidV4())
   const startedAtRef = useRef(Date.now())
   const sceneStartedAtRef = useRef(Date.now())
-  const [style, setStyle] = useState<GameStyle>('CAMPUS')
-  const [difficulty, setDifficulty] = useState<Difficulty>('STANDARD')
+  const [style, setStyle] = useState<GameStyle>(initial.gameStyle || 'CAMPUS')
+  const [difficulty, setDifficulty] = useState<Difficulty>(initial.gameDifficulty || 'STANDARD')
+  const [generation, setGeneration] = useState<GameGenerationJob | undefined>(initial.gameGeneration)
   const [gamePackage, setGamePackage] = useState<GamePackage | undefined>(initial.gamePackage)
   const [session, setSession] = useState<ReviewSession | undefined>(initial.reviewSession)
   const [runtimeManifest, setRuntimeManifest] = useState<RuntimeManifest>()
@@ -72,6 +78,7 @@ export default function ReviewPage() {
   const [error, setError] = useState('')
   const [result, setResult] = useState<ReviewResult>()
   const [shellCompleted, setShellCompleted] = useState(false)
+  const [adapterVersion, setAdapterVersion] = useState(0)
 
   const scene = useMemo(
     () => gamePackage?.scenes.find((item) => item.sceneId === sceneId),
@@ -81,17 +88,75 @@ export default function ReviewPage() {
   useEffect(() => () => adapterRef.current?.dispose(), [])
 
   useEffect(() => {
+    if (!adapterVersion) return
+    let frameId = 0
+    let previous = performance.now()
+    const frame = (now: number) => {
+      const adapter = adapterRef.current
+      if (!adapter) return
+      adapter.renderFrame(Math.min(100, Math.max(0, now - previous)))
+      previous = now
+      frameId = window.requestAnimationFrame(frame)
+    }
+    frameId = window.requestAnimationFrame(frame)
+    return () => window.cancelAnimationFrame(frameId)
+  }, [adapterVersion])
+
+  useEffect(() => {
     if (!initial.resultIdempotencyKey) updateWorkflow({ resultIdempotencyKey: resultKeyRef.current })
   }, [initial.resultIdempotencyKey])
 
   async function attachRuntime(manifest: RuntimeManifest, pack: GamePackage, reviewSession: ReviewSession) {
     adapterRef.current?.dispose()
     adapterRef.current = await loadRuntime(manifest, pack, reviewSession)
+    setAdapterVersion((value) => value + 1)
     setRuntimeManifest(manifest)
     const nextSceneId = reviewSession.currentSceneId || pack.entrySceneId
     setSceneId(nextSceneId)
     setVisitedSceneIds((current) => current.includes(nextSceneId) ? current : [...current, nextSceneId])
     sceneStartedAtRef.current = Date.now()
+  }
+
+  async function completeGeneration(accepted: GameGenerationJob, plan = readWorkflow().plan) {
+    if (!plan) throw new Error('当前复习计划不存在，请重新创建。')
+    const completed = accepted.status === 'SUCCEEDED'
+      ? accepted
+      : await pollUntil(
+        () => api.getGameGeneration(accepted.generationId),
+        (job) => job.status === 'SUCCEEDED' || job.status === 'FAILED',
+        (job) => {
+          setGeneration(job)
+          updateWorkflow({ gameGeneration: job })
+          setProgress(`GalGame 正在生成… ${job.progress}%`)
+        },
+      )
+    setGeneration(completed)
+    updateWorkflow({ gameGeneration: completed })
+    if (completed.status === 'FAILED') throw generationError(completed.error)
+    if (!completed.packageId) throw new Error('生成任务完成但没有返回 packageId。')
+
+    const manifest = await api.getGamePackage(completed.packageId)
+    const pack = await api.getGamePackageContent(manifest.contentUrl)
+    if (pack.reviewPlanId !== plan.reviewPlanId || pack.snapshotVersion !== plan.snapshotVersion) {
+      throw new Error('游戏包与当前复习计划的不可变快照不一致。')
+    }
+    const renderManifest = await api.getRuntimeManifest()
+    const reviewSession = renderManifest.reviewSessionsAvailable === false
+      ? createShellSession(pack)
+      : await api.createReviewSession(pack.packageId, renderManifest.wasmVersion)
+    if (reviewSession.reviewPlanId !== pack.reviewPlanId || reviewSession.snapshotVersion !== pack.snapshotVersion) {
+      throw new Error('复习会话与游戏包快照不一致。')
+    }
+    await attachRuntime(renderManifest, pack, reviewSession)
+    const resultIdempotencyKey = createUuidV4()
+    resultKeyRef.current = resultIdempotencyKey
+    setAttempt({ answers: [], attemptsByQuestion: {} })
+    setShellCompleted(false)
+    setGamePackage(pack)
+    setSession(reviewSession)
+    updateWorkflow({ gameGeneration: completed, gameManifest: manifest, gamePackage: pack, reviewSession, answerResults: [], resultIdempotencyKey })
+    setProgress('渲染器已加载，可以开始复习。')
+    startedAtRef.current = Date.now()
   }
 
   async function generateAndStart() {
@@ -105,38 +170,27 @@ export default function ReviewPage() {
     try {
       setProgress('GalGame 正在根据计划组织剧情与题目…')
       const accepted = await api.createGameGeneration(workflow.plan, style, difficulty)
-      const completed = await pollUntil(
-        () => api.getGameGeneration(accepted.generationId),
-        (job) => job.status === 'SUCCEEDED' || job.status === 'FAILED',
-        (job) => setProgress(`GalGame 正在生成… ${job.progress}%`),
-      )
-      if (completed.status === 'FAILED') throw generationError(completed.error)
-      if (!completed.packageId) throw new Error('生成任务完成但没有返回 packageId。')
-
-      const manifest = await api.getGamePackage(completed.packageId)
-      const pack = await api.getGamePackageContent(manifest.contentUrl)
-      if (pack.reviewPlanId !== workflow.plan.reviewPlanId || pack.snapshotVersion !== workflow.plan.snapshotVersion) {
-        throw new Error('游戏包与当前复习计划的不可变快照不一致。')
-      }
-      const renderManifest = await api.getRuntimeManifest()
-      const reviewSession = renderManifest.reviewSessionsAvailable === false
-        ? createShellSession(pack)
-        : await api.createReviewSession(pack.packageId, renderManifest.wasmVersion)
-      if (reviewSession.reviewPlanId !== pack.reviewPlanId || reviewSession.snapshotVersion !== pack.snapshotVersion) {
-        throw new Error('复习会话与游戏包快照不一致。')
-      }
-      await attachRuntime(renderManifest, pack, reviewSession)
-      const resultIdempotencyKey = createUuidV4()
-      resultKeyRef.current = resultIdempotencyKey
-      setAttempt({ answers: [], attemptsByQuestion: {} })
-      setShellCompleted(false)
-      setGamePackage(pack)
-      setSession(reviewSession)
-      updateWorkflow({ gameManifest: manifest, gamePackage: pack, reviewSession, answerResults: [], resultIdempotencyKey })
-      setProgress('渲染器已加载，可以开始复习。')
-      startedAtRef.current = Date.now()
+      setGeneration(accepted)
+      updateWorkflow({ gameGeneration: accepted, gameStyle: style, gameDifficulty: difficulty, gameManifest: undefined, gamePackage: undefined, reviewSession: undefined, answerResults: [], resultIdempotencyKey: undefined })
+      await completeGeneration(accepted, workflow.plan)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '游戏准备失败。')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function resumeGeneration() {
+    const workflow = readWorkflow()
+    if (!workflow.gameGeneration || !workflow.plan) return
+    setBusy(true)
+    setError('')
+    setProgress('正在恢复游戏生成任务。')
+    try {
+      const current = await api.getGameGeneration(workflow.gameGeneration.generationId)
+      await completeGeneration(current, workflow.plan)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '生成任务恢复失败。')
     } finally {
       setBusy(false)
     }
@@ -162,24 +216,25 @@ export default function ReviewPage() {
     }
   }
 
-  function createAnswer(choice: GameChoice): AnswerResult | null {
+  function createAnswer(choice: GameChoice, attemptId: string, occurredAt: string, event?: Record<string, unknown>): AnswerResult | null {
     if (choice.answerKind !== 'CHOICE' || typeof choice.correct !== 'boolean') return null
     const responseTimeMs = Math.max(0, Date.now() - sceneStartedAtRef.current)
-    const attemptNumber = (attempt.attemptsByQuestion[choice.questionId] || 0) + 1
-    const quality = choice.correct ? (attemptNumber > 1 ? 3 : 5) : 0
+    const attemptNumber = Math.max((attempt.attemptsByQuestion[choice.questionId] || 0) + 1, typeof event?.attemptNumber === 'number' ? event.attemptNumber : 1)
+    const correct = typeof event?.correct === 'boolean' ? event.correct : choice.correct
+    const quality = correct ? (attemptNumber > 1 ? 3 : 5) : 0
     return {
-      attemptId: createUuidV4(),
+      attemptId,
       questionId: choice.questionId,
       knowledgePointId: choice.knowledgePointId,
       answerKind: 'CHOICE',
       choiceId: choice.choiceId,
-      correct: choice.correct,
+      correct,
       quality,
       scoreDelta: choice.scoreDelta,
       responseTimeMs,
       hintsUsed: 0,
       attemptNumber,
-      occurredAt: new Date().toISOString(),
+      occurredAt,
     }
   }
 
@@ -213,7 +268,14 @@ export default function ReviewPage() {
     setBusy(true)
     setError('')
     try {
-      const answer = createAnswer(choice)
+      const attemptId = createUuidV4()
+      const occurredAt = new Date().toISOString()
+      const events = adapterRef.current?.dispatchInput({ type: 'CHOICE_SELECTED', choiceId: choice.choiceId, attemptId, occurredAt }) || []
+      if (adapterRef.current?.engine === 'wasm' && !events.length) {
+        const runtimeError = adapterRef.current.lastError?.()
+        throw new Error(runtimeError?.message || '渲染运行时拒绝了当前选择。')
+      }
+      const answer = createAnswer(choice, attemptId, occurredAt, runtimeEvent(events, 'ANSWER_RECORDED'))
       if (answer) {
         const nextAnswers = [...attempt.answers, answer]
         setAttempt((current) => ({
@@ -226,7 +288,7 @@ export default function ReviewPage() {
         await api.appendEvents(session.sessionId, [{
           clientEventId: createUuidV4(),
           type: 'CHOICE_SELECTED',
-          occurredAt: new Date().toISOString(),
+          occurredAt,
           payload: {
             sceneId: scene.sceneId,
             choiceId: choice.choiceId,
@@ -235,11 +297,14 @@ export default function ReviewPage() {
           },
         }])
       }
-      if (choice.nextSceneId) {
-        const nextVisited = visitedSceneIds.includes(choice.nextSceneId) ? visitedSceneIds : [...visitedSceneIds, choice.nextSceneId]
-        await saveSceneProgress(choice.nextSceneId, nextVisited)
+      const entered = runtimeEvent(events, 'SCENE_ENTERED')
+      const nextSceneId = typeof entered?.sceneId === 'string' ? entered.sceneId : choice.nextSceneId
+      const completedByRuntime = Boolean(runtimeEvent(events, 'SESSION_COMPLETED'))
+      if (nextSceneId && !completedByRuntime) {
+        const nextVisited = visitedSceneIds.includes(nextSceneId) ? visitedSceneIds : [...visitedSceneIds, nextSceneId]
+        await saveSceneProgress(nextSceneId, nextVisited)
         setVisitedSceneIds(nextVisited)
-        setSceneId(choice.nextSceneId)
+        setSceneId(nextSceneId)
         sceneStartedAtRef.current = Date.now()
       } else {
         const answers = answer ? [...attempt.answers, answer] : attempt.answers
@@ -273,6 +338,9 @@ export default function ReviewPage() {
         durationSeconds: Math.max(0, Math.round((Date.now() - startedAtRef.current) / 1_000)),
       })
       setResult(completed)
+      const completedSession = { ...activeSession, status: 'COMPLETED' as const, completedAt: new Date().toISOString() }
+      setSession(completedSession)
+      updateWorkflow({ reviewSession: completedSession })
       setProgress(completed.status === 'DUPLICATE' ? '这次结果已经提交过。' : '本次复习结果已提交。')
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '结果提交失败。')
@@ -285,6 +353,11 @@ export default function ReviewPage() {
     if (!scene) return
     setBusy(true)
     try {
+      const events = adapterRef.current?.dispatchInput({ type: 'ADVANCE' }) || []
+      if (adapterRef.current?.engine === 'wasm' && !runtimeEvent(events, 'SESSION_COMPLETED')) {
+        const runtimeError = adapterRef.current.lastError?.()
+        throw new Error(runtimeError?.message || '渲染运行时无法结束当前场景。')
+      }
       const savedSession = await saveSceneProgress(scene.sceneId, visitedSceneIds)
       await finish(attempt.answers, savedSession)
     } catch (reason) {
@@ -298,6 +371,7 @@ export default function ReviewPage() {
     adapterRef.current = null
     resultKeyRef.current = createUuidV4()
     setGamePackage(undefined)
+    setGeneration(undefined)
     setSession(undefined)
     setRuntimeManifest(undefined)
     setSceneId('')
@@ -307,7 +381,7 @@ export default function ReviewPage() {
     setShellCompleted(false)
     setError('')
     setProgress('可以调整风格与难度，再生成一次。')
-    updateWorkflow({ gameManifest: undefined, gamePackage: undefined, reviewSession: undefined, answerResults: undefined, resultIdempotencyKey: resultKeyRef.current })
+    updateWorkflow({ gameGeneration: undefined, gameManifest: undefined, gamePackage: undefined, reviewSession: undefined, answerResults: undefined, resultIdempotencyKey: resultKeyRef.current })
   }
 
   if (!initial.plan) {
@@ -326,13 +400,17 @@ export default function ReviewPage() {
           <p>预计 {initial.plan.estimatedQuestionCount} 道题。故事风格不会改变本次复习的知识范围。</p>
           <label>故事风格<select value={style} onChange={(event) => setStyle(event.target.value as GameStyle)}><option value="CAMPUS">校园</option><option value="FANTASY">幻想</option><option value="SCIENCE">科幻</option></select></label>
           <label>难度<select value={difficulty} onChange={(event) => setDifficulty(event.target.value as Difficulty)}><option value="BASIC">基础</option><option value="STANDARD">标准</option><option value="ADVANCED">进阶</option></select></label>
-          {gamePackage && session ? <button className="primary-button" type="button" disabled={busy} onClick={() => void resumeRuntime()}>恢复会话</button> : <button className="primary-button" type="button" disabled={busy} onClick={() => void generateAndStart()}>{busy ? '准备中…' : '生成并开始'}</button>}
+          {gamePackage && session
+            ? <button className="primary-button" type="button" disabled={busy} onClick={() => void resumeRuntime()}>恢复会话</button>
+            : generation && generation.status !== 'FAILED'
+              ? <button className="primary-button" type="button" disabled={busy} onClick={() => void resumeGeneration()}>{busy ? '恢复中…' : `继续生成（${generation.progress}%）`}</button>
+              : <button className="primary-button" type="button" disabled={busy} onClick={() => void generateAndStart()}>{busy ? '准备中…' : '生成并开始'}</button>}
         </section>
       ) : result || shellCompleted ? (
         <section className="review-complete workspace-card"><p>复习完成</p><h2>{shellCompleted ? '本地体验已完成' : result?.status === 'ACCEPTED' ? '结果已提交' : '结果已去重'}</h2><p>{shellCompleted ? `本地记录 ${attempt.answers.length} 条作答。当前 RenderService 仅提供基础壳，本次结果没有提交，掌握度不会更新。` : `共记录 ${attempt.answers.length} 条作答证据。`}</p><div className="completion-actions"><Link className="button" to="/knowledge-graph">查看知识图谱</Link><button className="button button--primary" type="button" onClick={resetGame}>重新生成</button></div></section>
       ) : scene ? (
         <section className="game-stage">
-          <div className="game-stage__meta"><span>{runtimeManifest?.wasmVersion}</span><span>{visitedSceneIds.length} 个场景已访问</span></div>
+          <div className="game-stage__meta"><span>{runtimeManifest?.wasmVersion} · {adapterRef.current?.engine === 'wasm' ? 'WASM' : '兼容模式'}</span><span>{visitedSceneIds.length} 个场景已访问</span></div>
           <article className="dialogue-panel">
             {scene.title ? <h2>{scene.title}</h2> : null}
             {scene.dialogue.map((line, index) => <div className="dialogue-line" key={`${line.speakerId}-${index}`}><strong>{line.speakerId}</strong><p>{line.text}</p></div>)}

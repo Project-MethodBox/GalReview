@@ -1,9 +1,13 @@
 import { clearSession, readSession, updateSessionTokens } from './session'
+import { clearAdminSession, readAdminSession, updateAdminSessionTokens } from './adminSession'
 import { createUuidV4 } from './uuid'
 import type {
   ApiFailure,
   ApiSuccess,
+  AdminInvitation,
+  AdminUser,
   AnswerResult,
+  AuthSession,
   AuthSessionResponse,
   Chapter,
   GameGenerationJob,
@@ -11,6 +15,7 @@ import type {
   GamePackageManifest,
   GameStyle,
   Difficulty,
+  ExtractedTextDocument,
   GraphBuildJob,
   IngestionJob,
   KnowledgeGraphSummary,
@@ -21,6 +26,8 @@ import type {
   KnowledgeRelationPage,
   Material,
   MaterialPage,
+  MasteryRecord,
+  MasteryRecordPage,
   PlanGraph,
   ProgressSnapshot,
   ReviewResult,
@@ -30,6 +37,7 @@ import type {
   UserProfile,
   UserPreferences,
   UserPreferencesInput,
+  CreateInvitationInput,
 } from '../types/api'
 
 const configuredBase = import.meta.env.VITE_API_BASE_URL?.trim() || '/api/v1'
@@ -126,7 +134,7 @@ function errorFromPayload(payload: unknown, status: number, responseTraceId?: st
       )
     }
   }
-  return new ApiClientError('请求失败，请稍后再试。', 'HTTP_ERROR', status, responseTraceId)
+  return new ApiClientError(STATUS_MESSAGES[status] || '请求失败，请稍后再试。', 'HTTP_ERROR', status, responseTraceId)
 }
 
 function traceIdFromResponse(response: Response): string | undefined {
@@ -293,6 +301,35 @@ function query(params: Record<string, string | number | undefined>): string {
   return result ? `?${result}` : ''
 }
 
+function adminHeaders(): HeadersInit {
+  const token = readAdminSession()?.tokens.accessToken
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+async function adminRequest<T>(path: string, options: RequestOptions = {}, retry = true): Promise<T> {
+  try {
+    return await request<T>(path, {
+      ...options,
+      authenticated: false,
+      retryAfterRefresh: false,
+      headers: { ...adminHeaders(), ...options.headers },
+    })
+  } catch (reason) {
+    const refreshToken = readAdminSession()?.tokens.refreshToken
+    if (!(reason instanceof ApiClientError) || reason.status !== 401 || !retry || !refreshToken) throw reason
+    try {
+      const tokens = await request<TokenPair>('/auth/tokens', {
+        method: 'POST', authenticated: false, retryAfterRefresh: false, body: json({ refreshToken }),
+      })
+      updateAdminSessionTokens(tokens)
+      return adminRequest<T>(path, options, false)
+    } catch (refreshError) {
+      clearAdminSession()
+      throw refreshError
+    }
+  }
+}
+
 async function collectPages<T>(load: (cursor?: string) => Promise<{ items: T[]; nextCursor: string | null }>): Promise<T[]> {
   const items: T[] = []
   const seenCursors = new Set<string>()
@@ -353,6 +390,10 @@ export const api = {
     return request(`/auth/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
   },
 
+  getSession(sessionId: string): Promise<AuthSession> {
+    return request(`/auth/sessions/${encodeURIComponent(sessionId)}`)
+  },
+
   getCurrentUser(): Promise<UserProfile> {
     return request('/users/me')
   },
@@ -377,12 +418,20 @@ export const api = {
     return request('/auth/account', { method: 'DELETE', body: json({ currentPassword }) })
   },
 
-  listMaterials(cursor?: string): Promise<MaterialPage> {
-    return request(`/materials${query({ limit: 100, cursor })}`)
+  listMaterials(cursor?: string, filters: { status?: string; subjectCode?: string } = {}): Promise<MaterialPage> {
+    return request(`/materials${query({ limit: 100, cursor, status: filters.status, subjectCode: filters.subjectCode })}`)
   },
 
   getAllMaterials(): Promise<Material[]> {
     return collectPages<Material>((cursor) => request(`/materials${query({ limit: 100, cursor })}`))
+  },
+
+  getMaterial(materialId: string): Promise<Material> {
+    return request(`/materials/${encodeURIComponent(materialId)}`)
+  },
+
+  getExtractedTextPreview(materialId: string): Promise<ExtractedTextDocument> {
+    return request(`/materials/${encodeURIComponent(materialId)}/extracted-text-preview`)
   },
 
   uploadMaterial(file: File, displayName?: string, subjectCode?: string): Promise<Material> {
@@ -461,6 +510,10 @@ export const api = {
     )
   },
 
+  getKnowledgePoint(pointId: string): Promise<KnowledgePoint> {
+    return request(`/knowledge-points/${encodeURIComponent(pointId)}`)
+  },
+
   getRelations(graphId: string, cursor?: string): Promise<KnowledgeRelationPage> {
     return request(`/knowledge-graphs/${encodeURIComponent(graphId)}/relations${query({ limit: 100, cursor })}`)
   },
@@ -471,17 +524,46 @@ export const api = {
     )
   },
 
-  createAssessmentPlan(graphId: string, chapterIds: string[]): Promise<PlanGraph> {
+  getMasteryRecords(graphId: string, cursor?: string): Promise<MasteryRecordPage> {
+    return request(`/mastery-records${query({ graphId, limit: 100, cursor })}`)
+  },
+
+  getAllMasteryRecords(graphId: string): Promise<MasteryRecord[]> {
+    return collectPages<MasteryRecord>((cursor) =>
+      request(`/mastery-records${query({ graphId, limit: 100, cursor })}`),
+    )
+  },
+
+  createAssessmentPlan(
+    graphId: string,
+    chapterIds: string[],
+    options: { maxQuestions?: number; coverageTarget?: number; maximumInferenceDepth?: number } = {},
+  ): Promise<PlanGraph> {
     return request('/assessment-plans', {
       method: 'POST',
-      body: json({ graphId, chapterIds, maxQuestions: 6, coverageTarget: 0.8, maximumInferenceDepth: 3 }),
+      body: json({
+        graphId,
+        chapterIds,
+        maxQuestions: options.maxQuestions ?? 6,
+        coverageTarget: options.coverageTarget ?? 0.8,
+        maximumInferenceDepth: options.maximumInferenceDepth ?? 3,
+      }),
     })
   },
 
-  createLearningPlan(graphId: string, chapterIds: string[]): Promise<PlanGraph> {
+  createLearningPlan(
+    graphId: string,
+    chapterIds: string[],
+    options: { maxPoints?: number; maximumDependencyDepth?: number } = {},
+  ): Promise<PlanGraph> {
     return request('/learning-plans', {
       method: 'POST',
-      body: json({ graphId, chapterIds, maxPoints: 12, maximumDependencyDepth: 5 }),
+      body: json({
+        graphId,
+        chapterIds,
+        maxPoints: options.maxPoints ?? 12,
+        maximumDependencyDepth: options.maximumDependencyDepth ?? 5,
+      }),
     })
   },
 
@@ -560,6 +642,52 @@ export const api = {
     return request(`/review-sessions/${encodeURIComponent(sessionId)}/result`, {
       method: 'PUT',
       body: json(input),
+    })
+  },
+
+  adminLogin(username: string, password: string): Promise<AuthSessionResponse> {
+    return request('/admin/sessions', {
+      method: 'POST',
+      authenticated: false,
+      body: json({ username, password }),
+    })
+  },
+
+  adminLogout(sessionId: string): Promise<void> {
+    return adminRequest(`/auth/sessions/${encodeURIComponent(sessionId)}`, {
+      method: 'DELETE',
+    })
+  },
+
+  listAdminUsers(): Promise<AdminUser[]> {
+    return adminRequest('/admin/users')
+  },
+
+  deleteAdminUser(userId: string): Promise<void> {
+    return adminRequest(`/admin/users/${encodeURIComponent(userId)}`, {
+      method: 'DELETE',
+    })
+  },
+
+  resetAdminUserPassword(userId: string, newPassword: string): Promise<void> {
+    return adminRequest(`/admin/users/${encodeURIComponent(userId)}/password`, {
+      method: 'POST', body: json({ newPassword }),
+    })
+  },
+
+  listAdminInvitations(): Promise<AdminInvitation[]> {
+    return adminRequest('/admin/invitations')
+  },
+
+  createAdminInvitation(input: CreateInvitationInput): Promise<AdminInvitation> {
+    return adminRequest('/admin/invitations', {
+      method: 'POST', body: json(input),
+    })
+  },
+
+  deleteAdminInvitation(code: string): Promise<void> {
+    return adminRequest(`/admin/invitations/${encodeURIComponent(code)}`, {
+      method: 'DELETE',
     })
   },
 }

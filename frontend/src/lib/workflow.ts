@@ -1,8 +1,11 @@
 import type {
   AnswerResult,
   Chapter,
+  Difficulty,
+  GameGenerationJob,
   GamePackage,
   GamePackageManifest,
+  GameStyle,
   KnowledgeGraphSummary,
   Material,
   PlanGraph,
@@ -16,9 +19,13 @@ export interface StudyWorkflow {
   graph?: KnowledgeGraphSummary
   chapters?: Chapter[]
   plan?: PlanGraph
+  gameGeneration?: GameGenerationJob
+  gameStyle?: GameStyle
+  gameDifficulty?: Difficulty
   gameManifest?: GamePackageManifest
   gamePackage?: GamePackage
   reviewSession?: ReviewSession
+  visitedSceneIds?: string[]
   answerResults?: AnswerResult[]
   resultIdempotencyKey?: string
 }
