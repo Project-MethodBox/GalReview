@@ -1866,6 +1866,7 @@ manifest 指定的最小 WASM、校验游戏包并冻结浏览器本地会话。
 - 限流至少区分匿名登录、上传、生成任务和普通读取。只有创建型长任务 `POST /api/v1/knowledge-graph-builds` 与 `POST /api/v1/game-generations` 使用 generation 限流；构图/游戏生成轮询、游戏包读取和 INTERNAL 游戏包校验使用 general 限流，轮询不得消耗 generation 配额。
 - `POST /api/v1/materials` 使用 `UPLOAD_TIMEOUT_MS`，默认 `120000` 毫秒；其他路由使用 `DEFAULT_TIMEOUT_MS`，默认 `30000` 毫秒。上传超时不得隐式套用到所有 FileService 路由。
 - 上传文件本体硬上限为 `10 MiB`。Gateway 和 FileService 的 multipart 整包前置上限均为 `11 MiB`，其中额外 `1 MiB` 只用于 boundary、字段和头部开销；最终仍由 FileService 按 `IFormFile.Length` 拒绝超过 `10 MiB` 的文件。不得把整包与文件本体错误地使用同一个 `10 MiB` 阈值。
+- Frontend 之前如部署 Nginx、Caddy 或云负载均衡，该外层代理至少允许 `12 MiB` 请求体并提供不短于 `190` 秒的上传读写超时，同时保留请求体、`Authorization`、`Content-Type` 与 `X-Correlation-Id`。外层代理生成的 HTML/纯文本 `413/502/504` 不属于 API 错误信封；浏览器客户端必须保留其真实 HTTP 状态，不得统一伪装成 `502 UPSTREAM_CONTRACT_INVALID`。
 - 不在 Gateway 保存业务状态或访问服务数据库。
 
 ### 9.3 健康检查

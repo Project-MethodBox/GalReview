@@ -216,6 +216,20 @@ FRONTEND_BIND_ADDRESS=0.0.0.0
 
 外部反向代理转发时应保留请求体、`Authorization`、`Content-Type`、`X-Correlation-Id` 和 ETag 相关头，并把上传超时设置得不低于 Gateway 的 `UPLOAD_TIMEOUT_MS`。API 路径仍以 `contract.md` 为准。
 
+仓库提供了可直接调整的 Nginx 示例 `deploy/nginx/galreview.conf.example`。其中请求体上限为
+12 MiB（应用仍按契约限制单文件 10 MiB），并关闭上传请求缓冲、把读写超时设为 190 秒。
+部署后先检查配置再重载：
+
+```bash
+sudo cp deploy/nginx/galreview.conf.example /etc/nginx/conf.d/galreview.conf
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+若域名上传返回纯文本或 HTML 的 `413/502/504`，且请求没有出现在 Frontend、Gateway 或
+FileService 日志中，错误来自该仓库之外的云负载均衡或上一层代理；该层也必须使用不小于
+12 MiB 的请求体限制和不短于 190 秒的上传超时。
+
 ### 6.2 构建并启动
 
 把仓库检出到固定发布目录，在该目录准备 `.env`，然后执行：

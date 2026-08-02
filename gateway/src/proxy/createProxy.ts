@@ -40,6 +40,14 @@ function classifyProxyError(err: NodeJS.ErrnoException): ProxyErrorKind {
   return 'other';
 }
 
+function requestPath(req: Request): string {
+  try {
+    return new URL(req.originalUrl || req.url, 'http://gateway').pathname;
+  } catch {
+    return '/';
+  }
+}
+
 /** 剥离不应透传下游的原始请求头（令牌、调用方服务凭证） */
 function stripSensitiveHeaders(proxyReq: ClientRequest): void {
   proxyReq.removeHeader('authorization');
@@ -122,8 +130,23 @@ export function createProxyForRoute(
         if (!res || !('writeHead' in res) || res.headersSent) return;
 
         const traceId = req.traceId ?? 'unknown';
-        const kind = classifyProxyError(err);
+        const proxyError = err as NodeJS.ErrnoException;
+        const kind = classifyProxyError(proxyError);
         const [status, errorCode, message] = ERROR_MAP[kind];
+
+        console.error(JSON.stringify({
+          timestamp: new Date().toISOString(),
+          level: 'error',
+          event: 'gateway_upstream_proxy_error',
+          traceId,
+          method: req.method,
+          path: requestPath(req),
+          targetService: route.service,
+          upstream: target.url,
+          kind,
+          code: proxyError.code ?? 'UNKNOWN',
+          status,
+        }));
 
         res.writeHead(status, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(buildApiFailure(errorCode, message, traceId)));
