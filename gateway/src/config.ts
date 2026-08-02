@@ -95,7 +95,7 @@ export function loadConfig(): GatewayConfig {
     port: envInt('GATEWAY_PORT', 5000),
     host: env('GATEWAY_HOST', '0.0.0.0'),
     gatewayKey,
-    corsOrigins: env('CORS_ORIGINS', 'http://localhost:5173,http://localhost:5174')
+    corsOrigins: env('CORS_ORIGINS', 'http://localhost:5120,http://localhost:5121,http://localhost:5122')
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean),
