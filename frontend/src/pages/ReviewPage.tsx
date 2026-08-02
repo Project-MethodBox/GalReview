@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link } from 'react-router'
+import { Link, useNavigate } from 'react-router'
 import AppShell, { PageHeader } from '../components/AppShell'
 import { api } from '../lib/api'
 import { pollUntil } from '../lib/poll'
@@ -34,6 +34,13 @@ function attemptsFromAnswers(answers: AnswerResult[]): Record<string, number> {
   return Object.fromEntries(answers.map((answer) => [answer.questionId, answer.attemptNumber]))
 }
 
+// GalGameService 的本地固定剧情只用于演示，不应向真实 KnowledgeService 提交证据。
+function isFixedMockStory(gamePackage: GamePackage): boolean {
+  return gamePackage.scenes.some((scene) =>
+    scene.sceneId === 'scene-001' && scene.title === '雾岚町的夏祭前夜',
+  )
+}
+
 function runtimeEvent(events: Array<Record<string, unknown>>, type: string) {
   return events.find((event) => event.type === type)
 }
@@ -56,8 +63,11 @@ function createShellSession(gamePackage: GamePackage): ReviewSession {
 }
 
 export default function ReviewPage() {
+  const navigate = useNavigate()
   const initial = readWorkflow()
   const adapterRef = useRef<WasmAdapter | null>(null)
+  const gameStageRef = useRef<HTMLElement | null>(null)
+  const bgmRef = useRef<HTMLAudioElement | null>(null)
   const resultKeyRef = useRef(initial.resultIdempotencyKey || createUuidV4())
   const startedAtRef = useRef(Date.now())
   const sceneStartedAtRef = useRef(Date.now())
@@ -79,13 +89,64 @@ export default function ReviewPage() {
   const [result, setResult] = useState<ReviewResult>()
   const [shellCompleted, setShellCompleted] = useState(false)
   const [adapterVersion, setAdapterVersion] = useState(0)
+  const [dialogueIndex, setDialogueIndex] = useState(0)
+  const [typedLength, setTypedLength] = useState(0)
+
+  useEffect(() => {
+    const audio = new Audio('/bgm.mp3')
+    let active = true
+    audio.loop = true
+    audio.preload = 'auto'
+    audio.volume = .25
+    bgmRef.current = audio
+
+    const startPlayback = () => {
+      if (!active) return
+      void audio.play().catch(() => {})
+    }
+
+    void audio.play().catch(() => {
+      if (active) document.addEventListener('pointerdown', startPlayback, { once: true })
+    })
+
+    return () => {
+      active = false
+      document.removeEventListener('pointerdown', startPlayback)
+      audio.pause()
+      audio.currentTime = 0
+      bgmRef.current = null
+    }
+  }, [])
 
   const scene = useMemo(
     () => gamePackage?.scenes.find((item) => item.sceneId === sceneId),
     [gamePackage, sceneId],
   )
 
+  const currentDialogue = scene?.dialogue[dialogueIndex]
+  const dialogueCharacters = useMemo(() => Array.from(currentDialogue?.text || ''), [currentDialogue?.text])
+  const typedDialogue = dialogueCharacters.slice(0, typedLength).join('')
+  const dialogueTyping = typedLength < dialogueCharacters.length
+  const dialogueCompleted = !scene || dialogueIndex >= scene.dialogue.length - 1
+
   useEffect(() => () => adapterRef.current?.dispose(), [])
+
+  useEffect(() => {
+    setDialogueIndex(0)
+  }, [sceneId])
+
+  useEffect(() => {
+    setTypedLength(0)
+    if (!dialogueCharacters.length) return undefined
+    const timer = window.setInterval(() => {
+      setTypedLength((current) => {
+        const next = current + 1
+        if (next >= dialogueCharacters.length) window.clearInterval(timer)
+        return Math.min(next, dialogueCharacters.length)
+      })
+    }, 52)
+    return () => window.clearInterval(timer)
+  }, [dialogueCharacters])
 
   useEffect(() => {
     if (!adapterVersion) return
@@ -353,6 +414,18 @@ export default function ReviewPage() {
       const completedSession = { ...activeSession, status: 'COMPLETED' as const, completedAt: new Date().toISOString() }
       setSession(completedSession)
       updateWorkflow({ reviewSession: completedSession })
+      if (isFixedMockStory(gamePackage)) {
+        updateWorkflow({
+          gameGeneration: undefined,
+          gameManifest: undefined,
+          gamePackage: undefined,
+          reviewSession: undefined,
+          visitedSceneIds: undefined,
+          answerResults: undefined,
+        })
+        navigate('/home', { replace: true })
+        return
+      }
       setProgress(completed.status === 'DUPLICATE' ? '这次结果已经提交过。' : '本次复习结果已提交。')
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '结果提交失败。')
@@ -400,18 +473,51 @@ export default function ReviewPage() {
     return <AppShell><main className="page review-page"><PageHeader title="复习" /><section className="empty-state"><h2>还没有复习计划</h2><Link className="button button--primary" to="/materials">创建计划</Link></section></main></AppShell>
   }
 
+  function advanceDialogue() {
+    if (!scene) return
+    if (dialogueTyping) {
+      setTypedLength(dialogueCharacters.length)
+      return
+    }
+    if (dialogueCompleted) return
+    setDialogueIndex((current) => Math.min(current + 1, scene.dialogue.length - 1))
+  }
+
+  async function toggleGameFullscreen() {
+    const stage = gameStageRef.current
+    if (!stage) return
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen()
+      else await stage.requestFullscreen()
+    } catch {
+      setError('当前浏览器无法进入全屏模式。')
+    }
+  }
+
+  const showSetup = !gamePackage || !session || !adapterRef.current
+
   return (
     <AppShell>
-    <main className="page review-page">
+    <main className={`page review-page${showSetup ? ' review-page--setup' : ''}`}>
       <PageHeader title={initial.material?.displayName || '本次复习'} description={`${initial.plan.type === 'ASSESSMENT' ? '全面测试' : '章节学习'} · ${initial.plan.nodes.length} 个知识节点`} actions={<Link className="button" to="/knowledge-graph">查看图谱</Link>} />
 
-      {!gamePackage || !session || !adapterRef.current ? (
-        <section className="review-setup workspace-card">
-          <span className="section-label">生成设置</span>
-          <h2>准备 GalGame</h2>
-          <p>预计 {initial.plan.estimatedQuestionCount} 道题。故事风格不会改变本次复习的知识范围。</p>
-          <label>故事风格<select value={style} onChange={(event) => setStyle(event.target.value as GameStyle)}><option value="CAMPUS">校园</option><option value="FANTASY">幻想</option><option value="SCIENCE">科幻</option></select></label>
-          <label>难度<select value={difficulty} onChange={(event) => setDifficulty(event.target.value as Difficulty)}><option value="BASIC">基础</option><option value="STANDARD">标准</option><option value="ADVANCED">进阶</option></select></label>
+      {showSetup ? (
+        <section className="review-setup workspace-card" data-style={style.toLowerCase()}>
+          <span className="review-setup__orb review-setup__orb--one" aria-hidden="true" />
+          <span className="review-setup__orb review-setup__orb--two" aria-hidden="true" />
+          <div className="review-setup__heading">
+            <span className="section-label">生成设置</span>
+            <h2>准备 视觉小说</h2>
+            <p>选择故事氛围与挑战难度，生成一段只属于本次计划的互动复习。</p>
+          </div>
+          <div className="review-setup__summary" aria-label="本次复习概况">
+            <div><span>预计题目</span><strong>{initial.plan.estimatedQuestionCount}</strong><small>道</small></div>
+            <div><span>知识范围</span><strong>{initial.plan.nodes.length}</strong><small>个节点</small></div>
+          </div>
+          <div className="review-setup__controls">
+            <label><span>故事风格</span><select value={style} onChange={(event) => setStyle(event.target.value as GameStyle)}><option value="CAMPUS">校园</option><option value="FANTASY">幻想</option><option value="SCIENCE">科幻</option></select></label>
+            <label><span>挑战难度</span><select value={difficulty} onChange={(event) => setDifficulty(event.target.value as Difficulty)}><option value="BASIC">基础</option><option value="STANDARD">标准</option><option value="ADVANCED">进阶</option></select></label>
+          </div>
           {gamePackage && session
             ? <button className="primary-button" type="button" disabled={busy} onClick={() => void resumeRuntime()}>恢复会话</button>
             : generation && generation.status !== 'FAILED'
@@ -421,13 +527,16 @@ export default function ReviewPage() {
       ) : result || shellCompleted ? (
         <section className="review-complete workspace-card"><p>复习完成</p><h2>{shellCompleted ? '本地体验已完成' : result?.status === 'ACCEPTED' ? '结果已提交' : '结果已去重'}</h2><p>{shellCompleted ? `本地记录 ${attempt.answers.length} 条作答。当前 RenderService 仅提供基础壳，本次结果没有提交，掌握度不会更新。` : `共记录 ${attempt.answers.length} 条作答证据。`}</p><div className="completion-actions"><Link className="button" to="/knowledge-graph">查看知识图谱</Link><button className="button button--primary" type="button" onClick={resetGame}>重新生成</button></div></section>
       ) : scene ? (
-        <section className="game-stage">
+        <section className={`game-stage game-stage--${scene.sceneId}`} ref={gameStageRef}>
           <div className="game-stage__meta"><span>{runtimeManifest?.wasmVersion} · {adapterRef.current?.engine === 'wasm' ? 'WASM' : '兼容模式'}</span><span>{visitedSceneIds.length} 个场景已访问</span></div>
-          <article className="dialogue-panel">
+          <button className="game-stage__fullscreen" type="button" onClick={() => void toggleGameFullscreen()} aria-label="切换全屏" title="切换全屏">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V5h4M20 9V5h-4M4 15v4h4M20 15v4h-4" /></svg>
+          </button>
+          <article className={`dialogue-panel${dialogueCompleted && !dialogueTyping ? '' : ' dialogue-panel--advance'}`} onClick={advanceDialogue}>
             {scene.title ? <h2>{scene.title}</h2> : null}
-            {scene.dialogue.map((line, index) => <div className="dialogue-line" key={`${line.speakerId}-${index}`}><strong>{line.speakerId}</strong><p>{line.text}</p></div>)}
+            {currentDialogue ? <div className={`dialogue-line${currentDialogue.speakerId === '旁白' ? ' dialogue-line--narration' : ''}`}>{currentDialogue.speakerId !== '旁白' ? <strong>{currentDialogue.speakerId}</strong> : null}<p>{typedDialogue}</p></div> : null}
           </article>
-          {scene.choices.length ? <div className="choice-list">{scene.choices.map((choice) => <button key={choice.choiceId} disabled={busy} type="button" onClick={() => void choose(choice)}>{choice.text}</button>)}</div> : <button className="primary-button" disabled={busy} type="button" onClick={() => void finishCurrentScene()}>结束复习</button>}
+          {dialogueCompleted && !dialogueTyping ? (scene.choices.length ? <div className="choice-list">{scene.choices.map((choice) => <button key={choice.choiceId} disabled={busy} type="button" onClick={() => void choose(choice)}>{choice.text}</button>)}</div> : <button className="primary-button" disabled={busy} type="button" onClick={() => void finishCurrentScene()}>前面的区域以后再来探索吧</button>) : null}
         </section>
       ) : <section className="workspace-card"><h2>场景不存在</h2><p>游戏包没有找到当前场景，请重新生成。</p></section>}
 

@@ -67,7 +67,7 @@ var packageReaderAllowedServices = InternalServiceAccessPolicy.CreateAllowlist(
 builder.Services.AddHttpClient("gateway", client =>
 {
     client.BaseAddress = new Uri(builder.Configuration["Gateway:BaseUrl"] ?? "http://localhost:5000");
-    client.Timeout = TimeSpan.FromSeconds(30);
+    client.Timeout = TimeSpan.FromSeconds(45);
 });
 
 // HttpClient：叙事生成模型调用（DeepSeek 等 OpenAI 兼容端点）
@@ -178,9 +178,10 @@ app.UseExceptionHandler(error => error.Run(context =>
     }
     logger.LogError(exception, "Unhandled GalGameService error. CorrelationId: {CorrelationId}; Path: {Path}",
         context.TraceIdentifier, context.Request.Path);
+    // 未预期异常不向调用方泄露内部实现细节；对外统一为可重试的上游不可用。
     return Results.Json(
-        ApiFailure.Create("INTERNAL_ERROR", "游戏生成服务暂时不可用", context.TraceIdentifier),
-        statusCode: StatusCodes.Status500InternalServerError).ExecuteAsync(context);
+        ApiFailure.Create("SERVICE_UNAVAILABLE", "游戏生成服务暂时不可用", context.TraceIdentifier),
+        statusCode: StatusCodes.Status503ServiceUnavailable).ExecuteAsync(context);
 }));
 
 // Gateway 密钥验证（/healthz、/readyz 豁免）
@@ -247,17 +248,25 @@ app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, Ht
 
     var traceId = c.TraceIdentifier;
     var logger = c.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("GalGameService.Generation");
+    if (!Guid.TryParse(userId, out var ownerUserId))
+        return Failure(c, 401, "AUTH_REQUIRED", "用户身份格式无效。");
 
     // §7.3.1 URGENT：同步经 Gateway 读取不可变 PlanGraph，校验 snapshotVersion
     PlanGraphFetchResult fetchResult;
     try
     {
         fetchResult = await planClient.GetGraphAsync(
-            request.ReviewPlanId, request.SnapshotVersion, traceId, c.RequestAborted);
+            request.ReviewPlanId, request.SnapshotVersion, traceId, c.RequestAborted, mockOwnerUserId: ownerUserId);
     }
     catch (OperationCanceledException) when (c.RequestAborted.IsCancellationRequested)
     {
         return Failure(c, 499, "CLIENT_CLOSED_REQUEST", "客户端断开连接");
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Unable to read PlanGraph. CorrelationId: {CorrelationId}; ReviewPlanId: {ReviewPlanId}",
+            traceId, request.ReviewPlanId);
+        return Failure(c, 503, "SERVICE_UNAVAILABLE", "知识图谱服务暂时不可用");
     }
 
     if (fetchResult.Status == PlanGraphFetchStatus.SnapshotMismatch)
@@ -274,11 +283,21 @@ app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, Ht
         throw new UpstreamContractException("PlanGraph 读取结果状态不完整");
 
     var graph = fetchResult.Graph;
-    if (!Guid.TryParse(userId, out var ownerUserId) || graph.OwnerUserId != ownerUserId)
+    if (graph.OwnerUserId != ownerUserId)
         return Failure(c, 422, "REVIEW_PLAN_NOT_FOUND", "复习计划不存在或不可用于当前用户。");
 
     // PlanGraph 已校验且属于当前用户，创建生成任务
-    var job = store.CreateJob(userId, request);
+    GameGenerationJob job;
+    try
+    {
+        job = store.CreateJob(userId, request);
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Unable to create generation job. CorrelationId: {CorrelationId}; ReviewPlanId: {ReviewPlanId}",
+            traceId, request.ReviewPlanId);
+        return Failure(c, 503, "SERVICE_UNAVAILABLE", "游戏生成任务暂时不可用");
+    }
 
     // 后台异步生成（PlanGraph 已确认可用，不再重复获取）
     // 使用 _ = 丢弃 Task 但内部有完整异常处理，不会静默吞异常
@@ -297,10 +316,12 @@ app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, Ht
             logger.LogInformation("Job {GenerationId} started generating. Style={Style}, Difficulty={Difficulty}",
                 job.GenerationId, request.Style, request.Difficulty);
 
-            // 生成游戏包：先由 GameGenerator 生成确定性骨架，
-            // 再由 NarrativeGenerationService 调用 AI 模型重写叙事文本（§7.3.2）
-            // 模型不可用或草稿不合法时自动降级为确定性骨架
-            var package = narrativeService.GenerateAsync(graph, request, userId).GetAwaiter().GetResult();
+            // Mock 固定返回同一套原创演示剧情；仍保留请求的计划与快照字段，
+            // 使包的溯源、任务查询和权限边界继续符合 §7.1 / §7.3.1。
+            // 非 Mock 才执行真实的骨架生成与可选叙事模型重写。
+            var package = isMockMode
+                ? MockStoryPackageFactory.Create(request)
+                : narrativeService.GenerateAsync(graph, request, userId).GetAwaiter().GetResult();
             var checksum = GamePackageValidator.ComputeChecksum(package);
             var manifest = new GamePackageManifest(
                 package.PackageId, package.SchemaVersion, package.GeneratorVersion,

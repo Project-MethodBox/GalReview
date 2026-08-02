@@ -120,7 +120,7 @@ export default function KnowledgeGraphPage() {
   return (
     <AppShell>
       <main className="page graph-page">
-        <PageHeader title="知识图谱" description={workflow.material?.displayName} actions={<>{graphVersions.length > 1 ? <label className="graph-version-control"><span>图谱版本</span><select value={graph?.graphId || ''} onChange={(event) => void switchGraph(event.target.value)}>{graphVersions.map((item) => <option key={item.graphId} value={item.graphId}>v{item.version} · {item.status}</option>)}</select></label> : null}<Link className="button" to="/materials">创建计划</Link></>} />
+        <PageHeader title="知识图谱" description={workflow.material?.displayName} actions={<>{graphVersions.length > 1 ? <label className="graph-version-control"><span>图谱版本</span><select value={graph?.graphId || ''} onChange={(event) => void switchGraph(event.target.value)}>{graphVersions.map((item) => <option key={item.graphId} value={item.graphId}>v{item.version} · {item.status}</option>)}</select></label> : null}<Link className="button graph-create-plan-button" to="/materials">创建计划</Link></>} />
         {!graph ? <section className="empty-state"><h2>还没有知识图谱</h2><Link className="button button--primary" to="/materials">上传资料</Link></section> : <>
           <section className="data-strip" aria-label="图谱概况"><div><span>章节</span><strong>{chapters.length || graph.chapterCount}</strong></div><div><span>知识点</span><strong>{points.length || graph.pointCount}</strong></div><div><span>关系</span><strong>{relations.length || graph.relationCount}</strong></div></section>
           {error ? <p className="status-line status-line--error" role="alert">{error}</p> : null}
@@ -139,10 +139,10 @@ export default function KnowledgeGraphPage() {
                 <span className="inspector-score">掌握度 {Math.round(selectedPoint.mastery.score)}</span>
                 <h3>{selectedPoint.title}</h3>
                 <p>{selectedPoint.summary}</p>
-                <div className="relation-filter" aria-label="关系类型">
-                  <button className={relationFilter === 'all' ? 'active' : ''} type="button" onClick={() => setRelationFilter('all')}>全部</button>
-                  <button className={relationFilter === 'prerequisite' ? 'active' : ''} type="button" onClick={() => setRelationFilter('prerequisite')}>前置</button>
-                  <button className={relationFilter === 'related' ? 'active' : ''} type="button" onClick={() => setRelationFilter('related')}>相关</button>
+                <div className={`relation-filter relation-filter--${relationFilter}`} aria-label="关系类型">
+                  <button className={`relation-filter__button relation-filter__button--all${relationFilter === 'all' ? ' is-active' : ''}`} type="button" onClick={() => setRelationFilter('all')}>全部</button>
+                  <button className={`relation-filter__button relation-filter__button--prerequisite${relationFilter === 'prerequisite' ? ' is-active' : ''}`} type="button" onClick={() => setRelationFilter('prerequisite')}>前置</button>
+                  <button className={`relation-filter__button relation-filter__button--related${relationFilter === 'related' ? ' is-active' : ''}`} type="button" onClick={() => setRelationFilter('related')}>相关</button>
                 </div>
                 <div className="relation-rows">{relevantRelations.map((relation) => {
                   const outbound = relation.fromPointId === selectedPoint.pointId

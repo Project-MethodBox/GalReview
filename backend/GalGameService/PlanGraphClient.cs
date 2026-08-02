@@ -56,9 +56,10 @@ public sealed class PlanGraphClient
     private readonly string _gatewayKey;
     private readonly string _serviceName = "GalGameService";
     private readonly bool _isMockMode;
+    private readonly bool _acceptAnyPlanWithMockStory;
 
-    // 额外超时：在 HttpClient 30s 超时基础上，增加 CancellationTokenSource 保护
-    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
+    // 额外超时：与 Gateway HttpClient 的 45 秒超时保持一致。
+    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(45);
 
     // Mock 模式使用 contract.md §6.7 的固定 reviewPlanId / snapshotVersion
     public static readonly Guid MockReviewPlanId = Guid.Parse("8e812950-3311-40a7-93ab-636409df8cc2");
@@ -101,6 +102,8 @@ public sealed class PlanGraphClient
         _gatewayKey = configuration["Gateway:ServiceKey"]
             ?? throw new InvalidOperationException("Gateway:ServiceKey must be configured.");
         _isMockMode = isMockMode;
+        _acceptAnyPlanWithMockStory = bool.TryParse(configuration["GalGameMock:UseFixedStory"], out var enabled)
+            && enabled;
     }
 
     /// <summary>
@@ -111,11 +114,17 @@ public sealed class PlanGraphClient
         Guid reviewPlanId,
         string snapshotVersion,
         string traceId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Guid? mockOwnerUserId = null)
     {
         // Mock 模式：每次构造独立快照，避免可变数组污染后续读取。
         if (_isMockMode)
         {
+            // 仅供本地“GalGame Mock + 其余服务真实”联调使用。
+            // 仍用内置图谱的节点和边生成固定剧情，但将其归属和溯源绑定到当前真实请求。
+            if (_acceptAnyPlanWithMockStory && mockOwnerUserId is not null)
+                return PlanGraphFetchResult.Ok(BuildMockPlanGraph(mockOwnerUserId, reviewPlanId, snapshotVersion));
+
             return GetMockGraph(reviewPlanId, snapshotVersion);
         }
 
@@ -233,6 +242,12 @@ public sealed class PlanGraphClient
             _logger.LogError(ex, "PlanGraph response is not valid JSON. CorrelationId: {TraceId}, Elapsed: {Elapsed}ms",
                 traceId, sw.ElapsedMilliseconds);
             return PlanGraphFetchResult.UpstreamContractInvalidResult("KnowledgeService 响应不可解析");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected failure while fetching PlanGraph. CorrelationId: {TraceId}, Elapsed: {Elapsed}ms",
+                traceId, sw.ElapsedMilliseconds);
+            return PlanGraphFetchResult.UnavailableResult("读取知识图谱失败");
         }
     }
 
@@ -702,7 +717,10 @@ public sealed class PlanGraphClient
     /// 构造内置 Mock PlanGraph（逐字段对应 contract.md §6.7 PlanGraph Mock）。
     /// 包含 1 个 questionTarget=true 的 TARGET 节点和 1 个 PREREQUISITE 节点。
     /// </summary>
-    private static PlanGraph BuildMockPlanGraph()
+    private static PlanGraph BuildMockPlanGraph(
+        Guid? ownerUserIdOverride = null,
+        Guid? reviewPlanIdOverride = null,
+        string? snapshotVersionOverride = null)
     {
         var targetPointId = Guid.Parse("d1adc45a-52db-4de2-9cf7-02e1ac0d53cb");
         var prereqPointId = Guid.Parse("84f7d873-e573-4689-b18d-6f82c745d1bf");
@@ -756,14 +774,14 @@ public sealed class PlanGraphClient
 
         return new PlanGraph(
             SchemaVersion: "1.0",
-            ReviewPlanId: MockReviewPlanId,
+            ReviewPlanId: reviewPlanIdOverride ?? MockReviewPlanId,
             Type: "LEARNING",
             Status: "OPEN",
             GraphId: graphId,
             GraphVersion: 1,
-            OwnerUserId: ownerUserId,
+            OwnerUserId: ownerUserIdOverride ?? ownerUserId,
             SelectedChapterIds: new[] { chapterId },
-            SnapshotVersion: MockSnapshotVersion,
+            SnapshotVersion: snapshotVersionOverride ?? MockSnapshotVersion,
             AlgorithmVersion: "learning-planner-v1",
             Nodes: nodes,
             Edges: edges,
