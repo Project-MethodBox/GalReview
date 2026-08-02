@@ -140,7 +140,7 @@ export default function StudyFlowPage() {
         <div className="process-layout">
           <section className="process-primary">
             <form className="form-section upload-panel" onSubmit={upload}>
-              <header><h2>上传资料</h2><p>文件上限 10 MiB。图片和扫描件只有在明确开启 OCR 后才会识别。</p></header>
+              <header><h2>上传资料</h2><p>文件上限为 10 MiB。图片和扫描件需要开启 OCR 才能识别文字。</p></header>
               <label>文件<input type="file" accept=".pdf,.docx,.md,.markdown,.html,.htm,.txt,.png,.jpg,.jpeg" onChange={(event) => setFile(event.target.files?.[0] || null)} /></label>
               <label>资料名称<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder={file?.name || '选填'} /></label>
               <label>学科代码<input value={subjectCode} onChange={(event) => setSubjectCode(event.target.value.toUpperCase())} pattern="[A-Z][A-Z0-9_]{0,31}" placeholder="GENERAL" /></label>
@@ -148,7 +148,7 @@ export default function StudyFlowPage() {
                 <label className="toggle-field"><span><strong>启用 OCR</strong><small>仅在图片或扫描件需要时开启。</small></span><input type="checkbox" checked={enableOcr} onChange={(event) => setEnableOcr(event.target.checked)} /></label>
                 <label>OCR 模式<select disabled={!enableOcr} value={ocrMode} onChange={(event) => setOcrMode(event.target.value as 'quick' | 'standard')}><option value="standard">标准识别</option><option value="quick">快速识别</option></select></label>
               </div>
-              <label className="toggle-field compact-toggle"><span><strong>重新提取</strong><small>处理已就绪资料时强制创建新任务。</small></span><input type="checkbox" checked={force} onChange={(event) => setForce(event.target.checked)} /></label>
+              <label className="toggle-field compact-toggle"><span><strong>重新提取</strong><small>再次处理已完成的资料并更新提取结果。</small></span><input type="checkbox" checked={force} onChange={(event) => setForce(event.target.checked)} /></label>
               <button className="button button--primary" disabled={busy} type="submit">{busy ? '正在处理' : '上传并构建图谱'}</button>
             </form>
 
