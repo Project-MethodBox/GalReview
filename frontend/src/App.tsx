@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router'
 import ForgotPasswordPage from './pages/ForgotPasswordPage'
 import HomePage from './pages/HomePage'
@@ -8,8 +8,10 @@ import LoginPage from './pages/LoginPage'
 import NotFoundPage from './pages/NotFoundPage'
 import RegisterPage from './pages/RegisterPage'
 import ReviewPage from './pages/ReviewPage'
+import SettingsPage from './pages/SettingsPage'
 import StudyFlowPage from './pages/StudyFlowPage'
 import { readSession } from './lib/session'
+import { recoverWorkflow } from './lib/workflowRecovery'
 
 const routeDepth: Record<string, number> = {
   '/login': 0,
@@ -20,10 +22,23 @@ const routeDepth: Record<string, number> = {
   '/knowledge': 3,
   '/knowledge-graph': 3,
   '/review': 3,
+  '/settings': 3,
 }
 
 function Protected({ children }: { children: ReactNode }) {
-  return readSession() ? children : <Navigate replace to="/login" state={{ message: '请先登录。' }} />
+  const session = readSession()
+  const [ready, setReady] = useState(false)
+
+  useEffect(() => {
+    if (!session) return
+    let active = true
+    void recoverWorkflow().catch(() => undefined).finally(() => { if (active) setReady(true) })
+    return () => { active = false }
+  }, [session?.session.sessionId])
+
+  if (!session) return <Navigate replace to="/login" state={{ message: '请先登录。' }} />
+  if (!ready) return <main className="app-loading" role="status"><span>正在恢复学习资料</span></main>
+  return children
 }
 
 function AnimatedRoutes() {
@@ -51,6 +66,7 @@ function AnimatedRoutes() {
         <Route path="/knowledge" element={<Protected><KnowledgePointsPage /></Protected>} />
         <Route path="/knowledge-graph" element={<Protected><KnowledgeGraphPage /></Protected>} />
         <Route path="/review" element={<Protected><ReviewPage /></Protected>} />
+        <Route path="/settings" element={<Protected><SettingsPage /></Protected>} />
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </div>

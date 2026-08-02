@@ -4,7 +4,8 @@ import ActionButton from '../components/ActionButton'
 import AuthLayout, { AuthHeading } from '../components/AuthLayout'
 import FormField from '../components/FormField'
 import { api } from '../lib/api'
-import { saveProfile, saveSession } from '../lib/session'
+import { clearSession, saveProfile, saveSession } from '../lib/session'
+import { resetWorkflow } from '../lib/workflow'
 
 export default function RegisterPage() {
   const navigate = useNavigate()
@@ -31,6 +32,8 @@ export default function RegisterPage() {
     setMessage('')
     try {
       const session = await api.register(form)
+      clearSession()
+      resetWorkflow()
       saveSession(session)
       saveProfile(await api.getCurrentUser())
       navigate('/home')
@@ -44,9 +47,9 @@ export default function RegisterPage() {
   return (
     <AuthLayout page="register">
       <form className="auth-form" onSubmit={submit} noValidate>
-        <AuthHeading title="注册" subtitle="始于微光，终成星河。" />
+        <AuthHeading title="注册" subtitle="邀请码由管理员提供。" />
         <FormField label="用户名" autoComplete="nickname" placeholder="在此处输入您的用户名" value={form.displayName} onChange={(event) => update('displayName', event.target.value)} onClear={() => update('displayName', '')} error={errors.displayName} />
-        <FormField label="邮箱" type="email" autoComplete="email" placeholder="在此处输入您的邮箱" value={form.email} onChange={(event) => update('email', event.target.value)} error={errors.email} />
+        <FormField label="邮箱" type="email" autoComplete="email" placeholder="在此处输入您的邮箱" value={form.email} onChange={(event) => update('email', event.target.value)} onClear={() => update('email', '')} error={errors.email} />
         <FormField label="密码" autoComplete="new-password" placeholder="在此处输入您的密码" value={form.password} onChange={(event) => update('password', event.target.value)} error={errors.password} passwordToggle />
         <FormField
           label="注册邀请码"

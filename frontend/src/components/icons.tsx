@@ -3,7 +3,7 @@ import type { SVGProps } from 'react'
 type IconProps = SVGProps<SVGSVGElement>
 
 export function EyeIcon(props: IconProps) {
-  return <svg viewBox="0 0 24 24" aria-hidden="true" {...props}><path d="M2.3 12s3.5-6 9.7-6 9.7 6 9.7 6-3.5 6-9.7 6S2.3 12 2.3 12Z" fill="currentColor"/><circle cx="12" cy="12" r="3" fill="var(--field-bg)"/></svg>
+  return <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" {...props}><path d="M2.75 12s3.2-5.25 9.25-5.25S21.25 12 21.25 12 18.05 17.25 12 17.25 2.75 12 2.75 12Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round"/><circle cx="12" cy="12" r="2.65" stroke="currentColor" strokeWidth="1.7"/></svg>
 }
 
 export function ArrowIcon(props: IconProps) {
@@ -23,7 +23,7 @@ export function ClockIcon(props: IconProps) {
 }
 
 export function SettingsIcon(props: IconProps) {
-  return <svg viewBox="0 0 24 24" aria-hidden="true" {...props}><path d="m9.5 3-.6 2.1-1.4.8-2.1-.6-1.5 2.6 1.6 1.5v1.7l-1.6 1.5 1.5 2.6 2.1-.6 1.4.8.6 2.1h3l.6-2.1 1.4-.8 2.1.6 1.5-2.6-1.6-1.5V9.4l1.6-1.5-1.5-2.6-2.1.6-1.4-.8L12.5 3h-3Z" fill="currentColor"/><circle cx="11" cy="10.3" r="2.3" fill="var(--toolbar-bg)"/></svg>
+  return <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" {...props}><path d="M9.4 3.4 8.8 5.6l-1.5.9-2.2-.6-1.7 3 1.6 1.6v1.8l-1.6 1.6 1.7 3 2.2-.6 1.5.9.6 2.2h3.4l.6-2.2 1.5-.9 2.2.6 1.7-3-1.6-1.6v-1.8l1.6-1.6-1.7-3-2.2.6-1.5-.9-.6-2.2H9.4Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/><circle cx="11.1" cy="11.4" r="2.5" stroke="currentColor" strokeWidth="1.6"/></svg>
 }
 
 export function BackIcon(props: IconProps) {

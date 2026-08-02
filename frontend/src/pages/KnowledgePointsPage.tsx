@@ -1,14 +1,22 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router'
+import AppShell, { PageHeader } from '../components/AppShell'
 import { api } from '../lib/api'
 import { readWorkflow } from '../lib/workflow'
 import type { KnowledgePoint } from '../types/api'
+
+type SortMode = 'mastery-asc' | 'mastery-desc' | 'title'
 
 export default function KnowledgePointsPage() {
   const workflow = readWorkflow()
   const [points, setPoints] = useState<KnowledgePoint[]>([])
   const [loading, setLoading] = useState(Boolean(workflow.graph))
   const [error, setError] = useState('')
+  const [search, setSearch] = useState('')
+  const [chapterId, setChapterId] = useState('all')
+  const [tag, setTag] = useState('all')
+  const [sort, setSort] = useState<SortMode>('mastery-asc')
+  const [expandedId, setExpandedId] = useState<string>()
 
   useEffect(() => {
     if (!workflow.graph) return
@@ -25,43 +33,61 @@ export default function KnowledgePointsPage() {
     return () => { active = false }
   }, [workflow.graph?.graphId])
 
+  const chapterTitle = useMemo(() => new Map((workflow.chapters || []).map((chapter) => [chapter.chapterId, chapter.title])), [workflow.chapters])
+  const tags = useMemo(() => Array.from(new Set(points.flatMap((point) => point.tags))).sort((left, right) => left.localeCompare(right, 'zh-CN')), [points])
+  const visiblePoints = useMemo(() => {
+    const keyword = search.trim().toLowerCase()
+    return points.filter((point) => {
+      const matchesSearch = !keyword || `${point.title} ${point.summary} ${point.tags.join(' ')}`.toLowerCase().includes(keyword)
+      return matchesSearch && (chapterId === 'all' || point.chapterId === chapterId) && (tag === 'all' || point.tags.includes(tag))
+    }).sort((left, right) => {
+      if (sort === 'title') return left.title.localeCompare(right.title, 'zh-CN')
+      return sort === 'mastery-asc' ? left.mastery.score - right.mastery.score : right.mastery.score - left.mastery.score
+    })
+  }, [chapterId, points, search, sort, tag])
+
   const statistics = useMemo(() => {
-    const averageMastery = points.length
-      ? Math.round(points.reduce((sum, point) => sum + point.mastery.score, 0) / points.length)
-      : 0
-    const tagCount = new Set(points.flatMap((point) => point.tags)).size
-    return { averageMastery, tagCount }
+    const averageMastery = points.length ? Math.round(points.reduce((sum, point) => sum + point.mastery.score, 0) / points.length) : 0
+    const dueCount = points.filter((point) => new Date(point.mastery.nextReviewAt).getTime() <= Date.now()).length
+    return { averageMastery, dueCount }
   }, [points])
 
-  if (!workflow.graph) {
-    return <main className="empty-workspace"><h1>还没有知识点</h1><p>先上传一份资料，系统会按章节提取其中的知识。</p><Link to="/materials">上传资料</Link></main>
-  }
-
   return (
-    <main className="workspace-page">
-      <header className="workspace-header">
-        <div><p>{workflow.graph.subjectCode}</p><h1>知识点</h1></div>
-        <nav><Link to="/home">返回主页</Link><Link to="/knowledge-graph">查看图谱</Link></nav>
-      </header>
-      {error ? <p className="error-banner">{error}</p> : null}
-      <section className="graph-summary" aria-label="知识点概览">
-        <span><strong>{workflow.graph.pointCount}</strong>知识点</span>
-        <span><strong>{statistics.averageMastery}</strong>平均掌握度</span>
-        <span><strong>{statistics.tagCount}</strong>标签</span>
-      </section>
-      {loading ? <p className="workspace-loading" role="status">正在读取全部知识点…</p> : null}
-      {!loading && !error ? (
-        <section className="knowledge-points-grid" aria-label="知识点列表">
-          {points.map((point) => (
-            <article className="workspace-card knowledge-point-card" key={point.pointId}>
-              <span>{point.tags.join(' / ') || '未标注'}</span>
-              <h2>{point.title}</h2>
-              <p>{point.summary}</p>
-              <footer><strong>{Math.round(point.mastery.score)}</strong><small>掌握度</small></footer>
-            </article>
-          ))}
-        </section>
-      ) : null}
-    </main>
+    <AppShell>
+      <main className="page knowledge-page">
+        <PageHeader title="知识点" description="按章节、标签与掌握度检查当前图谱。" actions={<Link className="button" to="/knowledge-graph">查看图谱</Link>} />
+        {!workflow.graph ? <section className="empty-state"><h2>还没有知识点</h2><p>上传并处理一份资料后，知识点会按章节显示在这里。</p><Link className="button button--primary" to="/materials">上传资料</Link></section> : <>
+          <section className="data-strip" aria-label="知识点概况">
+            <div><span>知识点</span><strong>{points.length || workflow.graph.pointCount}</strong></div>
+            <div><span>平均掌握度</span><strong>{statistics.averageMastery}</strong></div>
+            <div><span>待复习</span><strong>{statistics.dueCount}</strong></div>
+          </section>
+          {error ? <p className="status-line status-line--error" role="alert">{error}</p> : null}
+          <div className="knowledge-layout">
+            <aside className="filter-panel" aria-label="筛选知识点">
+              <label>搜索<input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="标题、摘要或标签" /></label>
+              <label>章节<select value={chapterId} onChange={(event) => setChapterId(event.target.value)}><option value="all">全部章节</option>{(workflow.chapters || []).map((chapter) => <option key={chapter.chapterId} value={chapter.chapterId}>{chapter.title}</option>)}</select></label>
+              <label>标签<select value={tag} onChange={(event) => setTag(event.target.value)}><option value="all">全部标签</option>{tags.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+              <label>排序<select value={sort} onChange={(event) => setSort(event.target.value as SortMode)}><option value="mastery-asc">掌握度从低到高</option><option value="mastery-desc">掌握度从高到低</option><option value="title">按标题</option></select></label>
+              <p>显示 {visiblePoints.length} / {points.length}</p>
+            </aside>
+            <section className="knowledge-list" aria-label="知识点列表">
+              {loading ? <p className="empty-row" role="status">正在读取知识点…</p> : visiblePoints.map((point) => {
+                const expanded = expandedId === point.pointId
+                return <article key={point.pointId} className={expanded ? 'expanded' : ''}>
+                  <button type="button" aria-expanded={expanded} onClick={() => setExpandedId(expanded ? undefined : point.pointId)}>
+                    <span className="mastery-value">{Math.round(point.mastery.score)}</span>
+                    <span className="point-copy"><small>{chapterTitle.get(point.chapterId) || point.subjectCode}</small><strong>{point.title}</strong><em>{point.tags.join(' · ') || '无标签'}</em></span>
+                    <span className="row-action">{expanded ? '收起' : '查看'}</span>
+                  </button>
+                  {expanded ? <div className="point-detail"><p>{point.summary}</p><dl><div><dt>置信度</dt><dd>{Math.round(point.confidence * 100)}%</dd></div><div><dt>复习次数</dt><dd>{point.mastery.repetitions}</dd></div><div><dt>下次复习</dt><dd>{new Date(point.mastery.nextReviewAt).toLocaleDateString('zh-CN')}</dd></div></dl></div> : null}
+                </article>
+              })}
+              {!loading && !visiblePoints.length ? <p className="empty-row">没有匹配的知识点。</p> : null}
+            </section>
+          </div>
+        </>}
+      </main>
+    </AppShell>
   )
 }

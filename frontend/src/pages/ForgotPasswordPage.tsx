@@ -56,8 +56,8 @@ export default function ForgotPasswordPage() {
   return (
     <AuthLayout page="forgot">
       <form className="auth-form" onSubmit={submit} noValidate>
-        <AuthHeading title="忘记密码" subtitle="始于微光，终成星河。" />
-        <FormField label="邮箱" type="email" autoComplete="email" placeholder="在此处输入您的邮箱" value={email} onChange={(event) => setEmail(event.target.value)} />
+        <AuthHeading title="忘记密码" subtitle="验证码发送到注册邮箱，有效期 10 分钟。" />
+        <FormField label="邮箱" type="email" autoComplete="email" placeholder="在此处输入您的邮箱" value={email} onChange={(event) => setEmail(event.target.value)} onClear={() => setEmail('')} />
         <FormField
           label="验证码"
           inputMode="numeric"

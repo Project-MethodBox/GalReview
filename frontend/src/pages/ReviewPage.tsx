@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router'
+import AppShell, { PageHeader } from '../components/AppShell'
 import { api } from '../lib/api'
 import { pollUntil } from '../lib/poll'
 import { loadRuntime } from '../lib/runtime'
@@ -292,27 +293,43 @@ export default function ReviewPage() {
     }
   }
 
+  function resetGame() {
+    adapterRef.current?.dispose()
+    adapterRef.current = null
+    resultKeyRef.current = createUuidV4()
+    setGamePackage(undefined)
+    setSession(undefined)
+    setRuntimeManifest(undefined)
+    setSceneId('')
+    setVisitedSceneIds([])
+    setAttempt({ answers: [], attemptsByQuestion: {} })
+    setResult(undefined)
+    setShellCompleted(false)
+    setError('')
+    setProgress('可以调整风格与难度，再生成一次。')
+    updateWorkflow({ gameManifest: undefined, gamePackage: undefined, reviewSession: undefined, answerResults: undefined, resultIdempotencyKey: resultKeyRef.current })
+  }
+
   if (!initial.plan) {
-    return <main className="empty-workspace"><h1>还没有复习计划</h1><p>从一份资料开始，选择本次要测试或学习的章节。</p><Link to="/materials">创建计划</Link></main>
+    return <AppShell><main className="page review-page"><PageHeader title="复习" description="生成计划后，GalGame 会在这里开始。" /><section className="empty-state"><h2>还没有复习计划</h2><p>从一份资料开始，选择本次要测试或学习的章节。</p><Link className="button button--primary" to="/materials">创建计划</Link></section></main></AppShell>
   }
 
   return (
-    <main className="review-page">
-      <header className="workspace-header">
-        <div><p>{initial.plan.type === 'ASSESSMENT' ? '全面测试' : '章节学习'}</p><h1>{initial.material?.displayName || '本次复习'}</h1></div>
-        <nav><Link to="/home">返回主页</Link><Link to="/knowledge-graph">查看图谱</Link></nav>
-      </header>
+    <AppShell>
+    <main className="page review-page">
+      <PageHeader title={initial.material?.displayName || '本次复习'} description={`${initial.plan.type === 'ASSESSMENT' ? '全面测试' : '章节学习'} · ${initial.plan.nodes.length} 个知识节点`} actions={<Link className="button" to="/knowledge-graph">查看图谱</Link>} />
 
       {!gamePackage || !session || !adapterRef.current ? (
         <section className="review-setup workspace-card">
+          <span className="section-label">生成设置</span>
           <h2>准备 GalGame</h2>
-          <p>{initial.plan.nodes.length} 个计划节点，预计 {initial.plan.estimatedQuestionCount} 道题。</p>
+          <p>预计 {initial.plan.estimatedQuestionCount} 道题。故事风格只影响呈现，题目仍来自当前计划快照。</p>
           <label>故事风格<select value={style} onChange={(event) => setStyle(event.target.value as GameStyle)}><option value="CAMPUS">校园</option><option value="FANTASY">幻想</option><option value="SCIENCE">科幻</option></select></label>
           <label>难度<select value={difficulty} onChange={(event) => setDifficulty(event.target.value as Difficulty)}><option value="BASIC">基础</option><option value="STANDARD">标准</option><option value="ADVANCED">进阶</option></select></label>
           {gamePackage && session ? <button className="primary-button" type="button" disabled={busy} onClick={() => void resumeRuntime()}>恢复会话</button> : <button className="primary-button" type="button" disabled={busy} onClick={() => void generateAndStart()}>{busy ? '准备中…' : '生成并开始'}</button>}
         </section>
       ) : result || shellCompleted ? (
-        <section className="review-complete workspace-card"><p>复习完成</p><h2>{shellCompleted ? '渲染基础壳运行完成' : result?.status === 'ACCEPTED' ? '这次努力已经记下了' : '结果已安全去重'}</h2><p>{shellCompleted ? `本地记录 ${attempt.answers.length} 条作答；会话与掌握度回传等待 RenderService 后续实现。` : `共记录 ${attempt.answers.length} 条作答证据。`}</p><Link to="/knowledge-graph">查看知识图谱</Link></section>
+        <section className="review-complete workspace-card"><p>复习完成</p><h2>{shellCompleted ? '本地体验已完成' : result?.status === 'ACCEPTED' ? '结果已提交' : '结果已去重'}</h2><p>{shellCompleted ? `本地记录 ${attempt.answers.length} 条作答。当前 RenderService 仅提供基础壳，本次结果没有提交，掌握度不会更新。` : `共记录 ${attempt.answers.length} 条作答证据。`}</p><div className="completion-actions"><Link className="button" to="/knowledge-graph">查看知识图谱</Link><button className="button button--primary" type="button" onClick={resetGame}>重新生成</button></div></section>
       ) : scene ? (
         <section className="game-stage">
           <div className="game-stage__meta"><span>{runtimeManifest?.wasmVersion}</span><span>{visitedSceneIds.length} 个场景已访问</span></div>
@@ -324,7 +341,8 @@ export default function ReviewPage() {
         </section>
       ) : <section className="workspace-card"><h2>场景不存在</h2><p>游戏包没有找到当前场景，请重新生成。</p></section>}
 
-      <p className={error ? 'error-banner' : 'workflow-status'} aria-live="polite">{error || progress}</p>
+      <p className={error ? 'status-line status-line--error' : 'status-line'} aria-live="polite">{error || progress}</p>
     </main>
+    </AppShell>
   )
 }
