@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "render-runtime-state-1",
+  "runtimeVersion": "cpp-wasm-0.2.0",
+  "abiVersion": 1,
+  "sessionId": "bc98017d-cf5f-44fc-ac09-9604a2a0248b",
+  "userId": "7bc4918a-9079-4ea2-9e8e-369ad79a9f20",
+  "packageId": "f2561bb2-b88c-47ef-b0ae-8f283ff64f1b",
+  "reviewPlanId": "8e812950-3311-40a7-93ab-636409df8cc2",
+  "snapshotVersion": "plan-graph-1.0:3da5f48f37ac57c91b49ee747c11e45f1a9e9e73d8e892fcd1bd1f9f3f50c620",
+  "status": "COMPLETED",
+  "currentSceneId": "scene-004",
+  "visitedSceneIds": ["scene-001", "scene-002", "scene-003", "scene-004"],
+  "score": 1,
+  "elapsedMs": 186021.7,
+  "answers": [
+    {
+      "sceneId": "scene-003",
+      "questionId": "6428a20a-66dd-44c9-944f-d7b36fa9c95a",
+      "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",
+      "choiceId": "c-scene-003-correct",
+      "answerKind": "CHOICE",
+      "correct": true,
+      "scoreDelta": 1,
+      "attemptNumber": 1,
+      "attemptId": "36924035-ec0a-46aa-aa7e-25b86edfa259",
+      "occurredAt": "2026-08-02T09:01:40Z"
+    }
+  ]
+}

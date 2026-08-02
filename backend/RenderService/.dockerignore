@@ -1,10 +1,8 @@
 **
 
-!src/
-!src/*.cpp
-!Runtime/
-!Runtime/runtime-adapter.js
-!Runtime/runtime.wasm.base64
-!Runtime/server.mjs
+!src
+!src/**
+!service
+!service/**
 !Dockerfile
 !.dockerignore

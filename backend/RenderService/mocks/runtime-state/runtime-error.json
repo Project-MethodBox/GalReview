@@ -1,0 +1,5 @@
+{
+  "code": "SESSION_PACKAGE_MISMATCH",
+  "message": "ReviewSession packageId/reviewPlanId/snapshotVersion do not match the loaded package",
+  "details": {}
+}
