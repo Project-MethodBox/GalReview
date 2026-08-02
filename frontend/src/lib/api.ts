@@ -14,6 +14,7 @@ import type {
   GraphBuildJob,
   IngestionJob,
   KnowledgeGraphSummary,
+  KnowledgeGraphPage,
   KnowledgePoint,
   KnowledgePointPage,
   KnowledgeRelation,
@@ -27,6 +28,8 @@ import type {
   RuntimeManifest,
   TokenPair,
   UserProfile,
+  UserPreferences,
+  UserPreferencesInput,
 } from '../types/api'
 
 const configuredBase = import.meta.env.VITE_API_BASE_URL?.trim() || '/api/v1'
@@ -245,8 +248,32 @@ export const api = {
     return request('/users/me')
   },
 
-  listMaterials(): Promise<MaterialPage> {
-    return request(`/materials${query({ limit: 100 })}`)
+  updateCurrentUser(input: { displayName?: string; locale?: string; preferredSubjectCodes?: string[] }): Promise<UserProfile> {
+    return request('/users/me', { method: 'PATCH', body: json(input) })
+  },
+
+  getUserPreferences(): Promise<UserPreferences> {
+    return request('/users/me/preferences')
+  },
+
+  updateUserPreferences(input: UserPreferencesInput): Promise<UserPreferences> {
+    return request('/users/me/preferences', { method: 'PUT', body: json(input) })
+  },
+
+  changePassword(currentPassword: string, newPassword: string): Promise<void> {
+    return request('/auth/password-changes', { method: 'POST', body: json({ currentPassword, newPassword }) })
+  },
+
+  deleteAccount(currentPassword: string): Promise<void> {
+    return request('/auth/account', { method: 'DELETE', body: json({ currentPassword }) })
+  },
+
+  listMaterials(cursor?: string): Promise<MaterialPage> {
+    return request(`/materials${query({ limit: 100, cursor })}`)
+  },
+
+  getAllMaterials(): Promise<Material[]> {
+    return collectPages<Material>((cursor) => request(`/materials${query({ limit: 100, cursor })}`))
   },
 
   uploadMaterial(file: File, displayName?: string, subjectCode?: string): Promise<Material> {
@@ -257,10 +284,22 @@ export const api = {
     return request('/materials', { method: 'POST', body, timeoutMs: UPLOAD_TIMEOUT_MS })
   },
 
-  createIngestionJob(materialId: string): Promise<IngestionJob> {
+  deleteMaterial(materialId: string): Promise<void> {
+    return request(`/materials/${encodeURIComponent(materialId)}`, { method: 'DELETE' })
+  },
+
+  createIngestionJob(
+    materialId: string,
+    options: { force?: boolean; enableOcr?: boolean; ocrMode?: 'quick' | 'standard' } = {},
+  ): Promise<IngestionJob> {
     return request(`/materials/${encodeURIComponent(materialId)}/ingestion-jobs`, {
       method: 'POST',
-      body: json({ parserVersion: 'files-text-v1', force: false, enableOcr: false, ocrMode: 'standard' }),
+      body: json({
+        parserVersion: options.enableOcr ? 'files-ocr-v1' : 'files-text-v1',
+        force: options.force ?? false,
+        enableOcr: options.enableOcr ?? false,
+        ocrMode: options.ocrMode ?? 'standard',
+      }),
     })
   },
 
@@ -287,6 +326,16 @@ export const api = {
 
   getKnowledgeGraph(graphId: string): Promise<KnowledgeGraphSummary> {
     return request(`/knowledge-graphs/${encodeURIComponent(graphId)}`)
+  },
+
+  listKnowledgeGraphs(materialId: string, cursor?: string): Promise<KnowledgeGraphPage> {
+    return request(`/knowledge-graphs${query({ materialId, limit: 100, cursor })}`)
+  },
+
+  getAllKnowledgeGraphs(materialId: string): Promise<KnowledgeGraphSummary[]> {
+    return collectPages<KnowledgeGraphSummary>((cursor) =>
+      request(`/knowledge-graphs${query({ materialId, limit: 100, cursor })}`),
+    )
   },
 
   getChapters(graphId: string): Promise<Chapter[]> {

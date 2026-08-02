@@ -50,6 +50,18 @@ export interface UserProfile {
   updatedAt: DateTime
 }
 
+export type ContentDifficulty = 'BASIC' | 'STANDARD' | 'ADVANCED'
+
+export interface UserPreferencesInput {
+  dailyGoalMinutes: number
+  contentDifficulty: ContentDifficulty
+  reducedMotion: boolean
+}
+
+export interface UserPreferences extends UserPreferencesInput {
+  updatedAt: DateTime
+}
+
 export type MaterialStatus = 'UPLOADED' | 'PROCESSING' | 'READY' | 'FAILED' | 'DELETED'
 
 export interface Material {
@@ -83,6 +95,12 @@ export interface IngestionJob {
   enableOcr: boolean
   ocrMode: 'quick' | 'standard'
   ocrUsed: boolean
+  ocrProgress?: {
+    status: string
+    currentPage: number
+    totalPages: number
+    phase: string
+  }
 }
 
 export type ChapterSegmentationMode = 'AUTO' | 'HEADING_RULES' | 'MARKDOWN' | 'DELIMITER' | 'FIXED_WINDOW'
@@ -113,6 +131,11 @@ export interface KnowledgeGraphSummary {
   status: 'DRAFT' | 'READY' | 'SUPERSEDED'
   textChecksum: string
   createdAt: DateTime
+}
+
+export interface KnowledgeGraphPage {
+  items: KnowledgeGraphSummary[]
+  nextCursor: string | null
 }
 
 export interface Chapter {

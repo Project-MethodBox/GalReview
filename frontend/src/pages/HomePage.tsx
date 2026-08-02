@@ -1,98 +1,65 @@
 import { useEffect, useState } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router'
-import HomeFeatureCard from '../components/HomeFeatureCard'
-import { BookIcon, ClockIcon, FullscreenIcon, SettingsIcon } from '../components/icons'
+import { Link, useLocation } from 'react-router'
+import AppShell, { PageHeader } from '../components/AppShell'
 import { api } from '../lib/api'
-import { clearSession, readProfile, readSession, saveProfile } from '../lib/session'
-import { readTheme, saveTheme } from '../lib/theme'
-import { resetWorkflow } from '../lib/workflow'
+import { readProfile, saveProfile } from '../lib/session'
+import { readWorkflow } from '../lib/workflow'
+
+function resumeState() {
+  const workflow = readWorkflow()
+  if (workflow.gamePackage && workflow.reviewSession) return { to: '/review', action: '恢复复习', detail: '游戏包与本地进度已保存。', step: '复习进行中' }
+  if (workflow.plan) return { to: '/review', action: '开始复习', detail: `计划包含 ${workflow.plan.nodes.length} 个知识节点。`, step: '计划已生成' }
+  if (workflow.graph) return { to: '/materials', action: '选择复习范围', detail: `${workflow.graph.chapterCount} 章，${workflow.graph.pointCount} 个知识点。`, step: '图谱已完成' }
+  if (workflow.material) return { to: '/materials', action: '继续处理资料', detail: workflow.material.displayName, step: '资料已上传' }
+  return { to: '/materials', action: '上传第一份资料', detail: '支持 PDF、DOCX、Markdown、HTML、文本与图片。', step: '尚未开始' }
+}
 
 export default function HomePage() {
   const location = useLocation()
-  const navigate = useNavigate()
   const [profile, setProfile] = useState(readProfile())
-  const session = readSession()
   const [message, setMessage] = useState((location.state as { message?: string } | null)?.message || '')
-  const [dark, setDark] = useState(readTheme() === 'dark')
-  const avatarInitial = Array.from(profile?.displayName.trim() || '学')[0]
-
-  useEffect(() => {
-    if (!message) return
-    const id = window.setTimeout(() => setMessage(''), 5000)
-    return () => window.clearTimeout(id)
-  }, [message])
+  const resume = resumeState()
+  const workflow = readWorkflow()
 
   useEffect(() => {
     if (profile) return
-    void api.getCurrentUser().then((value) => {
-      saveProfile(value)
-      setProfile(value)
-    }).catch((error: unknown) => {
-      setMessage(error instanceof Error ? error.message : '暂时无法读取用户资料。')
-    })
+    void api.getCurrentUser().then((value) => { saveProfile(value); setProfile(value) }).catch((reason: unknown) => setMessage(reason instanceof Error ? reason.message : '用户资料读取失败。'))
   }, [profile])
 
-  function toggleTheme() {
-    const next = !dark
-    setDark(next)
-    saveTheme(next ? 'dark' : 'light')
-  }
-
-  async function toggleFullscreen() {
-    if (document.fullscreenElement) await document.exitFullscreen()
-    else await document.documentElement.requestFullscreen()
-  }
-
-  async function logout() {
-    try {
-      if (session) await api.logout(session.session.sessionId)
-    } finally {
-      clearSession()
-      resetWorkflow()
-      navigate('/login')
-    }
-  }
-
   return (
-    <main className="home-page">
-      <header className="home-header">
-        <div className="home-title">
-          <h1>千知万理</h1>
-          <h2>主页</h2>
-          <p>千知温故，万理知新。</p>
-        </div>
-        <div className="home-actions">
-          <nav className="toolbar" aria-label="快捷导航">
-            <button type="button" aria-label="切换全屏" onClick={toggleFullscreen}><FullscreenIcon /></button>
-            <Link to="/materials" aria-label="资料库"><BookIcon /></Link>
-            <Link to="/review" aria-label="开始复习"><ClockIcon /></Link>
-            <span className="toolbar__divider" />
-            <button type="button" aria-label={dark ? '切换浅色主题' : '切换深色主题'} aria-pressed={dark} onClick={toggleTheme}><SettingsIcon /></button>
-          </nav>
-          <div className="profile-pill" aria-label="当前用户">
-            <span><strong>{profile?.displayName || '学习者'}</strong><small>Level 1</small></span>
-            <span><strong>学习档案</strong><small>{profile?.preferredSubjectCodes[0] || '待完善'}</small></span>
-            {profile?.avatarUrl ? (
-              <img src={profile.avatarUrl} alt="用户头像" />
-            ) : (
-              <span className="profile-pill__avatar" role="img" aria-label={`${profile?.displayName || '学习者'}的头像`}>
-                {avatarInitial}
-              </span>
-            )}
+    <AppShell>
+      <main className="page home-dashboard">
+        <PageHeader title={`你好，${profile?.displayName || '学习者'}`} description="从当前进度继续，或者整理一份新资料。" />
+        {message ? <p className="status-line" role="status">{message}</p> : null}
+
+        <section className="home-workspace">
+          <article className="resume-panel">
+            <div><span>{resume.step}</span><h2>{resume.action}</h2><p>{resume.detail}</p></div>
+            <Link className="button button--light" to={resume.to}>{resume.action}</Link>
+          </article>
+
+          <aside className="study-snapshot">
+            <h2>当前学习档案</h2>
+            <dl>
+              <div><dt>学科</dt><dd>{workflow.graph?.subjectCode || profile?.preferredSubjectCodes[0] || '未设置'}</dd></div>
+              <div><dt>章节</dt><dd>{workflow.graph?.chapterCount ?? 0}</dd></div>
+              <div><dt>知识点</dt><dd>{workflow.graph?.pointCount ?? 0}</dd></div>
+              <div><dt>计划状态</dt><dd>{workflow.plan?.status || '无计划'}</dd></div>
+            </dl>
+            <Link to="/settings">编辑个人设置</Link>
+          </aside>
+        </section>
+
+        <section className="home-destinations" aria-label="主要功能">
+          <header><h2>学习工具</h2><p>每个入口对应一项明确任务。</p></header>
+          <div className="destination-list">
+            <Link to="/materials"><span>资料</span><strong>上传、解析并创建计划</strong><small>从文件开始</small></Link>
+            <Link to="/knowledge"><span>知识点</span><strong>搜索和检查掌握情况</strong><small>{workflow.graph ? `${workflow.graph.pointCount} 项` : '等待构图'}</small></Link>
+            <Link to="/knowledge-graph"><span>图谱</span><strong>查看章节和知识依赖</strong><small>{workflow.graph ? `${workflow.graph.relationCount} 条关系` : '等待构图'}</small></Link>
+            <Link to="/review"><span>复习</span><strong>生成 GalGame 并作答</strong><small>{workflow.plan ? '计划可用' : '需要计划'}</small></Link>
           </div>
-        </div>
-      </header>
-
-      {message ? <p className="home-message" role="status">{message}</p> : null}
-
-      <section className="feature-grid" aria-label="学习功能">
-        <HomeFeatureCard title="继续" to="/review" icon="continue" />
-        <HomeFeatureCard title="知识点" to="/knowledge" icon="points" />
-        <HomeFeatureCard title="资料上传" to="/materials" icon="upload" />
-        <HomeFeatureCard title="知识图谱" to="/knowledge-graph" icon="graph" wide />
-      </section>
-
-      <button className="home-logout" type="button" onClick={() => void logout()}>退出登录</button>
-    </main>
+        </section>
+      </main>
+    </AppShell>
   )
 }

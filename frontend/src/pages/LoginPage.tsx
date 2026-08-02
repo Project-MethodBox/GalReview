@@ -4,7 +4,8 @@ import ActionButton from '../components/ActionButton'
 import AuthLayout, { AuthHeading } from '../components/AuthLayout'
 import FormField from '../components/FormField'
 import { api } from '../lib/api'
-import { saveProfile, saveSession } from '../lib/session'
+import { clearSession, saveProfile, saveSession } from '../lib/session'
+import { resetWorkflow } from '../lib/workflow'
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -27,6 +28,8 @@ export default function LoginPage() {
     setMessage('')
     try {
       const session = await api.login(email.trim(), password)
+      clearSession()
+      resetWorkflow()
       saveSession(session)
       saveProfile(await api.getCurrentUser())
       navigate('/home')
@@ -40,14 +43,11 @@ export default function LoginPage() {
   return (
     <AuthLayout page="login">
       <form className="auth-form" onSubmit={submit} noValidate>
-        <AuthHeading title="登录" subtitle="没有账户？点击注册按钮，开启您的复习之旅！" />
+        <AuthHeading title="登录" subtitle="使用邮箱继续上次的学习进度。" />
         <FormField label="邮箱" name="email" type="email" autoComplete="username" placeholder="在此处输入您的邮箱" value={email} onChange={(event) => setEmail(event.target.value)} onClear={() => setEmail('')} error={errors.email} />
         <FormField label="密码" name="password" autoComplete="current-password" placeholder="在此处输入您的密码" value={password} onChange={(event) => setPassword(event.target.value)} error={errors.password} passwordToggle />
-        <div className="auth-form__actions auth-form__actions--login">
-          <ActionButton type="button" variant="secondary" onClick={() => navigate('/forgot-password')}>忘记密码</ActionButton>
-          <ActionButton type="button" variant="secondary" onClick={() => navigate('/register')}>注册</ActionButton>
-          <ActionButton type="submit" disabled={busy}>{busy ? '登录中' : '登录'}</ActionButton>
-        </div>
+        <div className="auth-form__actions"><ActionButton type="submit" disabled={busy}>{busy ? '登录中' : '登录'}</ActionButton></div>
+        <div className="auth-secondary-actions"><button type="button" onClick={() => navigate('/forgot-password')}>忘记密码</button><button type="button" onClick={() => navigate('/register')}>创建账户</button></div>
         {message ? <p className="form-message" role="status">{message}</p> : null}
       </form>
     </AuthLayout>
