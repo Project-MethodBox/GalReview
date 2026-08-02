@@ -6,16 +6,24 @@
 // production persistence is a later, documented milestone.
 //
 // Every method returns { ok: true, status, body } for success or
-// { ok: false, status, code, message, details? } for failures; the HTTP
+// { ok: false, status, code, message, details } for failures; the HTTP
 // layer wraps these into the contract envelopes.
+import { createHash, randomUUID } from 'node:crypto'
 
-import { randomUUID, createHash } from 'node:crypto'
+import type {
+  EventReceipt,
+  GamePackage,
+  KnowledgeAnswerEvidence,
+  ProgressSnapshot,
+  ReviewResult,
+  ReviewResultStatus,
+  ReviewSession,
+  ReviewSessionStatus,
+} from './contract.js'
+import { isNonEmptyString, isRecord, isUuidV4 } from './contract.js'
+import type { GatewayClient, UpstreamFailure } from './gateway-client.js'
 
-const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
-const ANSWER_KINDS = new Set(['CHOICE', 'FILL_BLANK', 'TRUE_FALSE', 'SHORT_ANSWER', 'OTHER'])
-const EVENT_TYPES = new Set(['SCENE_ENTERED', 'CHOICE_SELECTED', 'RUNTIME_ERROR'])
-
-const LIMITS = Object.freeze({
+export const SESSION_LIMITS = Object.freeze({
   maxAnswerResults: 100,
   maxEventBatch: 100,
   maxStoredEventIds: 10_000,
@@ -25,51 +33,123 @@ const LIMITS = Object.freeze({
   maxResponseTimeMs: 86_400_000,
 })
 
-const isUuidV4 = (value) => typeof value === 'string' && UUID_V4.test(value)
-const isNonEmptyString = (value) => typeof value === 'string' && value.trim().length > 0
-const isInt = (value) => typeof value === 'number' && Number.isInteger(value)
-const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
+const ANSWER_KINDS = new Set(['CHOICE', 'FILL_BLANK', 'TRUE_FALSE', 'SHORT_ANSWER', 'OTHER'])
+const EVENT_TYPES = new Set(['SCENE_ENTERED', 'CHOICE_SELECTED', 'RUNTIME_ERROR'])
 
-function failure(status, code, message, details = {}) {
+export type DomainResult<T> =
+  | { ok: true; status: number; body: T }
+  | { ok: false; status: number; code: string; message: string; details: Record<string, unknown> }
+
+interface QuestionDigest {
+  knowledgePointId: string
+  sceneId: string
+  choices: Map<string, boolean>
+}
+
+interface PackageDigest {
+  entrySceneId: string
+  sceneIds: Set<string>
+  questions: Map<string, QuestionDigest>
+  hasQuestions: boolean
+}
+
+interface StoredResult {
+  resultId: string
+  idempotencyKey: string
+  checksum: string
+  status: ReviewResultStatus
+  submittedAt: string
+}
+
+interface SessionRecord {
+  sessionId: string
+  userId: string
+  packageId: string
+  reviewPlanId: string
+  snapshotVersion: string
+  clientRuntimeVersion: string
+  status: ReviewSessionStatus
+  currentSceneId: string | null
+  progressVersion: number
+  startedAt: string | null
+  completedAt: string | null
+  createdAt: string
+  digest: PackageDigest
+  snapshot: ProgressSnapshot | null
+  snapshotChecksum: string | null
+  eventIds: Set<string>
+  result: StoredResult | null
+  pendingResult: { idempotencyKey: string; checksum: string; resultId: string } | null
+}
+
+interface ValidatedAnswer {
+  attemptId: string
+  questionId: string
+  knowledgePointId: string
+  answerKind: string
+  choiceId: string | null
+  correct: boolean
+  quality: number
+  scoreDelta: number | null
+  responseTimeMs: number
+  hintsUsed: number
+  attemptNumber: number
+  occurredAt: string
+}
+
+export interface SessionServiceOptions {
+  gateway: GatewayClient
+  now?: () => Date
+  newId?: () => string
+}
+
+function failure(
+  status: number, code: string, message: string, details: Record<string, unknown> = {},
+): { ok: false; status: number; code: string; message: string; details: Record<string, unknown> } {
   return { ok: false, status, code, message, details }
 }
 
-function validationError(message, details = {}) {
+function validationError(message: string, details: Record<string, unknown> = {}) {
   return failure(400, 'VALIDATION_ERROR', message, details)
 }
 
+const isInt = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isInteger(value)
+
 // Canonical JSON with sorted object keys, so logically identical payloads
 // hash identically regardless of member order.
-function canonicalize(value) {
+function canonicalize(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalize).join(',')}]`
-  if (isObject(value)) {
+  if (isRecord(value)) {
     const keys = Object.keys(value).sort()
     return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalize(value[key])}`).join(',')}}`
   }
   return JSON.stringify(value)
 }
 
-const checksumOf = (value) => createHash('sha256').update(canonicalize(value)).digest('hex')
+const checksumOf = (value: unknown): string =>
+  createHash('sha256').update(canonicalize(value)).digest('hex')
 
 // Digest of the authoritative package: everything the session endpoints need
 // to verify client claims without re-reading GalGameService.
-function digestPackage(pkg) {
-  const sceneIds = new Set()
-  const questions = new Map() // questionId -> { knowledgePointId, sceneId, choices: Map<choiceId, correct> }
+function digestPackage(pkg: GamePackage): PackageDigest {
+  const sceneIds = new Set<string>()
+  const questions = new Map<string, QuestionDigest>()
   for (const scene of pkg.scenes) {
-    if (!isObject(scene) || typeof scene.sceneId !== 'string') continue
+    if (!isRecord(scene) || typeof scene.sceneId !== 'string') continue
     sceneIds.add(scene.sceneId)
     const bindings = Array.isArray(scene.knowledgeBindings) ? scene.knowledgeBindings : []
-    const questionBinding = bindings.find((binding) => isObject(binding) && binding.purpose === 'QUESTION')
-    if (!questionBinding) continue
-    const choices = new Map()
+    const questionBinding = bindings.find(
+      (binding) => isRecord(binding) && binding.purpose === 'QUESTION')
+    if (!questionBinding || typeof questionBinding.questionId !== 'string') continue
+    const choices = new Map<string, boolean>()
     for (const choice of Array.isArray(scene.choices) ? scene.choices : []) {
-      if (isObject(choice) && typeof choice.choiceId === 'string') {
+      if (isRecord(choice) && typeof choice.choiceId === 'string') {
         choices.set(choice.choiceId, choice.correct === true)
       }
     }
     questions.set(questionBinding.questionId, {
-      knowledgePointId: questionBinding.knowledgePointId,
+      knowledgePointId: String(questionBinding.knowledgePointId),
       sceneId: scene.sceneId,
       choices,
     })
@@ -77,7 +157,7 @@ function digestPackage(pkg) {
   return { entrySceneId: pkg.entrySceneId, sceneIds, questions, hasQuestions: questions.size > 0 }
 }
 
-function sessionView(record) {
+function sessionView(record: SessionRecord): ReviewSession {
   return {
     sessionId: record.sessionId,
     userId: record.userId,
@@ -92,24 +172,38 @@ function sessionView(record) {
   }
 }
 
-export function createSessionService({ gateway, now = () => new Date(), newId = randomUUID }) {
-  const sessions = new Map() // sessionId -> record
+export interface SessionService {
+  create(input: { userId: string; body: unknown; correlationId?: string }): Promise<DomainResult<ReviewSession>>
+  get(input: { userId: string; sessionId: string }): DomainResult<ReviewSession>
+  saveProgress(input: { userId: string; sessionId: string; body: unknown }): DomainResult<ProgressSnapshot>
+  appendEvents(input: { userId: string; sessionId: string; body: unknown }): DomainResult<EventReceipt>
+  submitResult(input: {
+    userId: string; sessionId: string; body: unknown; correlationId?: string
+  }): Promise<DomainResult<ReviewResult>>
+  stats(): { sessions: number; storage: 'ephemeral-memory' }
+}
 
-  function findOwned(sessionId, userId) {
+export function createSessionService(options: SessionServiceOptions): SessionService {
+  const { gateway } = options
+  const now = options.now ?? (() => new Date())
+  const newId = options.newId ?? randomUUID
+  const sessions = new Map<string, SessionRecord>()
+
+  function findOwned(sessionId: string, userId: string): SessionRecord | null {
     const record = sessions.get(sessionId)
     // Missing and not-owned are indistinguishable to the caller (§5.1 style).
     if (!record || record.userId !== userId) return null
     return record
   }
 
-  function markRunning(record) {
+  function markRunning(record: SessionRecord): void {
     if (record.status === 'CREATED') {
       record.status = 'RUNNING'
       record.startedAt = now().toISOString()
     }
   }
 
-  function mapUpstreamFailure(result, context) {
+  function mapUpstreamFailure(result: UpstreamFailure, context: string) {
     switch (result.kind) {
       case 'not_found':
         return failure(422, 'GAME_PACKAGE_NOT_FOUND', `${context}：游戏包不存在或不属于当前用户`)
@@ -126,7 +220,7 @@ export function createSessionService({ gateway, now = () => new Date(), newId = 
 
   return {
     async create({ userId, body, correlationId }) {
-      if (!isObject(body)) return validationError('请求体必须是 JSON 对象')
+      if (!isRecord(body)) return validationError('请求体必须是 JSON 对象')
       if (!isUuidV4(body.packageId)) return validationError('packageId 必须是小写 UUID v4')
       if (!isNonEmptyString(body.clientRuntimeVersion)) {
         return validationError('clientRuntimeVersion 必须是非空字符串')
@@ -142,7 +236,7 @@ export function createSessionService({ gateway, now = () => new Date(), newId = 
           '权威游戏包未通过共同校验器', { errors: validation.errors.slice(0, 5) })
       }
 
-      const record = {
+      const record: SessionRecord = {
         sessionId: newId(),
         userId,
         packageId: body.packageId,
@@ -161,8 +255,8 @@ export function createSessionService({ gateway, now = () => new Date(), newId = 
         snapshot: null,
         snapshotChecksum: null,
         eventIds: new Set(),
-        result: null, // { resultId, idempotencyKey, checksum, status, submittedAt }
-        pendingResult: null, // { idempotencyKey, checksum, resultId }
+        result: null,
+        pendingResult: null,
       }
       sessions.set(record.sessionId, record)
       return { ok: true, status: 201, body: sessionView(record) }
@@ -177,31 +271,35 @@ export function createSessionService({ gateway, now = () => new Date(), newId = 
 
     saveProgress({ userId, sessionId, body }) {
       if (!isUuidV4(sessionId)) return validationError('sessionId 必须是小写 UUID v4')
-      if (!isObject(body)) return validationError('请求体必须是 JSON 对象')
+      if (!isRecord(body)) return validationError('请求体必须是 JSON 对象')
       if (!isInt(body.expectedVersion) || body.expectedVersion < 0) {
         return validationError('expectedVersion 必须是非负整数')
       }
       if (!isNonEmptyString(body.currentSceneId)) return validationError('currentSceneId 必须是非空字符串')
-      if (!Array.isArray(body.visitedSceneIds) || body.visitedSceneIds.some((id) => !isNonEmptyString(id))) {
+      if (!Array.isArray(body.visitedSceneIds)
+          || body.visitedSceneIds.some((id: unknown) => !isNonEmptyString(id))) {
         return validationError('visitedSceneIds 必须是非空字符串数组')
       }
-      if (!isObject(body.runtimeState)) return validationError('runtimeState 必须是 JSON 对象')
+      const visitedSceneIds = body.visitedSceneIds as string[]
+      if (!isRecord(body.runtimeState)) return validationError('runtimeState 必须是 JSON 对象')
 
       const record = findOwned(sessionId, userId)
       if (!record) return failure(404, 'RESOURCE_NOT_FOUND', '复习会话不存在')
 
-      if (body.visitedSceneIds.length > LIMITS.maxVisitedScenes) {
-        return failure(422, 'BUSINESS_RULE_VIOLATION', `visitedSceneIds 不能超过 ${LIMITS.maxVisitedScenes} 项`)
+      if (visitedSceneIds.length > SESSION_LIMITS.maxVisitedScenes) {
+        return failure(422, 'BUSINESS_RULE_VIOLATION',
+          `visitedSceneIds 不能超过 ${SESSION_LIMITS.maxVisitedScenes} 项`)
       }
       const stateBytes = Buffer.byteLength(JSON.stringify(body.runtimeState))
-      if (stateBytes > LIMITS.maxRuntimeStateBytes) {
+      if (stateBytes > SESSION_LIMITS.maxRuntimeStateBytes) {
         return failure(422, 'PROGRESS_STATE_TOO_LARGE',
-          `runtimeState 序列化后不能超过 ${LIMITS.maxRuntimeStateBytes} 字节`, { actualBytes: stateBytes })
+          `runtimeState 序列化后不能超过 ${SESSION_LIMITS.maxRuntimeStateBytes} 字节`,
+          { actualBytes: stateBytes })
       }
       if (!record.digest.sceneIds.has(body.currentSceneId)) {
         return failure(422, 'PROGRESS_SCENE_UNKNOWN', 'currentSceneId 不属于本会话的游戏包')
       }
-      for (const sceneId of body.visitedSceneIds) {
+      for (const sceneId of visitedSceneIds) {
         if (!record.digest.sceneIds.has(sceneId)) {
           return failure(422, 'PROGRESS_SCENE_UNKNOWN', `visitedSceneIds 含未知场景 ${sceneId}`)
         }
@@ -209,7 +307,7 @@ export function createSessionService({ gateway, now = () => new Date(), newId = 
 
       const inputChecksum = checksumOf({
         currentSceneId: body.currentSceneId,
-        visitedSceneIds: body.visitedSceneIds,
+        visitedSceneIds,
         runtimeState: body.runtimeState,
       })
       // Idempotent replay: the retry of the immediately previous save (same
@@ -235,7 +333,7 @@ export function createSessionService({ gateway, now = () => new Date(), newId = 
         sessionId: record.sessionId,
         version: record.progressVersion,
         currentSceneId: body.currentSceneId,
-        visitedSceneIds: [...body.visitedSceneIds],
+        visitedSceneIds: [...visitedSceneIds],
         runtimeState: body.runtimeState,
         savedAt: now().toISOString(),
       }
@@ -245,20 +343,28 @@ export function createSessionService({ gateway, now = () => new Date(), newId = 
 
     appendEvents({ userId, sessionId, body }) {
       if (!isUuidV4(sessionId)) return validationError('sessionId 必须是小写 UUID v4')
-      if (!isObject(body) || !Array.isArray(body.events) || body.events.length === 0) {
+      if (!isRecord(body) || !Array.isArray(body.events) || body.events.length === 0) {
         return validationError('events 必须是非空数组')
       }
-      if (body.events.length > LIMITS.maxEventBatch) {
-        return failure(422, 'EVENT_BATCH_TOO_LARGE', `单批事件不能超过 ${LIMITS.maxEventBatch} 条`)
+      const events = body.events as unknown[]
+      if (events.length > SESSION_LIMITS.maxEventBatch) {
+        return failure(422, 'EVENT_BATCH_TOO_LARGE',
+          `单批事件不能超过 ${SESSION_LIMITS.maxEventBatch} 条`)
       }
-      for (const [index, event] of body.events.entries()) {
-        if (!isObject(event)) return validationError(`events[${index}] 必须是对象`)
-        if (!isUuidV4(event.clientEventId)) return validationError(`events[${index}].clientEventId 必须是小写 UUID v4`)
-        if (!EVENT_TYPES.has(event.type)) return validationError(`events[${index}].type 不受支持`)
+      const clientEventIds: string[] = []
+      for (const [index, event] of events.entries()) {
+        if (!isRecord(event)) return validationError(`events[${index}] 必须是对象`)
+        if (!isUuidV4(event.clientEventId)) {
+          return validationError(`events[${index}].clientEventId 必须是小写 UUID v4`)
+        }
+        if (typeof event.type !== 'string' || !EVENT_TYPES.has(event.type)) {
+          return validationError(`events[${index}].type 不受支持`)
+        }
         if (!isNonEmptyString(event.occurredAt) || Number.isNaN(Date.parse(event.occurredAt))) {
           return validationError(`events[${index}].occurredAt 必须是 ISO 8601 时间`)
         }
-        if (!isObject(event.payload)) return validationError(`events[${index}].payload 必须是 JSON 对象`)
+        if (!isRecord(event.payload)) return validationError(`events[${index}].payload 必须是 JSON 对象`)
+        clientEventIds.push(event.clientEventId)
       }
 
       const record = findOwned(sessionId, userId)
@@ -266,17 +372,17 @@ export function createSessionService({ gateway, now = () => new Date(), newId = 
       if (record.status === 'COMPLETED' || record.status === 'ABANDONED') {
         return failure(409, 'STATE_CONFLICT', '会话已结束，无法追加事件')
       }
-      if (record.eventIds.size >= LIMITS.maxStoredEventIds) {
+      if (record.eventIds.size >= SESSION_LIMITS.maxStoredEventIds) {
         return failure(422, 'BUSINESS_RULE_VIOLATION', '本会话的事件数量已达到上限')
       }
 
       let accepted = 0
       let duplicates = 0
-      for (const event of body.events) {
-        if (record.eventIds.has(event.clientEventId)) {
+      for (const clientEventId of clientEventIds) {
+        if (record.eventIds.has(clientEventId)) {
           duplicates += 1
         } else {
-          record.eventIds.add(event.clientEventId)
+          record.eventIds.add(clientEventId)
           accepted += 1
         }
       }
@@ -286,7 +392,7 @@ export function createSessionService({ gateway, now = () => new Date(), newId = 
 
     async submitResult({ userId, sessionId, body, correlationId }) {
       if (!isUuidV4(sessionId)) return validationError('sessionId 必须是小写 UUID v4')
-      if (!isObject(body)) return validationError('请求体必须是 JSON 对象')
+      if (!isRecord(body)) return validationError('请求体必须是 JSON 对象')
       if (!isInt(body.expectedProgressVersion) || body.expectedProgressVersion < 0) {
         return validationError('expectedProgressVersion 必须是非负整数')
       }
@@ -297,38 +403,58 @@ export function createSessionService({ gateway, now = () => new Date(), newId = 
       if (!isInt(body.durationSeconds)) return validationError('durationSeconds 必须是整数')
 
       // Shape of each answer first (400), ranges and consistency later (422).
-      for (const [index, answer] of body.answerResults.entries()) {
+      const answers: ValidatedAnswer[] = []
+      for (const [index, raw] of (body.answerResults as unknown[]).entries()) {
         const path = `answerResults[${index}]`
-        if (!isObject(answer)) return validationError(`${path} 必须是对象`)
-        if (!isUuidV4(answer.attemptId)) return validationError(`${path}.attemptId 必须是小写 UUID v4`)
-        if (!isUuidV4(answer.questionId)) return validationError(`${path}.questionId 必须是小写 UUID v4`)
-        if (!isUuidV4(answer.knowledgePointId)) return validationError(`${path}.knowledgePointId 必须是小写 UUID v4`)
-        if (!ANSWER_KINDS.has(answer.answerKind)) return validationError(`${path}.answerKind 不受支持`)
-        if (answer.choiceId !== null && !isNonEmptyString(answer.choiceId)) {
+        if (!isRecord(raw)) return validationError(`${path} 必须是对象`)
+        if (!isUuidV4(raw.attemptId)) return validationError(`${path}.attemptId 必须是小写 UUID v4`)
+        if (!isUuidV4(raw.questionId)) return validationError(`${path}.questionId 必须是小写 UUID v4`)
+        if (!isUuidV4(raw.knowledgePointId)) {
+          return validationError(`${path}.knowledgePointId 必须是小写 UUID v4`)
+        }
+        if (typeof raw.answerKind !== 'string' || !ANSWER_KINDS.has(raw.answerKind)) {
+          return validationError(`${path}.answerKind 不受支持`)
+        }
+        if (raw.choiceId !== null && !isNonEmptyString(raw.choiceId)) {
           return validationError(`${path}.choiceId 必须是 null 或非空字符串`)
         }
-        if (typeof answer.correct !== 'boolean') return validationError(`${path}.correct 必须是布尔值`)
-        if (!isInt(answer.quality)) return validationError(`${path}.quality 必须是整数`)
-        if (!isInt(answer.responseTimeMs)) return validationError(`${path}.responseTimeMs 必须是整数`)
-        if (!isInt(answer.hintsUsed)) return validationError(`${path}.hintsUsed 必须是整数`)
-        if (!isInt(answer.attemptNumber)) return validationError(`${path}.attemptNumber 必须是整数`)
-        if (!isNonEmptyString(answer.occurredAt) || Number.isNaN(Date.parse(answer.occurredAt))) {
+        if (typeof raw.correct !== 'boolean') return validationError(`${path}.correct 必须是布尔值`)
+        if (!isInt(raw.quality)) return validationError(`${path}.quality 必须是整数`)
+        if (!isInt(raw.responseTimeMs)) return validationError(`${path}.responseTimeMs 必须是整数`)
+        if (!isInt(raw.hintsUsed)) return validationError(`${path}.hintsUsed 必须是整数`)
+        if (!isInt(raw.attemptNumber)) return validationError(`${path}.attemptNumber 必须是整数`)
+        if (!isNonEmptyString(raw.occurredAt) || Number.isNaN(Date.parse(raw.occurredAt))) {
           return validationError(`${path}.occurredAt 必须是 ISO 8601 时间`)
         }
+        answers.push({
+          attemptId: raw.attemptId,
+          questionId: raw.questionId,
+          knowledgePointId: raw.knowledgePointId,
+          answerKind: raw.answerKind,
+          choiceId: raw.choiceId === null ? null : (raw.choiceId as string),
+          correct: raw.correct,
+          quality: raw.quality,
+          scoreDelta: typeof raw.scoreDelta === 'number' ? raw.scoreDelta : null,
+          responseTimeMs: raw.responseTimeMs,
+          hintsUsed: raw.hintsUsed,
+          attemptNumber: raw.attemptNumber,
+          occurredAt: raw.occurredAt,
+        })
       }
 
       const record = findOwned(sessionId, userId)
       if (!record) return failure(404, 'RESOURCE_NOT_FOUND', '复习会话不存在')
 
       // Range and consistency checks (422).
-      if (body.durationSeconds < 0 || body.durationSeconds > LIMITS.maxDurationSeconds) {
+      if (body.durationSeconds < 0 || body.durationSeconds > SESSION_LIMITS.maxDurationSeconds) {
         return failure(422, 'RESULT_EVIDENCE_INVALID', 'durationSeconds 超出允许范围')
       }
-      if (body.answerResults.length > LIMITS.maxAnswerResults) {
-        return failure(422, 'RESULT_EVIDENCE_INVALID', `answerResults 不能超过 ${LIMITS.maxAnswerResults} 项`)
+      if (answers.length > SESSION_LIMITS.maxAnswerResults) {
+        return failure(422, 'RESULT_EVIDENCE_INVALID',
+          `answerResults 不能超过 ${SESSION_LIMITS.maxAnswerResults} 项`)
       }
-      const attemptIds = new Set()
-      for (const [index, answer] of body.answerResults.entries()) {
+      const attemptIds = new Set<string>()
+      for (const [index, answer] of answers.entries()) {
         const path = `answerResults[${index}]`
         if (attemptIds.has(answer.attemptId)) {
           return failure(422, 'RESULT_EVIDENCE_INVALID', `${path}.attemptId 在本次提交内重复`)
@@ -337,7 +463,7 @@ export function createSessionService({ gateway, now = () => new Date(), newId = 
         if (answer.quality < 0 || answer.quality > 5) {
           return failure(422, 'RESULT_EVIDENCE_INVALID', `${path}.quality 必须在 0-5 之间`)
         }
-        if (answer.responseTimeMs < 0 || answer.responseTimeMs > LIMITS.maxResponseTimeMs) {
+        if (answer.responseTimeMs < 0 || answer.responseTimeMs > SESSION_LIMITS.maxResponseTimeMs) {
           return failure(422, 'RESULT_EVIDENCE_INVALID', `${path}.responseTimeMs 超出允许范围`)
         }
         if (answer.hintsUsed < 0 || answer.hintsUsed > 100) {
@@ -363,7 +489,8 @@ export function createSessionService({ gateway, now = () => new Date(), newId = 
         // whose correct flag matches the claim (§7.3.1 / §6.4 义务).
         const question = record.digest.questions.get(answer.questionId)
         if (!question) {
-          return failure(422, 'ANSWER_QUESTION_NOT_IN_PACKAGE', `${path}.questionId 不在本会话的游戏包中`)
+          return failure(422, 'ANSWER_QUESTION_NOT_IN_PACKAGE',
+            `${path}.questionId 不在本会话的游戏包中`)
         }
         if (question.knowledgePointId !== answer.knowledgePointId) {
           return failure(422, 'ANSWER_POINT_MISMATCH', `${path}.knowledgePointId 与游戏包绑定不一致`)
@@ -377,7 +504,7 @@ export function createSessionService({ gateway, now = () => new Date(), newId = 
           }
         }
       }
-      if (!record.digest.hasQuestions && body.answerResults.length > 0) {
+      if (!record.digest.hasQuestions && answers.length > 0) {
         return failure(422, 'RESULT_ANSWERS_NOT_ALLOWED', '纯讲解包的 answerResults 必须为空')
       }
 
@@ -385,18 +512,8 @@ export function createSessionService({ gateway, now = () => new Date(), newId = 
         reviewPlanId: body.reviewPlanId,
         snapshotVersion: body.snapshotVersion,
         durationSeconds: body.durationSeconds,
-        answerResults: body.answerResults.map((answer) => ({
-          attemptId: answer.attemptId,
-          questionId: answer.questionId,
-          knowledgePointId: answer.knowledgePointId,
-          answerKind: answer.answerKind,
-          choiceId: answer.choiceId,
-          correct: answer.correct,
-          quality: answer.quality,
-          scoreDelta: answer.scoreDelta ?? null,
-          responseTimeMs: answer.responseTimeMs,
-          hintsUsed: answer.hintsUsed,
-          attemptNumber: answer.attemptNumber,
+        answerResults: answers.map((answer) => ({
+          ...answer,
           occurredAt: new Date(answer.occurredAt).toISOString(),
         })),
       })
@@ -442,7 +559,7 @@ export function createSessionService({ gateway, now = () => new Date(), newId = 
 
       // resultId must stay stable across retries of the same submission
       // (§8.2.1: retries must not mint new resultIds).
-      let resultId
+      let resultId: string
       if (record.pendingResult && record.pendingResult.idempotencyKey === body.idempotencyKey) {
         resultId = record.pendingResult.resultId
       } else {
@@ -451,9 +568,8 @@ export function createSessionService({ gateway, now = () => new Date(), newId = 
       }
 
       const submittedAt = now().toISOString()
-      let receiptStatus = 'ACCEPTED'
-      if (body.answerResults.length > 0) {
-        const submission = {
+      if (answers.length > 0) {
+        const evidence = await gateway.submitEvidence(resultId, {
           resultId,
           idempotencyKey: body.idempotencyKey,
           reviewPlanId: record.reviewPlanId,
@@ -463,11 +579,11 @@ export function createSessionService({ gateway, now = () => new Date(), newId = 
           userId: record.userId,
           completedAt: submittedAt,
           durationSeconds: body.durationSeconds,
-          answerResults: body.answerResults.map((answer) => ({
+          answerResults: answers.map((answer): KnowledgeAnswerEvidence => ({
             attemptId: answer.attemptId,
             questionId: answer.questionId,
             knowledgePointId: answer.knowledgePointId,
-            answerKind: answer.answerKind,
+            answerKind: answer.answerKind as KnowledgeAnswerEvidence['answerKind'],
             correct: answer.correct,
             quality: answer.quality,
             responseTimeMs: answer.responseTimeMs,
@@ -475,8 +591,7 @@ export function createSessionService({ gateway, now = () => new Date(), newId = 
             attemptNumber: answer.attemptNumber,
             occurredAt: answer.occurredAt,
           })),
-        }
-        const evidence = await gateway.submitEvidence(resultId, submission, correlationId)
+        }, correlationId)
         if (!evidence.ok) {
           // The session stays open and pendingResult keeps the resultId, so
           // a retry reuses the same identity instead of minting a new one.
@@ -498,7 +613,6 @@ export function createSessionService({ gateway, now = () => new Date(), newId = 
               return failure(503, 'SERVICE_UNAVAILABLE', 'KnowledgeService 暂不可用，请稍后重试')
           }
         }
-        receiptStatus = 'ACCEPTED'
       }
       // 纯讲解包（或没有任何实际作答）：按 §8.2.1 不调用 evidence 接口，
       // 掌握度保持不变，会话仍可正常完成。
@@ -509,7 +623,7 @@ export function createSessionService({ gateway, now = () => new Date(), newId = 
         resultId,
         idempotencyKey: body.idempotencyKey,
         checksum: resultChecksum,
-        status: receiptStatus,
+        status: 'ACCEPTED',
         submittedAt,
       }
       record.pendingResult = null
@@ -517,7 +631,7 @@ export function createSessionService({ gateway, now = () => new Date(), newId = 
       return {
         ok: true,
         status: 200,
-        body: { resultId, sessionId: record.sessionId, status: receiptStatus, submittedAt },
+        body: { resultId, sessionId: record.sessionId, status: 'ACCEPTED', submittedAt },
       }
     },
 
@@ -527,5 +641,3 @@ export function createSessionService({ gateway, now = () => new Date(), newId = 
     },
   }
 }
-
-export { LIMITS as SESSION_LIMITS }

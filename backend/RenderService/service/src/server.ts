@@ -7,14 +7,17 @@
 // honest SHELL and answers them with 501 RENDER_SESSION_NOT_IMPLEMENTED.
 //
 // The manifest is derived from the actual artifacts: wasmAbiComplete comes
-// from compiling the served runtime.wasm at boot, reviewSessionsAvailable
-// from the session configuration, runtimeMode is FULL only when both hold.
+// from compiling runtime.wasm at boot, reviewSessionsAvailable from the
+// session configuration, runtimeMode is FULL only when both hold.
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createServer } from 'node:http'
 
 import { createGatewayClient } from './gateway-client.js'
+import type { SessionService } from './sessions.js'
 import { createSessionService } from './sessions.js'
+import { UUID_V4 } from './contract.js'
 
 // Project port policy (scripts/Test-PortPolicy.ps1): configured ports must
 // stay inside 5000-5300.
@@ -29,10 +32,12 @@ const gatewayServiceKey = process.env.Gateway__ServiceKey || ''
 const internalTimeoutMs = Number.parseInt(process.env.Gateway__TimeoutMs || '10000', 10)
 const sessionsEnabled = gatewayBaseUrl.length > 0 && gatewayServiceKey.length > 0
 
-const runtimeDirectory = new URL('./', import.meta.url)
-const adapter = await readFile(new URL('adapter.js', runtimeDirectory))
+// dist/server.js serves its sibling dist/adapter.js; the wasm artifact stays
+// at the package root next to package.json.
+const distDirectory = new URL('./', import.meta.url)
+const adapter = await readFile(new URL('adapter.js', distDirectory))
 const wasm = Buffer.from(
-  (await readFile(new URL('runtime.wasm.base64', runtimeDirectory), 'utf8')).trim(),
+  (await readFile(new URL('../runtime.wasm.base64', distDirectory), 'utf8')).trim(),
   'base64',
 )
 const checksum = createHash('sha256').update(wasm).digest('hex')
@@ -43,29 +48,42 @@ const REQUIRED_ABI_EXPORTS = [
   'rtAbiVersion', 'rtVersion', 'rtAlloc', 'rtFree',
 ]
 
-async function probeWasmArtifact(bytes) {
-  const fallback = {
+interface ArtifactProbe {
+  wasmAbiComplete: boolean
+  wasmVersion: string
+  executionEngine: string
+}
+
+async function probeWasmArtifact(bytes: Buffer): Promise<ArtifactProbe> {
+  const fallback: ArtifactProbe = {
     wasmAbiComplete: false,
     wasmVersion: 'cpp-js-shell-0.1.0',
     executionEngine: 'cpp-js-shell',
   }
   try {
-    const module = await WebAssembly.compile(bytes)
+    // Copy into a fresh Uint8Array: node Buffer's ArrayBufferLike generic is
+    // not assignable to the DOM BufferSource type WebAssembly.compile wants.
+    const module = await WebAssembly.compile(new Uint8Array(bytes))
     const names = new Set(WebAssembly.Module.exports(module).map((entry) => entry.name))
     if (!REQUIRED_ABI_EXPORTS.every((name) => names.has(name))) {
       return fallback
     }
-    const imports = {}
+    const imports: Record<string, Record<string, () => number>> = {}
     for (const descriptor of WebAssembly.Module.imports(module)) {
       if (descriptor.kind === 'function') {
         imports[descriptor.module] = imports[descriptor.module] || {}
-        imports[descriptor.module][descriptor.name] = () => 0
+        imports[descriptor.module]![descriptor.name] = () => 0
       }
     }
     const instance = await WebAssembly.instantiate(module, imports)
-    instance.exports._initialize?.()
-    const memory = new Uint8Array(instance.exports.memory.buffer)
-    const pointer = instance.exports.rtVersion()
+    const abi = instance.exports as unknown as {
+      _initialize?: () => void
+      memory: WebAssembly.Memory
+      rtVersion(): number
+    }
+    abi._initialize?.()
+    const memory = new Uint8Array(abi.memory.buffer)
+    const pointer = abi.rtVersion()
     let end = pointer
     while (memory[end] !== 0) end += 1
     const wasmVersion = new TextDecoder().decode(memory.subarray(pointer, end))
@@ -78,7 +96,7 @@ async function probeWasmArtifact(bytes) {
 const artifact = await probeWasmArtifact(wasm)
 const runtimeMode = sessionsEnabled && artifact.wasmAbiComplete ? 'FULL' : 'SHELL'
 
-const sessionService = sessionsEnabled
+const sessionService: SessionService | null = sessionsEnabled
   ? createSessionService({
       gateway: createGatewayClient({
         baseUrl: gatewayBaseUrl,
@@ -89,10 +107,9 @@ const sessionService = sessionsEnabled
     })
   : null
 
-const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 const MAX_BODY_BYTES = 1024 * 1024
 
-function traceId(request) {
+function traceId(request: IncomingMessage): string {
   const supplied = request.headers['x-correlation-id']
   const value = Array.isArray(supplied) ? supplied[0] : supplied
   return typeof value === 'string' && value.trim() && value.length <= 128
@@ -100,7 +117,9 @@ function traceId(request) {
     : randomUUID()
 }
 
-function writeJson(response, status, body, correlationId) {
+function writeJson(
+  response: ServerResponse, status: number, body: unknown, correlationId: string,
+): void {
   const content = Buffer.from(JSON.stringify(body))
   response.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
@@ -110,11 +129,14 @@ function writeJson(response, status, body, correlationId) {
   response.end(content)
 }
 
-function success(data, correlationId) {
+function success(data: unknown, correlationId: string): unknown {
   return { data, meta: {}, traceId: correlationId }
 }
 
-function apiFailure(response, status, code, message, correlationId, details = {}) {
+function apiFailure(
+  response: ServerResponse, status: number, code: string, message: string,
+  correlationId: string, details: Record<string, unknown> = {},
+): void {
   writeJson(response, status, {
     data: null,
     error: { code, message, details },
@@ -122,24 +144,26 @@ function apiFailure(response, status, code, message, correlationId, details = {}
   }, correlationId)
 }
 
-function headerValue(request, name) {
+function headerValue(request: IncomingMessage, name: string): string | undefined {
   const value = request.headers[name]
   return Array.isArray(value) ? value[0] : value
 }
 
-function safeEqual(a, b) {
-  const bufferA = Buffer.from(String(a))
-  const bufferB = Buffer.from(String(b))
+function safeEqual(a: string, b: string): boolean {
+  const bufferA = Buffer.from(a)
+  const bufferB = Buffer.from(b)
   if (bufferA.length !== bufferB.length) return false
   return timingSafeEqual(bufferA, bufferB)
 }
 
-function readBody(request) {
+type BodyResult = { ok: true; raw: Buffer } | { ok: false }
+
+function readBody(request: IncomingMessage): Promise<BodyResult> {
   return new Promise((resolve) => {
-    const chunks = []
+    const chunks: Buffer[] = []
     let received = 0
     let aborted = false
-    request.on('data', (chunk) => {
+    request.on('data', (chunk: Buffer) => {
       if (aborted) return
       received += chunk.length
       if (received > MAX_BODY_BYTES) {
@@ -159,7 +183,9 @@ function readBody(request) {
   })
 }
 
-async function readJson(request) {
+type JsonResult = { ok: true; value: unknown } | { ok: false; reason: string }
+
+async function readJson(request: IncomingMessage): Promise<JsonResult> {
   const body = await readBody(request)
   if (!body.ok) return { ok: false, reason: '请求体过大或读取失败' }
   if (body.raw.length === 0) return { ok: false, reason: '请求体不能为空' }
@@ -170,32 +196,46 @@ async function readJson(request) {
   }
 }
 
-function respondDomain(response, result, correlationId) {
+interface DomainResultLike {
+  ok: boolean
+  status: number
+  body?: unknown
+  code?: string
+  message?: string
+  details?: Record<string, unknown>
+}
+
+function respondDomain(
+  response: ServerResponse, result: DomainResultLike, correlationId: string,
+): void {
   if (result.ok) {
     writeJson(response, result.status, success(result.body, correlationId), correlationId)
   } else {
-    apiFailure(response, result.status, result.code, result.message, correlationId, result.details || {})
+    apiFailure(response, result.status, result.code ?? 'INTERNAL_ERROR',
+      result.message ?? '服务内部错误', correlationId, result.details ?? {})
   }
 }
 
-// Routes /api/v1/review-sessions... Returns true when the request was handled.
-async function handleReviewSessions(request, response, pathname, correlationId) {
-  if (!sessionsEnabled) {
+// Routes /api/v1/review-sessions...; always handles the request.
+async function handleReviewSessions(
+  request: IncomingMessage, response: ServerResponse, pathname: string, correlationId: string,
+): Promise<void> {
+  if (!sessionsEnabled || sessionService === null) {
     apiFailure(response, 501, 'RENDER_SESSION_NOT_IMPLEMENTED',
       'RenderService 当前仅提供 C++/JS 运行时基础壳。', correlationId)
-    return true
+    return
   }
 
   // Only requests that came through the gateway carry our service key.
   const suppliedKey = headerValue(request, 'x-gateway-key')
   if (!suppliedKey || !safeEqual(suppliedKey, gatewayServiceKey)) {
     apiFailure(response, 401, 'AUTH_REQUIRED', '该接口只允许经 API Gateway 访问', correlationId)
-    return true
+    return
   }
   const userId = headerValue(request, 'x-user-id')
   if (typeof userId !== 'string' || !UUID_V4.test(userId)) {
     apiFailure(response, 401, 'AUTH_REQUIRED', '缺少可信用户身份', correlationId)
-    return true
+    return
   }
 
   const segments = pathname.split('/').filter((part) => part.length > 0)
@@ -206,54 +246,53 @@ async function handleReviewSessions(request, response, pathname, correlationId) 
     const body = await readJson(request)
     if (!body.ok) {
       apiFailure(response, 400, 'VALIDATION_ERROR', body.reason, correlationId)
-      return true
+      return
     }
-    const result = await sessionService.create({ userId, body: body.value, correlationId })
-    respondDomain(response, result, correlationId)
-    return true
+    respondDomain(response,
+      await sessionService.create({ userId, body: body.value, correlationId }), correlationId)
+    return
   }
   if (rest.length === 1 && request.method === 'GET') {
-    respondDomain(response, sessionService.get({ userId, sessionId: rest[0] }), correlationId)
-    return true
+    respondDomain(response,
+      sessionService.get({ userId, sessionId: rest[0]! }), correlationId)
+    return
   }
   if (rest.length === 2 && rest[1] === 'progress' && request.method === 'PUT') {
     const body = await readJson(request)
     if (!body.ok) {
       apiFailure(response, 400, 'VALIDATION_ERROR', body.reason, correlationId)
-      return true
+      return
     }
     respondDomain(response,
-      sessionService.saveProgress({ userId, sessionId: rest[0], body: body.value }), correlationId)
-    return true
+      sessionService.saveProgress({ userId, sessionId: rest[0]!, body: body.value }), correlationId)
+    return
   }
   if (rest.length === 2 && rest[1] === 'events' && request.method === 'POST') {
     const body = await readJson(request)
     if (!body.ok) {
       apiFailure(response, 400, 'VALIDATION_ERROR', body.reason, correlationId)
-      return true
+      return
     }
     respondDomain(response,
-      sessionService.appendEvents({ userId, sessionId: rest[0], body: body.value }), correlationId)
-    return true
+      sessionService.appendEvents({ userId, sessionId: rest[0]!, body: body.value }), correlationId)
+    return
   }
   if (rest.length === 2 && rest[1] === 'result' && request.method === 'PUT') {
     const body = await readJson(request)
     if (!body.ok) {
       apiFailure(response, 400, 'VALIDATION_ERROR', body.reason, correlationId)
-      return true
+      return
     }
-    const result = await sessionService.submitResult({
-      userId, sessionId: rest[0], body: body.value, correlationId,
-    })
-    respondDomain(response, result, correlationId)
-    return true
+    respondDomain(response, await sessionService.submitResult({
+      userId, sessionId: rest[0]!, body: body.value, correlationId,
+    }), correlationId)
+    return
   }
 
   apiFailure(response, 404, 'RESOURCE_NOT_FOUND', '资源不存在。', correlationId)
-  return true
 }
 
-async function handle(request, response) {
+async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
   const correlationId = traceId(request)
   const pathname = new URL(request.url || '/', 'http://render-service').pathname
 
@@ -312,7 +351,7 @@ async function handle(request, response) {
 }
 
 const server = createServer((request, response) => {
-  handle(request, response).catch((cause) => {
+  handle(request, response).catch((cause: unknown) => {
     const correlationId = traceId(request)
     console.error(`unhandled error (${correlationId}):`, cause)
     if (!response.headersSent) {
@@ -325,7 +364,8 @@ const server = createServer((request, response) => {
 
 server.listen(port, '0.0.0.0', () => {
   const address = server.address()
-  console.log(`render-service shell listening on port ${address.port} `
+  const boundPort = address !== null && typeof address === 'object' ? address.port : port
+  console.log(`render-service shell listening on port ${boundPort} `
     + `(engine=${artifact.executionEngine}, wasmAbiComplete=${artifact.wasmAbiComplete}, `
     + `reviewSessions=${sessionsEnabled ? 'enabled' : 'disabled'})`)
 })

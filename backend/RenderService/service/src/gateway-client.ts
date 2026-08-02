@@ -3,14 +3,44 @@
 // X-Service-Name + X-Service-Key on the way in; the gateway validates them,
 // strips the key and re-injects trusted headers for the target service.
 //
-// Every method returns a discriminated result instead of throwing:
-//   { ok: true, ... }                        on success
-//   { ok: false, kind, status, code, message } on failure, where kind is
-//     'not_found' | 'invalid' | 'conflict' | 'forbidden' | 'contract' | 'unavailable'
-// so the domain layer can map upstream failures to contract status codes
-// without string-matching errors.
+// Every method returns a discriminated result instead of throwing, so the
+// domain layer can map upstream failures to contract status codes without
+// string-matching errors.
+import type { GamePackage, MasteryUpdateReceipt, ReviewEvidenceSubmission, ValidationIssue } from './contract.js'
+import { isRecord } from './contract.js'
 
-function classifyStatus(status, code, message) {
+export type UpstreamFailureKind =
+  | 'not_found' | 'invalid' | 'conflict' | 'forbidden' | 'contract' | 'unavailable'
+
+export interface UpstreamFailure {
+  ok: false
+  kind: UpstreamFailureKind
+  status: number
+  code: string
+  message: string
+}
+
+export type ReadPackageResult = { ok: true; package: GamePackage } | UpstreamFailure
+export type ValidatePackageResult =
+  | { ok: true; valid: boolean; errors: ValidationIssue[] }
+  | UpstreamFailure
+export type SubmitEvidenceResult = { ok: true; receipt: MasteryUpdateReceipt } | UpstreamFailure
+
+export interface GatewayClient {
+  readGamePackage(packageId: string, ownerUserId: string, correlationId?: string): Promise<ReadPackageResult>
+  validateGamePackage(gamePackage: GamePackage, correlationId?: string): Promise<ValidatePackageResult>
+  submitEvidence(resultId: string, submission: ReviewEvidenceSubmission, correlationId?: string): Promise<SubmitEvidenceResult>
+}
+
+export interface GatewayClientConfig {
+  baseUrl: string
+  serviceName?: string
+  serviceKey: string
+  timeoutMs?: number
+  fetchImpl?: typeof fetch
+}
+
+function classifyStatus(status: number, code: string, message: string): UpstreamFailure {
   if (status === 404) return { ok: false, kind: 'not_found', status, code, message }
   if (status === 400 || status === 422) return { ok: false, kind: 'invalid', status, code, message }
   if (status === 409) return { ok: false, kind: 'conflict', status, code, message }
@@ -18,46 +48,72 @@ function classifyStatus(status, code, message) {
   return { ok: false, kind: 'unavailable', status, code, message }
 }
 
-function contractViolation(message) {
+function contractViolation(message: string): UpstreamFailure {
   return { ok: false, kind: 'contract', status: 200, code: 'UPSTREAM_CONTRACT_INVALID', message }
 }
 
-function isEnvelope(body) {
-  return body !== null && typeof body === 'object' && 'data' in body && 'traceId' in body
+interface Envelope {
+  data: unknown
+  traceId: unknown
+  error?: unknown
 }
 
-export function createGatewayClient(config) {
+function asEnvelope(body: unknown): Envelope | null {
+  return isRecord(body) && 'data' in body && 'traceId' in body ? (body as unknown as Envelope) : null
+}
+
+function upstreamError(body: unknown, fallbackMessage: string): { code: string; message: string } {
+  const envelope = isRecord(body) ? body : {}
+  const error = isRecord(envelope.error) ? envelope.error : {}
+  return {
+    code: typeof error.code === 'string' ? error.code : 'UPSTREAM_ERROR',
+    message: typeof error.message === 'string' ? error.message : fallbackMessage,
+  }
+}
+
+export function createGatewayClient(config: GatewayClientConfig): GatewayClient {
   const baseUrl = config.baseUrl.replace(/\/+$/, '')
   const serviceName = config.serviceName || 'RenderService'
   const serviceKey = config.serviceKey
   const timeoutMs = config.timeoutMs || 10_000
   const fetchImpl = config.fetchImpl || fetch
 
-  async function call(method, path, { body, correlationId } = {}) {
-    const headers = {
+  interface CallResult {
+    ok: true
+    status: number
+    body: unknown
+  }
+
+  async function call(
+    method: string,
+    path: string,
+    options: { body?: unknown; correlationId?: string } = {},
+  ): Promise<CallResult | UpstreamFailure> {
+    const headers: Record<string, string> = {
       'X-Service-Name': serviceName,
       'X-Service-Key': serviceKey,
     }
-    if (correlationId) headers['X-Correlation-Id'] = correlationId
-    if (body !== undefined) headers['Content-Type'] = 'application/json'
-    let response
+    if (options.correlationId) headers['X-Correlation-Id'] = options.correlationId
+    if (options.body !== undefined) headers['Content-Type'] = 'application/json'
+    let response: Response
     try {
       response = await fetchImpl(`${baseUrl}${path}`, {
         method,
         headers,
-        body: body === undefined ? undefined : JSON.stringify(body),
+        body: options.body === undefined ? undefined : JSON.stringify(options.body),
         signal: AbortSignal.timeout(timeoutMs),
       })
     } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause)
       return {
         ok: false,
         kind: 'unavailable',
         status: 0,
         code: 'SERVICE_UNAVAILABLE',
-        message: `gateway unreachable: ${cause?.message || cause}`,
+        message: `gateway unreachable: ${message}`,
       }
     }
-    let parsed = null
+    let parsed: unknown = null
     try {
       parsed = await response.json()
     } catch {
@@ -75,10 +131,11 @@ export function createGatewayClient(config) {
       if (!result.ok) return result
       const { status, body } = result
       if (status === 200) {
-        if (!isEnvelope(body) || body.data === null || typeof body.data !== 'object') {
+        const envelope = asEnvelope(body)
+        if (!envelope || !isRecord(envelope.data)) {
           return contractViolation('game package response is not a valid success envelope')
         }
-        const pkg = body.data
+        const pkg = envelope.data
         if (pkg.packageId !== packageId
             || typeof pkg.reviewPlanId !== 'string' || pkg.reviewPlanId.length === 0
             || typeof pkg.snapshotVersion !== 'string' || pkg.snapshotVersion.length === 0
@@ -86,10 +143,9 @@ export function createGatewayClient(config) {
             || !Array.isArray(pkg.scenes)) {
           return contractViolation('game package payload violates schema 1.0 identity fields')
         }
-        return { ok: true, package: pkg }
+        return { ok: true, package: pkg as unknown as GamePackage }
       }
-      const code = body?.error?.code || 'UPSTREAM_ERROR'
-      const message = body?.error?.message || `game package read failed with HTTP ${status}`
+      const { code, message } = upstreamError(body, `game package read failed with HTTP ${status}`)
       return classifyStatus(status, code, message)
     },
 
@@ -103,14 +159,14 @@ export function createGatewayClient(config) {
       if (!result.ok) return result
       const { status, body } = result
       if (status === 200 || status === 422) {
-        const data = isEnvelope(body) ? body.data : null
+        const envelope = asEnvelope(body)
+        const data = envelope && isRecord(envelope.data) ? envelope.data : null
         if (data === null || typeof data.valid !== 'boolean' || !Array.isArray(data.errors)) {
           return contractViolation('validation response is not a ValidationResult envelope')
         }
-        return { ok: true, valid: data.valid, errors: data.errors }
+        return { ok: true, valid: data.valid, errors: data.errors as ValidationIssue[] }
       }
-      const code = body?.error?.code || 'UPSTREAM_ERROR'
-      const message = body?.error?.message || `package validation failed with HTTP ${status}`
+      const { code, message } = upstreamError(body, `package validation failed with HTTP ${status}`)
       return classifyStatus(status, code, message)
     },
 
@@ -124,15 +180,15 @@ export function createGatewayClient(config) {
       if (!result.ok) return result
       const { status, body } = result
       if (status === 200) {
-        const receipt = isEnvelope(body) ? body.data : null
-        if (receipt === null || typeof receipt !== 'object'
+        const envelope = asEnvelope(body)
+        const receipt = envelope && isRecord(envelope.data) ? envelope.data : null
+        if (receipt === null
             || (receipt.status !== 'ACCEPTED' && receipt.status !== 'DUPLICATE')) {
           return contractViolation('mastery receipt is not a valid MasteryUpdateReceipt envelope')
         }
-        return { ok: true, receipt }
+        return { ok: true, receipt: receipt as unknown as MasteryUpdateReceipt }
       }
-      const code = body?.error?.code || 'UPSTREAM_ERROR'
-      const message = body?.error?.message || `review evidence submission failed with HTTP ${status}`
+      const { code, message } = upstreamError(body, `review evidence submission failed with HTTP ${status}`)
       return classifyStatus(status, code, message)
     },
   }

@@ -44,13 +44,15 @@ RenderService/
 │  ├─ abi/             # §8.3 extern "C" ABI 与内存辅助导出
 │  ├─ tests/           # 原生自检套件（129 项断言）
 │  └─ main.cpp         # 原生入口：自检 + `--validate <file>` CLI
-├─ service/
-│  ├─ server.mjs       # HTTP 服务：runtime 资源 + ReviewSession 五接口
-│  ├─ sessions.js      # 会话领域逻辑：冻结、乐观并发、去重、结果幂等
-│  ├─ gateway-client.js# 经 Gateway 的 INTERNAL 调用（读包/校验/证据）
-│  ├─ adapter.js       # ES module Adapter：WASM 驱动，占位产物回退 JS 壳
-│  ├─ adapter.test.mjs # Adapter 测试（含 JS↔WASM 校验器奇偶校验）
-│  ├─ sessions.test.mjs# 会话领域 + HTTP wire 测试（stub gateway）
+├─ service/            # TypeScript 服务层（与 gateway 同一套工具链：tsc + vitest）
+│  ├─ package.json / tsconfig.json
+│  ├─ src/
+│  │  ├─ server.ts         # HTTP 服务：runtime 资源 + ReviewSession 五接口
+│  │  ├─ sessions.ts       # 会话领域逻辑：冻结、乐观并发、去重、结果幂等
+│  │  ├─ gateway-client.ts # 经 Gateway 的 INTERNAL 调用（读包/校验/证据）
+│  │  ├─ adapter.ts        # 浏览器 Adapter（仅 import type，编译产物零运行时导入）
+│  │  └─ contract.ts       # 契约类型与公共校验助手
+│  ├─ tests/               # vitest：adapter / sessions + support/testPorts
 │  └─ runtime.wasm.base64  # 提交的 WASM 产物（emcc -Oz，约 176 KiB）
 ├─ scripts/            # build-wasm.*：重建并嵌入 WASM；e2e-session.mjs：全链路验证
 ├─ mocks/runtime-state/    # RuntimeState / RuntimeError Mock（§12.1 交付物）
@@ -71,9 +73,8 @@ g++ -std=c++23 -O2 -Wall -Wextra src/core/*.cpp src/abi/*.cpp src/tests/*.cpp sr
 # 重建 WASM 并刷新 service/runtime.wasm.base64（需要 emsdk 4.0.13+）
 pwsh scripts/build-wasm.ps1        # 或 scripts/build-wasm.sh
 
-# 服务层测试（Adapter 双路径、奇偶校验、会话领域与 HTTP wire）
-node --test service/adapter.test.mjs
-node --test service/sessions.test.mjs
+# 服务层：安装依赖后一键构建+测试（pretest 先 tsc，再 vitest 全套）
+cd service && npm install && npm test
 
 # 集成环境全链路验证（需 compose 栈已启动；注册→构图→GalGame→会话→mastery）
 node scripts/e2e-session.mjs http://127.0.0.1:5000
