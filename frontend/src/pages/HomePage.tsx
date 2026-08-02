@@ -29,7 +29,7 @@ export default function HomePage() {
   return (
     <AppShell>
       <main className="page home-dashboard">
-        <PageHeader title={`你好，${profile?.displayName || '学习者'}`} description="从当前进度继续，或者整理一份新资料。" />
+        <PageHeader title={`你好，${profile?.displayName || '学习者'}`} description="继续尚未完成的复习，也可以上传新的学习资料。" />
         {message ? <p className="status-line" role="status">{message}</p> : null}
 
         <section className="home-workspace">
@@ -51,11 +51,11 @@ export default function HomePage() {
         </section>
 
         <section className="home-destinations" aria-label="主要功能">
-          <header><h2>学习工具</h2><p>每个入口对应一项明确任务。</p></header>
+          <header><h2>学习工具</h2><p>上传资料后，可以在这里查看知识点、梳理依赖关系并开始复习。</p></header>
           <div className="destination-list">
             <Link to="/materials"><span>资料</span><strong>上传、解析并创建计划</strong><small>从文件开始</small></Link>
-            <Link to="/knowledge"><span>知识点</span><strong>搜索和检查掌握情况</strong><small>{workflow.graph ? `${workflow.graph.pointCount} 项` : '等待构图'}</small></Link>
-            <Link to="/knowledge-graph"><span>图谱</span><strong>查看章节和知识依赖</strong><small>{workflow.graph ? `${workflow.graph.relationCount} 条关系` : '等待构图'}</small></Link>
+            <Link to="/knowledge"><span>知识点</span><strong>查找知识点并查看掌握情况</strong><small>{workflow.graph ? `${workflow.graph.pointCount} 项` : '尚未生成'}</small></Link>
+            <Link to="/knowledge-graph"><span>图谱</span><strong>查看章节和知识依赖</strong><small>{workflow.graph ? `${workflow.graph.relationCount} 条关系` : '尚未生成'}</small></Link>
             <Link to="/review"><span>复习</span><strong>生成 GalGame 并作答</strong><small>{workflow.plan ? '计划可用' : '需要计划'}</small></Link>
           </div>
         </section>

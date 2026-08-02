@@ -55,7 +55,7 @@ export default function KnowledgePointsPage() {
   return (
     <AppShell>
       <main className="page knowledge-page">
-        <PageHeader title="知识点" description="按章节、标签与掌握度检查当前图谱。" actions={<Link className="button" to="/knowledge-graph">查看图谱</Link>} />
+        <PageHeader title="知识点" description="按章节、标签和掌握度查找需要复习的内容。" actions={<Link className="button" to="/knowledge-graph">查看图谱</Link>} />
         {!workflow.graph ? <section className="empty-state"><h2>还没有知识点</h2><p>上传并处理一份资料后，知识点会按章节显示在这里。</p><Link className="button button--primary" to="/materials">上传资料</Link></section> : <>
           <section className="data-strip" aria-label="知识点概况">
             <div><span>知识点</span><strong>{points.length || workflow.graph.pointCount}</strong></div>
