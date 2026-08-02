@@ -215,6 +215,14 @@ test('HTTP shell serves runtime resources and honest 501s', async () => {
     assert.match(adapterResponse.headers.get('content-type') ?? '', /application\/javascript/)
     assert.match(await adapterResponse.text(), /async function createWasmAdapter/)
 
+    const stageResponse = await fetch(`${base}/api/v1/render-runtime/stage.js`)
+    assert.match(stageResponse.headers.get('content-type') ?? '', /application\/javascript/)
+    assert.match(await stageResponse.text(), /async function createStage/)
+
+    const demoResponse = await fetch(`${base}/api/v1/render-runtime/stage-demo`)
+    assert.match(demoResponse.headers.get('content-type') ?? '', /text\/html/)
+    assert.match(await demoResponse.text(), /RenderService 舞台演示/)
+
     const notImplemented = await fetch(`${base}/api/v1/review-sessions`, { method: 'POST' })
     assert.equal(notImplemented.status, 501)
     assert.equal((await notImplemented.json()).error.code, 'RENDER_SESSION_NOT_IMPLEMENTED')

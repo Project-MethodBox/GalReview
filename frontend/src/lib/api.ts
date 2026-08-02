@@ -61,6 +61,52 @@ interface RequestOptions extends RequestInit {
 
 let refreshPromise: Promise<TokenPair> | null = null
 
+const ERROR_MESSAGES: Record<string, string> = {
+  AUTH_REQUIRED: '登录状态已失效，请重新登录。',
+  TOKEN_EXPIRED: '登录状态已失效，请重新登录。',
+  FORBIDDEN: '当前账户没有执行此操作的权限。',
+  RESOURCE_NOT_FOUND: '请求的数据不存在或已被删除。',
+  NOT_FOUND: '请求的数据不存在或已被删除。',
+  VALIDATION_ERROR: '提交内容格式不正确，请检查后重试。',
+  BUSINESS_RULE_VIOLATION: '当前内容不符合业务规则，请检查操作条件。',
+  STATE_CONFLICT: '数据状态已经发生变化，请刷新后重试。',
+  RATE_LIMITED: '操作过于频繁，请稍后再试。',
+  FILE_TOO_LARGE: '文件大小超过允许上限。',
+  MEDIA_TYPE_UNSUPPORTED: '暂不支持这种文件格式。',
+  MATERIAL_TEXT_NOT_READY: '资料文字尚未提取完成，请稍后重试。',
+  MATERIAL_TEXT_EXTRACTION_FAILED: '资料文字提取失败，请检查文件或 OCR 设置。',
+  MATERIAL_ACCESS_DENIED: '当前账户无权访问这份资料。',
+  FILE_SERVICE_UNAVAILABLE: '资料服务暂时不可用，请稍后重试。',
+  REVIEW_PLAN_NOT_FOUND: '复习计划不存在或已失效。',
+  REVIEW_PLAN_SNAPSHOT_MISMATCH: '复习计划版本已变化，请重新创建计划。',
+  IDEMPOTENCY_KEY_REUSED: '请求标识已被用于不同操作，请重新发起。',
+  CLIENT_CLOSED_REQUEST: '请求已取消。',
+  SERVICE_UNAVAILABLE: '服务暂时不可用，请稍后重试。',
+  UPSTREAM_CONTRACT_INVALID: '服务返回的数据格式异常，请联系维护人员。',
+  PROFILE_DELETE_FAILED: '账户资料删除失败，账户尚未注销。',
+  INTERNAL_ERROR: '服务处理失败，请稍后重试。',
+}
+
+const STATUS_MESSAGES: Record<number, string> = {
+  400: '提交内容格式不正确，请检查后重试。',
+  401: '登录状态已失效，请重新登录。',
+  403: '当前账户没有执行此操作的权限。',
+  404: '请求的数据不存在或已被删除。',
+  409: '数据状态已经发生变化，请刷新后重试。',
+  413: '文件大小超过允许上限。',
+  415: '暂不支持这种文件格式。',
+  422: '当前操作条件不满足，请检查输入内容。',
+  429: '操作过于频繁，请稍后再试。',
+  502: '上游服务响应异常，请稍后重试。',
+  503: '服务暂时不可用，请稍后重试。',
+  504: '服务响应超时，请稍后重试。',
+}
+
+function localizedErrorMessage(code: string, message: string, status: number): string {
+  if (/[\u3400-\u9fff]/.test(message)) return message
+  return ERROR_MESSAGES[code] || STATUS_MESSAGES[status] || '请求失败，请稍后重试。'
+}
+
 function resolveUrl(path: string): string {
   if (/^https?:\/\//i.test(path)) return path
   if (path.startsWith('/api/')) return path
@@ -72,7 +118,7 @@ function errorFromPayload(payload: unknown, status: number, responseTraceId?: st
     const failure = payload as ApiFailure
     if (failure.error && typeof failure.error.code === 'string' && typeof failure.error.message === 'string') {
       return new ApiClientError(
-        failure.error.message,
+        localizedErrorMessage(failure.error.code, failure.error.message, status),
         failure.error.code,
         status,
         failure.traceId || responseTraceId,
@@ -191,6 +237,9 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     if (error instanceof DOMException && error.name === 'AbortError') {
       throw new ApiClientError('请求超时，请稍后重试。', 'SERVICE_UNAVAILABLE', 503)
     }
+    if (error instanceof TypeError) {
+      throw new ApiClientError('无法连接服务，请确认后端已经启动。', 'SERVICE_UNAVAILABLE', 503)
+    }
     throw error
   } finally {
     window.clearTimeout(timeout)
@@ -218,6 +267,14 @@ async function requestRawJson<T>(path: string): Promise<T> {
       throw new ApiClientError('游戏包响应格式不符合契约。', 'UPSTREAM_CONTRACT_INVALID', 502)
     }
     return payload as T
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new ApiClientError('请求超时，请稍后重试。', 'SERVICE_UNAVAILABLE', 503)
+    }
+    if (error instanceof TypeError) {
+      throw new ApiClientError('无法连接服务，请确认后端已经启动。', 'SERVICE_UNAVAILABLE', 503)
+    }
+    throw error
   } finally {
     window.clearTimeout(timeout)
   }
