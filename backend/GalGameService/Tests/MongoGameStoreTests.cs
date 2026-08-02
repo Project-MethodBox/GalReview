@@ -307,4 +307,105 @@ public class MongoGameStoreTests : IDisposable
         Assert.Null(_store.GetManifest(Guid.NewGuid()));
         Assert.Null(_store.GetPackageOwner(Guid.NewGuid()));
     }
+
+    // ----------------------------------------------------------------
+    // 启动恢复：RecoverStaleJobs
+    // ----------------------------------------------------------------
+
+    [Fact]
+    public void RecoverStaleJobs_MarksRunningJobsAsFailed()
+    {
+        if (_store is null) return;
+
+        var job = _store.CreateJob("user-recover-1", CreateRequest());
+        _store.TryTransitionJob(job.GenerationId, JobStatus.QUEUED, j => j with
+        {
+            Status = JobStatus.RUNNING,
+            Progress = 50,
+            UpdatedAt = DateTimeOffset.UtcNow
+        });
+
+        var recovered = _store.RecoverStaleJobs();
+        Assert.True(recovered >= 1);
+
+        var recoveredJob = _store.GetJob(job.GenerationId);
+        Assert.NotNull(recoveredJob);
+        Assert.Equal(JobStatus.FAILED, recoveredJob!.Status);
+        Assert.NotNull(recoveredJob.Error);
+        Assert.Equal("JOB_RECOVERED_AFTER_RESTART", recoveredJob.Error!.Code);
+    }
+
+    [Fact]
+    public void RecoverStaleJobs_MarksQueuedJobsAsFailed()
+    {
+        if (_store is null) return;
+
+        var job = _store.CreateJob("user-recover-2", CreateRequest());
+
+        var recovered = _store.RecoverStaleJobs();
+        Assert.True(recovered >= 1);
+
+        var recoveredJob = _store.GetJob(job.GenerationId);
+        Assert.NotNull(recoveredJob);
+        Assert.Equal(JobStatus.FAILED, recoveredJob!.Status);
+    }
+
+    [Fact]
+    public void RecoverStaleJobs_DoesNotAffectSucceededJobs()
+    {
+        if (_store is null) return;
+
+        var job = _store.CreateJob("user-recover-3", CreateRequest());
+        var pkgId = Guid.NewGuid();
+        _store.TryTransitionJob(job.GenerationId, JobStatus.QUEUED, j => j with
+        {
+            Status = JobStatus.RUNNING,
+            Progress = 80,
+            UpdatedAt = DateTimeOffset.UtcNow
+        });
+        _store.TryTransitionJob(job.GenerationId, JobStatus.RUNNING, j => j with
+        {
+            Status = JobStatus.SUCCEEDED,
+            Progress = 100,
+            PackageId = pkgId,
+            UpdatedAt = DateTimeOffset.UtcNow
+        });
+
+        _store.RecoverStaleJobs();
+
+        var untouchedJob = _store.GetJob(job.GenerationId);
+        Assert.NotNull(untouchedJob);
+        Assert.Equal(JobStatus.SUCCEEDED, untouchedJob!.Status);
+    }
+
+    [Fact]
+    public void RecoverStaleJobs_ReturnsZero_WhenNoStaleJobs()
+    {
+        if (_store is null) return;
+
+        _store.RecoverStaleJobs();
+
+        var recovered = _store.RecoverStaleJobs();
+        Assert.Equal(0, recovered);
+    }
+
+    [Fact]
+    public void RecoverStaleJobs_IsIdempotent()
+    {
+        if (_store is null) return;
+
+        var job = _store.CreateJob("user-recover-4", CreateRequest());
+        _store.TryTransitionJob(job.GenerationId, JobStatus.QUEUED, j => j with
+        {
+            Status = JobStatus.RUNNING,
+            Progress = 30,
+            UpdatedAt = DateTimeOffset.UtcNow
+        });
+
+        var firstRecovery = _store.RecoverStaleJobs();
+        Assert.True(firstRecovery >= 1);
+
+        var secondRecovery = _store.RecoverStaleJobs();
+        Assert.Equal(0, secondRecovery);
+    }
 }

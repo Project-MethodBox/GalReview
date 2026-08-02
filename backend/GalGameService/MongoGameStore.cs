@@ -151,6 +151,50 @@ public sealed class MongoGameStore : IGameStore
         }
     }
 
+    /// <summary>
+    /// 恢复因服务重启而卡在 RUNNING 的生成任务。
+    /// 将所有 status=RUNNING 或 status=QUEUED 的 job 标记为 FAILED，
+    /// 因为当前实例无法继续执行前一个实例的生成流程。
+    /// 应在应用启动阶段调用。
+    /// </summary>
+    public int RecoverStaleJobs()
+    {
+        try
+        {
+            var staleFilter = Builders<GameGenerationJob>.Filter.Or(
+                Builders<GameGenerationJob>.Filter.Eq(j => j.Status, JobStatus.RUNNING),
+                Builders<GameGenerationJob>.Filter.Eq(j => j.Status, JobStatus.QUEUED));
+
+            var recoveryError = new ApiError(
+                Code: "JOB_RECOVERED_AFTER_RESTART",
+                Message: "Service restarted while job was running; job has been marked as failed",
+                Details: new { });
+
+            var update = Builders<GameGenerationJob>.Update
+                .Set(j => j.Status, JobStatus.FAILED)
+                .Set(j => j.Error, recoveryError)
+                .Set(j => j.Progress, 100)
+                .Set(j => j.UpdatedAt, DateTimeOffset.UtcNow);
+
+            var result = _jobs.UpdateMany(staleFilter, update);
+            var recovered = (int)result.ModifiedCount;
+
+            if (recovered > 0)
+            {
+                _logger?.LogWarning(
+                    "Recovered {Count} stale job(s) (RUNNING/QUEUED -> FAILED) after service restart",
+                    recovered);
+            }
+
+            return recovered;
+        }
+        catch (MongoException ex)
+        {
+            _logger?.LogWarning(ex, "Failed to recover stale jobs; they will remain in RUNNING/QUEUED state");
+            return 0;
+        }
+    }
+
     // --- 索引创建 ---
 
     private void EnsureIndexes()
