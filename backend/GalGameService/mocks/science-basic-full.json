@@ -1,0 +1,414 @@
+{
+    "schemaVersion": "1.0",
+    "packageId": "aec16154-3eb8-4bf7-906d-73f20f3c4796",
+    "generatorVersion": "gala-0.1.0",
+    "reviewPlanId": "8e812950-3311-40a7-93ab-636409df8cc2",
+    "snapshotVersion": "plan-graph-1.0:3da5f48f37ac57c91b49ee747c11e45f1a9e9e73d8e892fcd1bd1f9f3f50c620",
+    "entrySceneId": "scene-001",
+    "scenes": [
+        {
+            "sceneId": "scene-001",
+            "title": "空间站知识模块",
+            "dialogue": [
+                {
+                    "speakerId": "NEXUS",
+                    "text": "研究员，欢迎接入 NEXUS 知识系统。今日学习模块已加载完毕，通信链路稳定。",
+                    "emotion": "calm"
+                },
+                {
+                    "speakerId": "NEXUS",
+                    "text": "今日的复习模块为：水稻·生长周期。该模块包含 3 个评估节点，将依次检测你对分蘖期、拔节期和成熟期的知识掌握度。",
+                    "emotion": "informative"
+                },
+                {
+                    "speakerId": "NEXUS",
+                    "text": "系统将在每个评估节点前提供知识摘要，确保你有足够的上下文进行作答。准备好了请确认。",
+                    "emotion": "serious"
+                }
+            ],
+            "choices": [
+                {
+                    "choiceId": "c-scene-001-1",
+                    "questionId": "8ce9d39c-5f6d-40ee-b8f6-4128a3b3dc8c",
+                    "text": "准备好了，开始吧！",
+                    "nextSceneId": "scene-002",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"
+                }
+            ],
+            "knowledgeBindings": [
+                {
+                    "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",
+                    "purpose": "FEEDBACK",
+                    "questionId": null
+                }
+            ]
+        },
+        {
+            "sceneId": "scene-002",
+            "title": "知识模块 A：水稻基本生长周期",
+            "dialogue": [
+                {
+                    "speakerId": "NEXUS",
+                    "text": "在进入第一个评估节点之前，系统将输出「水稻基本生长周期」的知识摘要。",
+                    "emotion": "thoughtful"
+                },
+                {
+                    "speakerId": "NEXUS",
+                    "text": "水稻从播种到成熟的完整生长周期，包括幼苗期、分蘖期、拔节期、抽穗期和成熟期。每个阶段对应不同的生理特征和管理要求。",
+                    "emotion": "explaining"
+                },
+                {
+                    "speakerId": "NEXUS",
+                    "text": "该摘要将作为后续评估的知识基准。请确认已读取。",
+                    "emotion": "informative"
+                }
+            ],
+            "choices": [
+                {
+                    "choiceId": "c-scene-002-1",
+                    "questionId": "208b95d5-0a4d-4431-81ba-b18ca0528609",
+                    "text": "了解了，继续。",
+                    "nextSceneId": "scene-003",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "84f7d873-e573-4689-b18d-6f82c745d1bf"
+                }
+            ],
+            "knowledgeBindings": [
+                {
+                    "knowledgePointId": "84f7d873-e573-4689-b18d-6f82c745d1bf",
+                    "purpose": "EXPLAIN",
+                    "questionId": null
+                }
+            ]
+        },
+        {
+            "sceneId": "scene-003",
+            "title": "评估节点 1：水稻分蘖期管理",
+            "dialogue": [
+                {
+                    "speakerId": "NEXUS",
+                    "text": "系统已生成评估问题，请作答。",
+                    "emotion": "challenging"
+                },
+                {
+                    "speakerId": "NEXUS",
+                    "text": "关于「水稻分蘖期管理」，以下哪个说法是正确的？",
+                    "emotion": "questioning"
+                }
+            ],
+            "choices": [
+                {
+                    "choiceId": "c-scene-003-d1",
+                    "questionId": "ff1605dd-95aa-44a0-aed0-540a3fc8b80a",
+                    "text": "分蘖期应深水灌溉以促进分蘖芽萌发，水深保持 10cm 以上",
+                    "nextSceneId": "scene-004",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",
+                    "answerKind": "CHOICE",
+                    "correct": false
+                },
+                {
+                    "choiceId": "c-scene-003-d2",
+                    "questionId": "ff1605dd-95aa-44a0-aed0-540a3fc8b80a",
+                    "text": "分蘖期管理的核心是尽早追施大量氮肥，使分蘖数越多越好",
+                    "nextSceneId": "scene-004",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",
+                    "answerKind": "CHOICE",
+                    "correct": false
+                },
+                {
+                    "choiceId": "c-scene-003-d3",
+                    "questionId": "ff1605dd-95aa-44a0-aed0-540a3fc8b80a",
+                    "text": "分蘖期不需要水分管理，保持自然降雨即可",
+                    "nextSceneId": "scene-004",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",
+                    "answerKind": "CHOICE",
+                    "correct": false
+                },
+                {
+                    "choiceId": "c-scene-003-correct",
+                    "questionId": "ff1605dd-95aa-44a0-aed0-540a3fc8b80a",
+                    "text": "协调群体数量与个体生长，通过水肥调控促进有效分蘖，控制无效分蘖",
+                    "nextSceneId": "scene-004",
+                    "scoreDelta": 1,
+                    "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",
+                    "answerKind": "CHOICE",
+                    "correct": true
+                }
+            ],
+            "knowledgeBindings": [
+                {
+                    "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",
+                    "purpose": "QUESTION",
+                    "questionId": "ff1605dd-95aa-44a0-aed0-540a3fc8b80a"
+                }
+            ]
+        },
+        {
+            "sceneId": "scene-004",
+            "title": "评估节点 1 结果反馈",
+            "dialogue": [
+                {
+                    "speakerId": "NEXUS",
+                    "text": "评估节点 1 已完成。作答数据已记录至知识图谱。",
+                    "emotion": "calm"
+                },
+                {
+                    "speakerId": "NEXUS",
+                    "text": "无论结果如何，系统建议你关注分蘖期管理中「群体与个体协调」这一核心概念。它贯穿了整个水稻田间管理思路。",
+                    "emotion": "informative"
+                }
+            ],
+            "choices": [
+                {
+                    "choiceId": "c-scene-004-1",
+                    "questionId": "9856bc3b-fb20-4deb-8fa6-7260bc8067d7",
+                    "text": "继续下一模块。",
+                    "nextSceneId": "scene-005",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"
+                }
+            ],
+            "knowledgeBindings": [
+                {
+                    "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",
+                    "purpose": "FEEDBACK",
+                    "questionId": null
+                }
+            ]
+        },
+        {
+            "sceneId": "scene-005",
+            "title": "知识模块 B：水稻拔节期与抽穗期",
+            "dialogue": [
+                {
+                    "speakerId": "NEXUS",
+                    "text": "系统将输出「水稻拔节期与抽穗期」的知识摘要。",
+                    "emotion": "thoughtful"
+                },
+                {
+                    "speakerId": "NEXUS",
+                    "text": "拔节期是茎秆快速生长的阶段，需要保持田间浅水层，注意防止倒伏，适当控制氮肥。过量施氮会导致茎秆徒长而柔弱。",
+                    "emotion": "explaining"
+                },
+                {
+                    "speakerId": "NEXUS",
+                    "text": "抽穗期是决定穗粒数的关键时期，需要保证充足的水分供应和适当的追肥。两个阶段共同决定了最终的产量构成。",
+                    "emotion": "informative"
+                }
+            ],
+            "choices": [
+                {
+                    "choiceId": "c-scene-005-1",
+                    "questionId": "64b9ab7c-0e95-41dc-8990-ef1779e1ff5b",
+                    "text": "知识摘要已读取，继续。",
+                    "nextSceneId": "scene-006",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "f6a7b8c9-d0e1-4f2a-3b4c-5d6e7f8090a0"
+                }
+            ],
+            "knowledgeBindings": [
+                {
+                    "knowledgePointId": "f6a7b8c9-d0e1-4f2a-3b4c-5d6e7f8090a0",
+                    "purpose": "EXPLAIN",
+                    "questionId": null
+                }
+            ]
+        },
+        {
+            "sceneId": "scene-006",
+            "title": "评估节点 2：水稻拔节期管理要点",
+            "dialogue": [
+                {
+                    "speakerId": "NEXUS",
+                    "text": "系统已生成评估问题，请作答。",
+                    "emotion": "challenging"
+                },
+                {
+                    "speakerId": "NEXUS",
+                    "text": "关于「水稻拔节期管理」，以下哪个说法是正确的？",
+                    "emotion": "questioning"
+                }
+            ],
+            "choices": [
+                {
+                    "choiceId": "c-scene-006-correct",
+                    "questionId": "2c13d08b-98ad-4fb5-b071-6c4468572df0",
+                    "text": "拔节期需保持田间浅水层，注意防止倒伏，适当控制氮肥以防茎秆徒长",
+                    "nextSceneId": "scene-007",
+                    "scoreDelta": 1,
+                    "knowledgePointId": "f6a7b8c9-d0e1-4f2a-3b4c-5d6e7f8090a0",
+                    "answerKind": "CHOICE",
+                    "correct": true
+                },
+                {
+                    "choiceId": "c-scene-006-d2",
+                    "questionId": "2c13d08b-98ad-4fb5-b071-6c4468572df0",
+                    "text": "拔节期主要管理目标是促进分蘖大量发生，增加有效穗数",
+                    "nextSceneId": "scene-007",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "f6a7b8c9-d0e1-4f2a-3b4c-5d6e7f8090a0",
+                    "answerKind": "CHOICE",
+                    "correct": false
+                },
+                {
+                    "choiceId": "c-scene-006-d3",
+                    "questionId": "2c13d08b-98ad-4fb5-b071-6c4468572df0",
+                    "text": "拔节期对水分和养分需求不大，可以减少灌溉和施肥",
+                    "nextSceneId": "scene-007",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "f6a7b8c9-d0e1-4f2a-3b4c-5d6e7f8090a0",
+                    "answerKind": "CHOICE",
+                    "correct": false
+                },
+                {
+                    "choiceId": "c-scene-006-d1",
+                    "questionId": "2c13d08b-98ad-4fb5-b071-6c4468572df0",
+                    "text": "拔节期应排水晒田至土壤开裂，促进根系向深层下扎",
+                    "nextSceneId": "scene-007",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "f6a7b8c9-d0e1-4f2a-3b4c-5d6e7f8090a0",
+                    "answerKind": "CHOICE",
+                    "correct": false
+                }
+            ],
+            "knowledgeBindings": [
+                {
+                    "knowledgePointId": "f6a7b8c9-d0e1-4f2a-3b4c-5d6e7f8090a0",
+                    "purpose": "QUESTION",
+                    "questionId": "2c13d08b-98ad-4fb5-b071-6c4468572df0"
+                }
+            ]
+        },
+        {
+            "sceneId": "scene-007",
+            "title": "知识模块 C：水稻成熟期",
+            "dialogue": [
+                {
+                    "speakerId": "NEXUS",
+                    "text": "在最后一个评估节点前，系统将输出「水稻成熟期」的知识摘要。",
+                    "emotion": "thoughtful"
+                },
+                {
+                    "speakerId": "NEXUS",
+                    "text": "水稻成熟期分为乳熟期、蜡熟期和完熟期三个阶段。乳熟期籽粒充满乳状淀粉液，蜡熟期籽粒变硬呈蜡状，完熟期籽粒完全硬化。",
+                    "emotion": "explaining"
+                },
+                {
+                    "speakerId": "NEXUS",
+                    "text": "完熟期是最佳收获期，此时籽粒含水量降至 20%~25%，产量和品质均达到峰值。该指标是判断收获时机的权威依据。",
+                    "emotion": "informative"
+                }
+            ],
+            "choices": [
+                {
+                    "choiceId": "c-scene-007-1",
+                    "questionId": "f1064095-6e61-4933-a1b8-2506fc14b7ce",
+                    "text": "知识摘要已读取，继续。",
+                    "nextSceneId": "scene-008",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "c9d0e1f2-a3b4-4c5d-6e7f-8090a1b2c3d3"
+                }
+            ],
+            "knowledgeBindings": [
+                {
+                    "knowledgePointId": "c9d0e1f2-a3b4-4c5d-6e7f-8090a1b2c3d3",
+                    "purpose": "EXPLAIN",
+                    "questionId": null
+                }
+            ]
+        },
+        {
+            "sceneId": "scene-008",
+            "title": "评估节点 3：水稻成熟期判断标准",
+            "dialogue": [
+                {
+                    "speakerId": "NEXUS",
+                    "text": "系统已生成最终评估问题，请作答。",
+                    "emotion": "challenging"
+                },
+                {
+                    "speakerId": "NEXUS",
+                    "text": "关于「水稻成熟期判断标准」，以下哪个说法是正确的？",
+                    "emotion": "questioning"
+                }
+            ],
+            "choices": [
+                {
+                    "choiceId": "c-scene-008-d2",
+                    "questionId": "5e96c22a-8079-4104-ab3c-e7828c2584c2",
+                    "text": "乳熟期籽粒充满乳浆时是最佳收获期，此时产量最高",
+                    "nextSceneId": "scene-009",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "c9d0e1f2-a3b4-4c5d-6e7f-8090a1b2c3d3",
+                    "answerKind": "CHOICE",
+                    "correct": false
+                },
+                {
+                    "choiceId": "c-scene-008-correct",
+                    "questionId": "5e96c22a-8079-4104-ab3c-e7828c2584c2",
+                    "text": "水稻成熟期分为乳熟期、蜡熟期和完熟期，完熟期籽粒含水量降至 20%~25%，是最佳收获期",
+                    "nextSceneId": "scene-009",
+                    "scoreDelta": 1,
+                    "knowledgePointId": "c9d0e1f2-a3b4-4c5d-6e7f-8090a1b2c3d3",
+                    "answerKind": "CHOICE",
+                    "correct": true
+                },
+                {
+                    "choiceId": "c-scene-008-d3",
+                    "questionId": "5e96c22a-8079-4104-ab3c-e7828c2584c2",
+                    "text": "成熟期判断与籽粒含水量无关，主要看穗部颜色变化",
+                    "nextSceneId": "scene-009",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "c9d0e1f2-a3b4-4c5d-6e7f-8090a1b2c3d3",
+                    "answerKind": "CHOICE",
+                    "correct": false
+                },
+                {
+                    "choiceId": "c-scene-008-d1",
+                    "questionId": "5e96c22a-8079-4104-ab3c-e7828c2584c2",
+                    "text": "成熟期只需观察叶片是否全部变黄即可决定收获时间",
+                    "nextSceneId": "scene-009",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "c9d0e1f2-a3b4-4c5d-6e7f-8090a1b2c3d3",
+                    "answerKind": "CHOICE",
+                    "correct": false
+                }
+            ],
+            "knowledgeBindings": [
+                {
+                    "knowledgePointId": "c9d0e1f2-a3b4-4c5d-6e7f-8090a1b2c3d3",
+                    "purpose": "QUESTION",
+                    "questionId": "5e96c22a-8079-4104-ab3c-e7828c2584c2"
+                }
+            ]
+        },
+        {
+            "sceneId": "scene-009",
+            "title": "学习模块结束",
+            "dialogue": [
+                {
+                    "speakerId": "NEXUS",
+                    "text": "所有评估节点已完成。学习数据已记录至知识图谱，你的知识掌握度持续提升中。",
+                    "emotion": "proud"
+                },
+                {
+                    "speakerId": "NEXUS",
+                    "text": "本次复习共完成 3 道题目，涵盖分蘖期管理、拔节期管理和成熟期判断三个评估节点。",
+                    "emotion": "warm"
+                },
+                {
+                    "speakerId": "NEXUS",
+                    "text": "系统将根据本次作答数据调整后续复习计划，优先覆盖掌握度较低的知识点。下次接入时将自动加载。",
+                    "emotion": "calm"
+                }
+            ],
+            "choices": [],
+            "knowledgeBindings": []
+        }
+    ],
+    "assets": []
+}
