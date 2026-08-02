@@ -4,15 +4,15 @@ import { api } from '../lib/api'
 import { clearSession, readProfile, readSession } from '../lib/session'
 import { resetWorkflow } from '../lib/workflow'
 import BrandMark from './BrandMark'
-import { SettingsIcon } from './icons'
+import { GraphIcon, HomeIcon, KnowledgeIcon, LogoutIcon, MaterialsIcon, ReviewIcon, SettingsIcon } from './icons'
 
 const navigation = [
-  { to: '/home', label: '主页' },
-  { to: '/materials', label: '资料' },
-  { to: '/knowledge', label: '知识点' },
-  { to: '/knowledge-graph', label: '图谱' },
-  { to: '/review', label: '复习' },
-  { to: '/settings', label: '设置', mobileOnly: true },
+  { to: '/home', label: '主页', icon: HomeIcon },
+  { to: '/materials', label: '资料', icon: MaterialsIcon },
+  { to: '/knowledge', label: '知识点', icon: KnowledgeIcon },
+  { to: '/knowledge-graph', label: '图谱', icon: GraphIcon },
+  { to: '/review', label: '复习', icon: ReviewIcon },
+  { to: '/settings', label: '设置', icon: SettingsIcon, mobileOnly: true },
 ]
 
 export default function AppShell({ children }: { children: ReactNode }) {
@@ -40,7 +40,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         </Link>
         <nav className="rail-nav" aria-label="主要导航">
           {navigation.map((item) => (
-            <NavLink key={item.to} to={item.to} className={({ isActive }) => `${item.mobileOnly ? 'mobile-nav-only ' : ''}${isActive ? 'active' : ''}`.trim()}>{item.label}</NavLink>
+            <NavLink key={item.to} to={item.to} className={({ isActive }) => `${item.mobileOnly ? 'mobile-nav-only ' : ''}${isActive ? 'active' : ''}`.trim()}><item.icon /><span>{item.label}</span></NavLink>
           ))}
         </nav>
         <div className="rail-account">
@@ -50,7 +50,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
           </Link>
           <div className="rail-actions">
             <Link to="/settings" aria-label="打开设置"><SettingsIcon /><span>设置</span></Link>
-            <button type="button" onClick={() => void logout()}>退出</button>
+            <button type="button" onClick={() => void logout()}><LogoutIcon /><span>退出</span></button>
           </div>
         </div>
       </header>
