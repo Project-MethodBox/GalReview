@@ -9,7 +9,7 @@
 
 - 游戏生成任务管理（创建、查询）
 - 游戏包 schema 1.0 实现与校验
-- 受控叙事生成（CAMPUS / FANTASY / SCIENCE）
+- 剧情模板生成（CAMPUS / FANTASY / SCIENCE）
 - 难度适配（BASIC / STANDARD / ADVANCED）
 - 经 Gateway 读取 KnowledgeService 的不可变 PlanGraph（§7.3.1 URGENT）
 
@@ -22,7 +22,6 @@
 | `GET` | `/api/v1/game-packages/{packageId}` | 读取游戏包清单 | `200/400/401/404` |
 | `GET` | `/api/v1/game-packages/{packageId}/content` | 下载完整 JSON | `200/304/400/401/404` |
 | `POST` | `/internal/v1/game-package-validations` | 校验游戏包（服务间） | `200/400/403/422` |
-| `GET` | `/internal/v1/game-packages/{packageId}` | RenderService 按用户读取权威游戏包（服务间） | `200/400/403/404` |
 | `GET` | `/healthz` | 存活探针 | `200` |
 | `GET` | `/readyz` | 就绪探针 | `200` |
 
@@ -30,14 +29,11 @@
 
 ```
 GalGameService/
-├── Program.cs                  # 服务入口：中间件链 + 6 个端点
+├── Program.cs                  # 服务入口：中间件链 + 5 个端点
 ├── Contracts.cs                # 数据类型（GamePackage、Scene、Choice 等）
-├── GameGenerator.cs            # 游戏包生成器（3 风格 × 3 难度 + 资源生成）
+├── GameGenerator.cs            # 游戏包生成器（3 风格 × 3 难度）
 ├── GamePackageValidator.cs     # 校验器（15 类规则 + SHA-256 checksum）
-├── Narrative/                  # 提示词、DeepSeek 客户端、草稿校验与装配
-├── IGameStore.cs               # 存储接口（内联于 InMemoryGameStore.cs）
 ├── InMemoryGameStore.cs        # Mock 内存存储 + 黄金游戏包
-├── MongoGameStore.cs           # MongoDB 持久化存储 + 启动恢复
 ├── PlanGraphClient.cs          # PlanGraph 读取客户端（§7.3.1 URGENT）
 ├── GalGame.GalGameService.csproj
 ├── Dockerfile
@@ -67,7 +63,6 @@ GalGameService/
     ├── BoundaryTests.cs                  # 边界输入（特殊字符/超长文本）
     ├── GalGameServiceIntegrationTests.cs # WebApplicationFactory 集成测试
     ├── InMemoryGameStoreTests.cs         # 内存存储测试
-    ├── MongoGameStoreTests.cs            # MongoDB 持久化测试
     ├── InvalidPackageTests.cs            # 错误包负向测试（精确错误码断言）
     └── GamePackageSchemaTests.cs         # JSON Schema 契约测试
 ```
@@ -107,17 +102,13 @@ GalGameService/
 
 ### 2. 游戏包生成
 
-`GameGenerator` 先从 PlanGraph 生成符合 schema 1.0 的确定性骨架：
+`GameGenerator` 从 PlanGraph 生成符合 schema 1.0 的 GamePackage：
 
 - 仅为 `PlanNode.questionTarget=true` 的节点生成计分题目
 - `questionId` 确定性生成并编码为 UUID v4（相同 pointId + seed → 相同 questionId）
 - 3 种剧情风格：CAMPUS（校园）、FANTASY（奇幻）、SCIENCE（科幻）
-- 3 种难度：BASIC、STANDARD、ADVANCED
-
-`NarrativeGenerationService` 再以完整骨架为上下文生成剧情。模型只写标题、对白和选项显示文本；
-ID、跳转、知识绑定、正确性、计分与快照始终由代码锁定。提示词要求知识作为线索、规则或行动依据
-改变剧情，不能使用“讲解—答题—结束”的报幕结构。草稿须同时通过依据核对、槽位校验和最终包
-校验；允许一次修复，失败后整包回退，不会保存模型半成品。
+- 3 种难度：BASIC（4 选项）、STANDARD（4 选项）、ADVANCED（3 选项）
+- 场景序列：开场 → 知识点讲解 → 题目 → 结束
 
 `purpose=QUESTION` 场景中的选项显式携带题型与正确性。`scoreDelta` 只表示游戏内分数变化，
 判题以 `correct` 为准，不能根据分数推断答案正确性或知识点掌握度：
@@ -157,10 +148,6 @@ export Gateway__ServiceKey=moonstone-local-gateway-key
 dotnet run --project backend/GalGameService/GalGame.GalGameService.csproj
 ```
 
-Mock 模式始终关闭外部模型调用。若要在非 Mock 环境启用叙事生成，设置
-`NarrativeGeneration__Enabled=true` 与 `DSAPI`；默认 endpoint/model 见 `docs/contract.md` §7.3.2。
-不要把真实 API key 写进 appsettings 或提交到仓库。
-
 ### Docker
 
 ```bash
@@ -184,7 +171,6 @@ dotnet test backend/GalGameService/Tests/GalGame.GalGameService.Tests.csproj
 - 使用 `InMemoryGameStore` 存储任务和游戏包
 - `PlanGraphClient` 返回内置 PlanGraph（无需 KnowledgeService）
 - 启动时预置黄金游戏包（`f2561bb2-b88c-47ef-b0ae-8f283ff64f1b`）
-- 强制关闭外部叙事模型，避免契约测试产生真实调用和费用
 
 ### Mock 测试数据
 

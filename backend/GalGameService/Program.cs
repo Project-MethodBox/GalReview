@@ -32,23 +32,7 @@ var gatewayKey = builder.Configuration["Gateway:ServiceKey"]
 var isMockMode = string.Equals(
     builder.Configuration["MOONSTONE_MODE"] ?? Environment.GetEnvironmentVariable("MOONSTONE_MODE"),
     "Mock", StringComparison.OrdinalIgnoreCase);
-var useMongoStore = !string.Equals(
-    builder.Configuration["GalGameStore:Provider"] ?? Environment.GetEnvironmentVariable("GalGameStore__Provider"),
-    "Memory", StringComparison.OrdinalIgnoreCase);
-var storageName = (isMockMode, useMongoStore) switch
-{
-    (true, true) => "mock-mongodb",
-    (true, false) => "mock-memory",
-    (false, true) => "mongodb",
-    (false, false) => "ephemeral-memory",
-};
-var narrativeOptions = new NarrativeGenerationOptions();
-builder.Configuration.GetSection(NarrativeGenerationOptions.SectionName).Bind(narrativeOptions);
-if (string.IsNullOrWhiteSpace(narrativeOptions.ApiKey))
-    narrativeOptions.ApiKey = Environment.GetEnvironmentVariable("DSAPI") ?? string.Empty;
-// Mock/contract tests must never make billable external model calls, even when the host has DSAPI.
-if (isMockMode)
-    narrativeOptions.Enabled = false;
+var storageName = isMockMode ? "mock-memory" : "ephemeral-memory";
 var validationAllowedServices = InternalServiceAccessPolicy.CreateAllowlist(
     builder.Configuration.GetSection("InternalAccess:ValidationAllowedServices"),
     "RenderService");
@@ -62,60 +46,18 @@ builder.Services.AddHttpClient("gateway", client =>
     client.BaseAddress = new Uri(builder.Configuration["Gateway:BaseUrl"] ?? "http://localhost:5000");
     client.Timeout = TimeSpan.FromSeconds(30);
 });
-builder.Services.AddHttpClient("narrative", client =>
-{
-    // The provider client applies a linked per-request timeout from configuration.
-    client.Timeout = Timeout.InfiniteTimeSpan;
-});
 
 // DI 注册
 builder.Services.AddSingleton<GamePackageValidator>();
-if (useMongoStore)
-{
-    builder.Services.AddSingleton<IGameStore>(sp => new MongoGameStore(
-        sp.GetRequiredService<IConfiguration>(),
-        sp.GetRequiredService<ILoggerFactory>().CreateLogger<MongoGameStore>(),
-        seedGoldenPackage: isMockMode));
-}
-else
-{
-    builder.Services.AddSingleton<IGameStore>(_ => new InMemoryGameStore(isMockMode));
-}
+builder.Services.AddSingleton<IGameStore>(_ => new InMemoryGameStore(isMockMode));
 builder.Services.AddSingleton<PlanGraphClient>(sp => new PlanGraphClient(
     sp.GetRequiredService<IHttpClientFactory>(),
     sp.GetRequiredService<ILoggerFactory>().CreateLogger<PlanGraphClient>(),
     sp.GetRequiredService<IConfiguration>(),
     isMockMode));
 builder.Services.AddSingleton<GameGenerator>();
-builder.Services.AddSingleton(narrativeOptions);
-builder.Services.AddSingleton<NarrativePromptBuilder>();
-builder.Services.AddSingleton<NarrativeDraftValidator>();
-builder.Services.AddSingleton<INarrativeModelClient, DeepSeekNarrativeClient>();
-builder.Services.AddSingleton<NarrativeGenerationService>();
 
 var app = builder.Build();
-
-// ============================================================================
-// 启动恢复：将因服务重启而卡在 RUNNING/QUEUED 的生成任务标记为 FAILED
-// ============================================================================
-if (useMongoStore)
-{
-    try
-    {
-        var store = app.Services.GetRequiredService<IGameStore>();
-        var recovered = store.RecoverStaleJobs();
-        if (recovered > 0)
-        {
-            var startupLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("GalGameService");
-            startupLogger.LogWarning("Startup recovery: {Count} stale job(s) marked as FAILED", recovered);
-        }
-    }
-    catch (Exception ex)
-    {
-        var startupLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("GalGameService");
-        startupLogger.LogWarning(ex, "Startup recovery failed; stale jobs may remain in RUNNING/QUEUED state");
-    }
-}
 
 // ============================================================================
 // 中间件
@@ -195,17 +137,8 @@ app.Use(async (context, next) =>
 
 app.MapGet("/healthz", (HttpContext c) =>
     Results.Ok(ApiSuccess.Create(new { status = "live" }, c.TraceIdentifier)));
-app.MapGet("/readyz", async (HttpContext c, IGameStore store) =>
-{
-    if (useMongoStore && store is MongoGameStore mongoStore)
-    {
-        var ready = mongoStore.IsReady();
-        return ready
-            ? Results.Ok(ApiSuccess.Create(new { status = "ready", storage = storageName }, c.TraceIdentifier))
-            : Failure(c, 503, "SERVICE_UNAVAILABLE", "MongoDB is unavailable.");
-    }
-    return Results.Ok(ApiSuccess.Create(new { status = "ready", storage = storageName }, c.TraceIdentifier));
-});
+app.MapGet("/readyz", (HttpContext c) =>
+    Results.Ok(ApiSuccess.Create(new { status = "ready", storage = storageName }, c.TraceIdentifier)));
 
 // ============================================================================
 // 端点 1：POST /api/v1/game-generations — 创建游戏包生成任务
@@ -216,7 +149,7 @@ app.MapGet("/readyz", async (HttpContext c, IGameStore store) =>
 //   - 校验通过 → 202 Accepted，后台异步生成
 // ============================================================================
 
-app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, HttpContext c, IGameStore store, PlanGraphClient planClient, NarrativeGenerationService generator) =>
+app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, HttpContext c, IGameStore store, PlanGraphClient planClient, GameGenerator generator) =>
 {
     var userId = GatewayUser(c, gatewayKey);
     if (userId is null) return Failure(c, 401, "AUTH_REQUIRED", "需要网关认证的用户身份。");
@@ -266,7 +199,7 @@ app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, Ht
 
     // 后台异步生成（PlanGraph 已确认可用，不再重复获取）
     // 使用 _ = 丢弃 Task 但内部有完整异常处理，不会静默吞异常
-    _ = Task.Run(async () =>
+    _ = Task.Run(() =>
     {
         try
         {
@@ -282,7 +215,7 @@ app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, Ht
                 job.GenerationId, request.Style, request.Difficulty);
 
             // 生成游戏包
-            var package = await generator.GenerateAsync(graph, request, userId, CancellationToken.None);
+            var package = generator.Generate(graph, request, userId);
             var checksum = GamePackageValidator.ComputeChecksum(package);
             var manifest = new GamePackageManifest(
                 package.PackageId, package.SchemaVersion, package.GeneratorVersion,
@@ -304,11 +237,7 @@ app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, Ht
         {
             logger.LogError(ex, "Job {GenerationId} failed during generation", job.GenerationId);
             store.TryTransitionJob(job.GenerationId, JobStatus.RUNNING,
-                j => j with
-                {
-                    Status = JobStatus.FAILED,
-                    Error = new ApiError("INTERNAL_ERROR", "游戏包生成失败，请稍后重试", new { }),
-                });
+                j => j with { Status = JobStatus.FAILED, Error = new ApiError("INTERNAL_ERROR", ex.Message, new { }) });
         }
     });
 

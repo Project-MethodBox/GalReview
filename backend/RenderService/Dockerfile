@@ -20,7 +20,6 @@ FROM ${NODE_CPP_IMAGE} AS final
 WORKDIR /app
 COPY --from=build /out/GalReview.RenderService ./bin/GalReview.RenderService
 COPY --from=build /src/service/dist ./service/dist
-COPY service/demo ./service/demo
 COPY service/runtime.wasm.base64 ./service/
 ENV PORT=5106
 EXPOSE 5106

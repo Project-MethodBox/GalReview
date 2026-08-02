@@ -102,27 +102,26 @@ public sealed class GameGenerator
         // 4a. 开场场景
         scenes.Add(CreateEntryScene(template, plan, primaryPointId, ref sceneIndex));
 
-        // 4b. 前置知识点讲解场景（EXPLAIN 绑定，不计分，按难度递增讲解深度）
+        // 4b. 前置知识点讲解场景（EXPLAIN 绑定，不计分）
         foreach (var node in explainNodes)
         {
-            scenes.Add(CreateExplainScene(template, node, req.Difficulty, ref sceneIndex));
+            scenes.Add(CreateExplainScene(template, node, ref sceneIndex));
         }
 
         // 4c. 题目场景（QUESTION 绑定，计分）
         for (var i = 0; i < questions.Count; i++)
         {
             var q = questions[i];
-            scenes.Add(CreateQuestionScene(template, q, req.Difficulty, nodes, plan.Type, ref sceneIndex));
+            scenes.Add(CreateQuestionScene(template, q, req.Difficulty, nodes, ref sceneIndex));
         }
 
-        // 4d. 结束场景（无 choice，根据计划类型调整措辞）
-        scenes.Add(CreateEndingScene(template, questions, plan.Type, ref sceneIndex));
+        // 4d. 结束场景（无 choice）
+        scenes.Add(CreateEndingScene(template, questions, ref sceneIndex));
 
         // 5. 链接场景：每个场景的 choice.nextSceneId 指向下一个场景
         LinkScenes(scenes);
 
-        // 6. 构造 GamePackage（生成风格化资源引用）
-        var assets = GenerateAssets(req.Style, template);
+        // 6. 构造 GamePackage
         var pkg = new GamePackage(
             SchemaVersion: "1.0",
             PackageId: Guid.NewGuid(),
@@ -131,7 +130,7 @@ public sealed class GameGenerator
             SnapshotVersion: plan.SnapshotVersion,
             EntrySceneId: scenes[0].SceneId,
             Scenes: scenes.ToArray(),
-            Assets: assets);
+            Assets: Array.Empty<AssetRef>());
 
         // 7. 自检：校验器验证生成的包
         var result = _validator.Validate(pkg);
@@ -173,12 +172,10 @@ public sealed class GameGenerator
         index++;
         var sceneId = $"scene-{index:D3}";
         var navQuestionId = NavigationGuid(sceneId);
-        var isLearning = string.Equals(plan.Type, "LEARNING", StringComparison.OrdinalIgnoreCase);
-        var topicLabel = isLearning ? "学习" : "复习";
         var dialogue = new DialogueLine[]
         {
             new(template.GuideSpeaker, template.EntryDialogue, template.EntryEmotion),
-            new(template.GuideSpeaker, $"今天我们要{topicLabel}的主题是：{GetPlanTopic(plan)}", "encouraging"),
+            new(template.GuideSpeaker, $"今天我们要复习的主题是：{GetPlanTopic(plan)}", "encouraging"),
         };
         return new Scene(
             SceneId: sceneId,
@@ -194,54 +191,20 @@ public sealed class GameGenerator
             });
     }
 
-    private static Scene CreateExplainScene(StyleTemplate template, PlanNode node, Difficulty difficulty, ref int index)
+    private static Scene CreateExplainScene(StyleTemplate template, PlanNode node, ref int index)
     {
         index++;
         var sceneId = $"scene-{index:D3}";
         var navQuestionId = NavigationGuid(sceneId);
-
-        // 按难度递增讲解深度：BASIC 2 行 / STANDARD 3 行 / ADVANCED 4 行
-        var dialogue = new List<DialogueLine>
+        var dialogue = new DialogueLine[]
         {
             new(template.GuideSpeaker, $"在正式提问之前，先回顾一下「{node.Title}」。", "thoughtful"),
             new(template.GuideSpeaker, node.Summary, "explaining"),
         };
-
-        if (difficulty is Difficulty.STANDARD or Difficulty.ADVANCED)
-        {
-            // STANDARD 额外补充 Tags 相关的应用提示
-            if (node.Tags is { Length: > 0 })
-            {
-                dialogue.Add(new DialogueLine(
-                    template.GuideSpeaker,
-                    $"关键标签：{string.Join("、", node.Tags)}。这些概念在实际应用中经常交叉出现，理解它们的关联很重要。",
-                    "elaborating"));
-            }
-            else
-            {
-                dialogue.Add(new DialogueLine(
-                    template.GuideSpeaker,
-                    $"掌握「{node.Title}」的核心概念，有助于理解后续知识点。",
-                    "elaborating"));
-            }
-        }
-
-        if (difficulty is Difficulty.ADVANCED)
-        {
-            // ADVANCED 额外补充深度分析：依赖关系 + 权重 + 选择原因
-            var depthHint = node.DependencyDepth > 0
-                ? $"该知识点位于依赖链第 {node.DependencyDepth} 层，是理解目标知识点的重要前置。"
-                : "该知识点是本复习计划的核心目标之一，需要重点掌握。";
-            dialogue.Add(new DialogueLine(
-                template.GuideSpeaker,
-                $"{depthHint}（知识点权重：{node.Weight:F2}）",
-                "analytical"));
-        }
-
         return new Scene(
             SceneId: sceneId,
             Title: $"知识点讲解：{node.Title}",
-            Dialogue: dialogue.ToArray(),
+            Dialogue: dialogue,
             Choices: new[]
             {
                 new Choice($"c-{sceneId}-1", navQuestionId, "了解了，继续。", null, 0, node.PointId),
@@ -253,18 +216,15 @@ public sealed class GameGenerator
     }
 
     private static Scene CreateQuestionScene(
-        StyleTemplate template, QuestionSpec q, Difficulty difficulty, PlanNode[] allNodes, string planType, ref int index)
+        StyleTemplate template, QuestionSpec q, Difficulty difficulty, PlanNode[] allNodes, ref int index)
     {
         index++;
         var sceneId = $"scene-{index:D3}";
         var node = q.Node;
 
-        // 根据计划类型选择提问引导语（LEARNING vs ASSESSMENT）
-        var introText = GetQuestionIntroForPlan(template, planType);
-
         var dialogue = new DialogueLine[]
         {
-            new(template.GuideSpeaker, introText, "challenging"),
+            new(template.GuideSpeaker, template.QuestionIntro, "challenging"),
             new(template.GuideSpeaker, $"{node.Title}——{GetQuestionStem(node, difficulty)}", "questioning"),
         };
 
@@ -286,21 +246,18 @@ public sealed class GameGenerator
             });
     }
 
-    private static Scene CreateEndingScene(StyleTemplate template, List<QuestionSpec> questions, string planType, ref int index)
+    private static Scene CreateEndingScene(StyleTemplate template, List<QuestionSpec> questions, ref int index)
     {
         index++;
         var sceneId = $"scene-{index:D3}";
-        var isLearning = string.Equals(planType, "LEARNING", StringComparison.OrdinalIgnoreCase);
-        var summaryText = questions.Count == 0
-            ? (isLearning ? "本次学习已完成知识讲解，辛苦了！" : "本次复习已完成知识讲解，辛苦了！")
-            : (isLearning
-                ? $"本次学习共完成 {questions.Count} 道验收题目，辛苦了！"
-                : $"本次复习共完成 {questions.Count} 道题目，辛苦了！");
-
         var dialogue = new DialogueLine[]
         {
             new(template.GuideSpeaker, template.EndingDialogue, "proud"),
-            new(template.GuideSpeaker, summaryText, "warm"),
+            new(template.GuideSpeaker,
+                questions.Count == 0
+                    ? "本次复习已完成知识讲解，辛苦了！"
+                    : $"本次复习共完成 {questions.Count} 道题目，辛苦了！",
+                "warm"),
         };
         return new Scene(
             SceneId: sceneId,
@@ -408,114 +365,16 @@ public sealed class GameGenerator
         return summary.Length > 60 ? summary[..60] + "…" : summary;
     }
 
-    /// <summary>
-    /// 从 PlanNode 提取语义化干扰项文本：使用 Summary 的非首句（若有），
-    /// 或从 Tags 构造误导性描述，确保干扰项具有真实知识背景而非泛化文本。
-    /// </summary>
     private static string ExtractDistractorFromNode(PlanNode node)
-    {
-        var summary = node.Summary?.Trim() ?? string.Empty;
-
-        // 尝试取 Summary 的第二句（首句通常是正确定义的描述，第二句可能描述不同方面）
-        var separators = new[] { '。', '；', '.', ';' };
-        var firstEnd = summary.IndexOfAny(separators);
-        if (firstEnd >= 0 && firstEnd < summary.Length - 1)
-        {
-            var rest = summary[(firstEnd + 1)..].Trim();
-            if (rest.Length > 0)
-            {
-                var secondEnd = rest.IndexOfAny(separators);
-                return secondEnd > 0 ? rest[..secondEnd] : (rest.Length > 60 ? rest[..60] + "…" : rest);
-            }
-        }
-
-        // Summary 只有一句时，从 Tags 构造「看似合理但存在偏差」的干扰项
-        if (node.Tags is { Length: >= 1 })
-        {
-            // 取第一个标签 + 常见误解模板
-            var tag = node.Tags[0];
-            return node.Role switch
-            {
-                "PREREQUISITE" => $"{tag}的基本概念已经过时，不再适用于现代实践",
-                "TARGET" => $"{tag}与实际应用场景关联不大，了解即可",
-                _ => $"{tag}的相关内容较为次要，可跳过深入",
-            };
-        }
-
-        // 兜底：使用 Title 但附加限定语使其更像一个可选答案
-        return string.IsNullOrWhiteSpace(node.Title) ? "（未命名知识点）" : $"关于「{node.Title}」的描述已不适用";
-    }
+        => string.IsNullOrWhiteSpace(node.Title) ? "（未命名知识点）" : node.Title!;
 
     private static string[] GetGenericDistractors(Difficulty difficulty) => difficulty switch
     {
-        Difficulty.BASIC => new[]
-        {
-            "该知识点仅适用于理论考试，实际生产中无参考价值",
-            "这是一个已被现代技术完全替代的过时方法",
-            "需要结合具体地区气候条件才能判断其适用性",
-        },
-        Difficulty.STANDARD => new[]
-        {
-            "该结论仅在特定实验条件下成立，不具备普适性",
-            "与传统经验相反，现代研究表明该做法效果有限",
-            "该措施的实际效果受多种因素制约，不能一概而论",
-        },
-        Difficulty.ADVANCED => new[]
-        {
-            "该观点在经典理论中被广泛接受，但最新研究已提出有力反证",
-            "该结论依赖于理想化假设，在复杂实际场景中存在显著偏差",
-        },
+        Difficulty.BASIC => new[] { "以上都不对", "与题目无关的选项", "需要更多信息才能判断" },
+        Difficulty.STANDARD => new[] { "部分正确但不完整", "方向相反的结论", "条件不足无法确定" },
+        Difficulty.ADVANCED => new[] { "看似合理但存在关键缺陷", "仅适用于特殊情况" },
         _ => new[] { "干扰项" },
     };
-
-    // ========================================================================
-    // 资源引用生成：按风格生成场景背景、角色立绘和音频引用
-    // ========================================================================
-
-    private static readonly Dictionary<GameStyle, AssetTemplate> AssetTemplates = new()
-    {
-        [GameStyle.CAMPUS] = new AssetTemplate(
-            Backgrounds: new[] { "campus_library_day", "campus_library_evening", "campus_corridor", "campus_courtyard" },
-            Characters: new[] { "char_senior_linn_neutral", "char_senior_linn_smile", "char_senior_linn_thinking" },
-            Audio: new[] { "bgm_campus_calm", "sfx_page_flip", "sfx_chime_correct" }),
-        [GameStyle.FANTASY] = new AssetTemplate(
-            Backgrounds: new[] { "fantasy_tower_entrance", "fantasy_tower_library", "fantasy_forest_mystic", "fantasy_star_chamber" },
-            Characters: new[] { "char_elf_aria_neutral", "char_elf_aria_casting", "char_elf_aria_smile" },
-            Audio: new[] { "bgm_fantasy_mystic", "sfx_magic_chime", "sfx_spell_cast" }),
-        [GameStyle.SCIENCE] = new AssetTemplate(
-            Backgrounds: new[] { "sci_station_hub", "sci_station_lab", "sci_station_viewport", "sci_holographic_display" },
-            Characters: new[] { "char_nexus_hologram_blue", "char_nexus_hologram_green", "char_nexus_hologram_amber" },
-            Audio: new[] { "bgm_science_ambient", "sfx_ui_beep", "sfx_data_process" }),
-    };
-
-    private static AssetRef[] GenerateAssets(GameStyle style, StyleTemplate template)
-    {
-        if (!AssetTemplates.TryGetValue(style, out var assetTemplate))
-            return Array.Empty<AssetRef>();
-
-        var assets = new List<AssetRef>();
-        var idx = 0;
-
-        // 背景资源（至少 2 张）
-        foreach (var bg in assetTemplate.Backgrounds.Take(3))
-        {
-            assets.Add(new AssetRef($"asset-{++idx:D3}", AssetType.BACKGROUND, $"assets/{style.ToString().ToLowerInvariant()}/bg/{bg}.webp"));
-        }
-
-        // 角色立绘
-        foreach (var ch in assetTemplate.Characters.Take(3))
-        {
-            assets.Add(new AssetRef($"asset-{++idx:D3}", AssetType.CHARACTER, $"assets/{style.ToString().ToLowerInvariant()}/char/{ch}.webp"));
-        }
-
-        // 音频
-        foreach (var au in assetTemplate.Audio)
-        {
-            assets.Add(new AssetRef($"asset-{++idx:D3}", AssetType.AUDIO, $"assets/{style.ToString().ToLowerInvariant()}/audio/{au}.ogg"));
-        }
-
-        return assets.ToArray();
-    }
 
     // ========================================================================
     // 辅助方法
@@ -536,17 +395,6 @@ public sealed class GameGenerator
         Difficulty.ADVANCED => $"在深入理解「{node.Title}」的基础上，以下哪个选项最符合实际？",
         _ => $"关于「{node.Title}」，哪个说法正确？",
     };
-
-    /// <summary>
-    /// 根据 PlanGraph 类型生成提问引导语：LEARNING 计划使用「学习验收」措辞，
-    /// ASSESSMENT 计划使用「知识检查」措辞。由 CreateQuestionScene 调用。
-    /// </summary>
-    private static string GetQuestionIntroForPlan(StyleTemplate template, string planType)
-    {
-        if (string.Equals(planType, "LEARNING", StringComparison.OrdinalIgnoreCase))
-            return "学习内容讲解完毕，让我们通过这道题验收一下学习效果：";
-        return template.QuestionIntro;
-    }
 
     /// <summary>确定性 UUID v4 形状：相同 pointId + seed → 相同 questionId。</summary>
     private static Guid DeterministicGuid(Guid pointId, long seed)
@@ -607,6 +455,8 @@ public sealed class GameGenerator
     // 内部类型
     // ========================================================================
 
+    private sealed record QuestionSpec(PlanNode Node, Guid QuestionId);
+
     private sealed record StyleTemplate(
         string GuideSpeaker,
         string EntrySceneTitle,
@@ -615,11 +465,4 @@ public sealed class GameGenerator
         string QuestionIntro,
         string EndingSceneTitle,
         string EndingDialogue);
-
-    private sealed record AssetTemplate(
-        string[] Backgrounds,
-        string[] Characters,
-        string[] Audio);
-
-    private sealed record QuestionSpec(PlanNode Node, Guid QuestionId);
 }
