@@ -4,6 +4,7 @@ import { api } from '../lib/api'
 import { pollUntil } from '../lib/poll'
 import { loadRuntime } from '../lib/runtime'
 import { readSession } from '../lib/session'
+import { createUuidV4 } from '../lib/uuid'
 import { readWorkflow, updateWorkflow } from '../lib/workflow'
 import type {
   AnswerResult,
@@ -35,7 +36,7 @@ function createShellSession(gamePackage: GamePackage): ReviewSession {
   const userId = readSession()?.session.userId
   if (!userId) throw new Error('登录会话已失效，请重新登录。')
   return {
-    sessionId: crypto.randomUUID(),
+    sessionId: createUuidV4(),
     userId,
     packageId: gamePackage.packageId,
     reviewPlanId: gamePackage.reviewPlanId,
@@ -51,7 +52,7 @@ function createShellSession(gamePackage: GamePackage): ReviewSession {
 export default function ReviewPage() {
   const initial = readWorkflow()
   const adapterRef = useRef<WasmAdapter | null>(null)
-  const resultKeyRef = useRef(initial.resultIdempotencyKey || crypto.randomUUID())
+  const resultKeyRef = useRef(initial.resultIdempotencyKey || createUuidV4())
   const startedAtRef = useRef(Date.now())
   const sceneStartedAtRef = useRef(Date.now())
   const [style, setStyle] = useState<GameStyle>('CAMPUS')
@@ -124,7 +125,7 @@ export default function ReviewPage() {
         throw new Error('复习会话与游戏包快照不一致。')
       }
       await attachRuntime(renderManifest, pack, reviewSession)
-      const resultIdempotencyKey = crypto.randomUUID()
+      const resultIdempotencyKey = createUuidV4()
       resultKeyRef.current = resultIdempotencyKey
       setAttempt({ answers: [], attemptsByQuestion: {} })
       setShellCompleted(false)
@@ -166,7 +167,7 @@ export default function ReviewPage() {
     const attemptNumber = (attempt.attemptsByQuestion[choice.questionId] || 0) + 1
     const quality = choice.correct ? (attemptNumber > 1 ? 3 : 5) : 0
     return {
-      attemptId: crypto.randomUUID(),
+      attemptId: createUuidV4(),
       questionId: choice.questionId,
       knowledgePointId: choice.knowledgePointId,
       answerKind: 'CHOICE',
@@ -222,7 +223,7 @@ export default function ReviewPage() {
       }
       if (runtimeManifest?.reviewSessionsAvailable !== false) {
         await api.appendEvents(session.sessionId, [{
-          clientEventId: crypto.randomUUID(),
+          clientEventId: createUuidV4(),
           type: 'CHOICE_SELECTED',
           occurredAt: new Date().toISOString(),
           payload: {

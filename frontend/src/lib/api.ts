@@ -1,4 +1,5 @@
 import { clearSession, readSession, updateSessionTokens } from './session'
+import { createUuidV4 } from './uuid'
 import type {
   ApiFailure,
   ApiSuccess,
@@ -112,7 +113,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs)
   const headers = new Headers(init.headers)
   headers.set('Accept', 'application/json')
-  headers.set('X-Correlation-Id', crypto.randomUUID())
+  headers.set('X-Correlation-Id', createUuidV4())
   if (init.body && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json')
   const token = readSession()?.tokens.accessToken
   if (authenticated && token) headers.set('Authorization', `Bearer ${token}`)
@@ -150,7 +151,7 @@ async function requestRawJson<T>(path: string): Promise<T> {
   const timeout = window.setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS)
   const headers = new Headers({
     Accept: 'application/json',
-    'X-Correlation-Id': crypto.randomUUID(),
+    'X-Correlation-Id': createUuidV4(),
   })
   const token = readSession()?.tokens.accessToken
   if (token) headers.set('Authorization', `Bearer ${token}`)
@@ -270,7 +271,7 @@ export const api = {
   createGraphBuild(materialId: string, subjectHint?: string): Promise<GraphBuildJob> {
     return request('/knowledge-graph-builds', {
       method: 'POST',
-      headers: { 'Idempotency-Key': crypto.randomUUID() },
+      headers: { 'Idempotency-Key': createUuidV4() },
       body: json({
         materialId,
         subjectHint: subjectHint?.trim().toUpperCase() || undefined,
