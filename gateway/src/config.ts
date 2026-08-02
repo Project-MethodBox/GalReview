@@ -1,4 +1,4 @@
-import 'dotenv/config';
+﻿import 'dotenv/config';
 
 export interface ServiceTarget {
   name: string;
@@ -9,6 +9,7 @@ export interface ServiceTarget {
 
 export interface GatewayConfig {
   port: number;
+  host?: string;
   gatewayKey: string;
   corsOrigins: string[];
   defaultTimeoutMs: number;
@@ -35,26 +36,6 @@ function envInt(key: string, fallback: number): number {
   return Number.isNaN(n) ? fallback : n;
 }
 
-function envPort(key: string, fallback: number): number {
-  const value = envInt(key, fallback);
-  if (value < 5000 || value > 5300) {
-    throw new RangeError(`${key} must be between 5000 and 5300`);
-  }
-  return value;
-}
-
-function serviceUrl(key: string, fallback: string): string {
-  const value = env(key, fallback);
-  const url = new URL(value);
-  if (url.port) {
-    const port = Number.parseInt(url.port, 10);
-    if (port < 5000 || port > 5300) {
-      throw new RangeError(`${key} port must be between 5000 and 5300`);
-    }
-  }
-  return value;
-}
-
 export function loadConfig(): GatewayConfig {
   const gatewayKey = env('GATEWAY_KEY', 'moonstone-local-gateway-key');
 
@@ -64,32 +45,33 @@ export function loadConfig(): GatewayConfig {
   const services: Record<string, ServiceTarget> = {
     userService: {
       name: 'UserService',
-      url: serviceUrl('USER_SERVICE_URL', 'http://localhost:5101'),
+      url: env('USER_SERVICE_URL', 'http://localhost:5101'),
       serviceKey: svcKey('USER_SERVICE_KEY'),
     },
     authService: {
       name: 'AuthService',
-      url: serviceUrl('AUTH_SERVICE_URL', 'http://localhost:5102'),
+      url: env('AUTH_SERVICE_URL', 'http://localhost:5102'),
       serviceKey: svcKey('AUTH_SERVICE_KEY'),
     },
     fileService: {
       name: 'FileService',
-      url: serviceUrl('FILE_SERVICE_URL', 'http://localhost:5103'),
+      url: env('FILE_SERVICE_URL', 'http://localhost:5103'),
       serviceKey: svcKey('FILE_SERVICE_KEY'),
     },
     knowledgeService: {
       name: 'KnowledgeService',
-      url: serviceUrl('KNOWLEDGE_SERVICE_URL', 'http://localhost:5104'),
+      // KnowledgeService 按契约在宿主机统一暴露 5104。
+      url: env('KNOWLEDGE_SERVICE_URL', 'http://localhost:5104'),
       serviceKey: svcKey('KNOWLEDGE_SERVICE_KEY'),
     },
     galGameService: {
       name: 'GalGameService',
-      url: serviceUrl('GALGAME_SERVICE_URL', 'http://localhost:5105'),
+      url: env('GALGAME_SERVICE_URL', 'http://localhost:5105'),
       serviceKey: svcKey('GALGAME_SERVICE_KEY'),
     },
     renderService: {
       name: 'RenderService',
-      url: serviceUrl('RENDER_SERVICE_URL', 'http://localhost:5106'),
+      url: env('RENDER_SERVICE_URL', 'http://localhost:5106'),
       serviceKey: svcKey('RENDER_SERVICE_KEY'),
     },
   };
@@ -110,9 +92,10 @@ export function loadConfig(): GatewayConfig {
   }
 
   return {
-    port: envPort('GATEWAY_PORT', 5000),
+    port: envInt('GATEWAY_PORT', 5000),
+    host: env('GATEWAY_HOST', '0.0.0.0'),
     gatewayKey,
-    corsOrigins: env('CORS_ORIGINS', 'http://localhost:5120,http://localhost:5121,http://localhost:5122')
+    corsOrigins: env('CORS_ORIGINS', 'http://localhost:5173,http://localhost:5174')
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean),
@@ -140,3 +123,4 @@ export function loadConfig(): GatewayConfig {
     },
   };
 }
+
