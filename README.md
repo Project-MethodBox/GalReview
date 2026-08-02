@@ -78,7 +78,7 @@ MongoDB `27017`、Neo4j `7474/7687`、容器 target、服务间 URL、SMTP/代�
 
    ```powershell
    cd gateway
-   npm install
+   npm ci
 
    cd ..\frontend
    npm install
@@ -92,7 +92,7 @@ MongoDB `27017`、Neo4j `7474/7687`、容器 target、服务间 URL、SMTP/代�
    dotnet run --project backend\FileService\GalGame.FileService.csproj
    dotnet run --project backend\KnowledgeService\KnowledgeService.API\KnowledgeService.API.csproj -- --urls http://127.0.0.1:5104
    dotnet run --project backend\GalGameService\GalGame.GalGameService.csproj -- --urls http://127.0.0.1:5105
-   node backend\RenderService\Runtime\server.mjs
+   node backend\RenderService\service\dist\server.js  # 先在 service/ 内 npm ci && npm run build
    ```
 
 4. 启动 Gateway 与前端：
@@ -117,7 +117,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PortPolicy.ps
 
 # Gateway
 cd gateway
-npm install
+npm ci
 npm run build
 npm test
 
