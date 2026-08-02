@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [ValidateRange(1, 65535)]
     [int]$MinimumPort = 5000,
@@ -114,7 +114,7 @@ function Add-PortViolation {
         [string]$MatchedText
     )
 
-    if ($Port -ge $MinimumPort -and $Port -le $MaximumPort) {
+    if ($Port -in 3306, 27017 -or ($Port -ge $MinimumPort -and $Port -le $MaximumPort)) {
         return
     }
 
