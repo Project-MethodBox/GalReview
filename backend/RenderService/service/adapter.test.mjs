@@ -1,19 +1,19 @@
-// Adapter tests: dual path (WASM-driven / local JS shell), JS<->C++ validator
-// parity on the repo's real mock packages, and an HTTP smoke test of the
-// shell server. Requires a build first (`npm test` runs it via pretest).
+// Service-layer tests: adapter dual path (WASM-driven / local JS shell),
+// JS<->C++ validator parity on the repo's real mock packages, and an HTTP
+// smoke test of the shell server. Run with: node --test service/
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
+import test from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { test } from 'vitest'
 
-import { createWasmAdapter, validateGamePackage } from '../src/adapter.js'
-import { spawnServerOnTestPort } from './support/testPorts.js'
+import { createWasmAdapter, validateGamePackage } from './adapter.js'
+import { spawnServerOnTestPort } from './test-ports.mjs'
 
-const testsDirectory = new URL('./', import.meta.url)
+const serviceDirectory = new URL('./', import.meta.url)
 const wasmBytes = Buffer.from(
-  (await readFile(new URL('../runtime.wasm.base64', testsDirectory), 'utf8')).trim(),
+  (await readFile(new URL('runtime.wasm.base64', serviceDirectory), 'utf8')).trim(),
   'base64',
 )
 const placeholderWasm = Buffer.from('AGFzbQEAAAA=', 'base64')
@@ -66,7 +66,7 @@ const goldenSession = {
   completedAt: null,
 }
 
-function issueKeys(result: { errors: Array<{ path: string; code: string }> }): string[] {
+function issueKeys(result) {
   return result.errors.map((entry) => `${entry.path}|${entry.code}`).sort()
 }
 
@@ -77,7 +77,7 @@ test('JS validator accepts the golden package', () => {
 })
 
 test('JS validator rejects a broken package with stable codes', () => {
-  const broken = structuredClone(goldenPackage) as Record<string, unknown>
+  const broken = structuredClone(goldenPackage)
   broken.schemaVersion = '2.0'
   broken.entrySceneId = 'scene-ghost'
   const result = validateGamePackage(broken)
@@ -103,20 +103,19 @@ test('WASM adapter drives a full session through the C++ core', async () => {
 
   const events = adapter.dispatchInput({ type: 'CHOICE_SELECTED', choiceId: 'c1' })
   assert.equal(events.length, 2)
-  assert.equal(events[0]!.type, 'ANSWER_RECORDED')
-  assert.equal(events[0]!.correct, true)
-  assert.equal(events[0]!.attemptNumber, 1)
-  assert.equal(events[1]!.type, 'SESSION_COMPLETED')
-  assert.equal(events[1]!.answeredQuestionCount, 1)
+  assert.equal(events[0].type, 'ANSWER_RECORDED')
+  assert.equal(events[0].correct, true)
+  assert.equal(events[0].attemptNumber, 1)
+  assert.equal(events[1].type, 'SESSION_COMPLETED')
+  assert.equal(events[1].answeredQuestionCount, 1)
 
   const state = adapter.serializeState()
   assert.equal(state.schemaVersion, 'render-runtime-state-1')
   assert.equal(state.status, 'COMPLETED')
   assert.equal(state.score, 1)
   assert.equal(state.elapsedMs, 33)
-  const answers = state.answers as Array<Record<string, unknown>>
-  assert.equal(answers.length, 1)
-  assert.equal(answers[0]!.answerKind, 'CHOICE')
+  assert.equal(state.answers.length, 1)
+  assert.equal(state.answers[0].answerKind, 'CHOICE')
 
   const rejected = adapter.dispatchInput({ type: 'ADVANCE' })
   assert.deepEqual(rejected, [])
@@ -135,10 +134,10 @@ test('WASM startSession enforces the frozen package identity', async () => {
   adapter.dispose()
 })
 
-test('WASM and JS validators agree on the repo mock packages', async (ctx) => {
-  const mocksDirectory = new URL('../../../GalGameService/mocks/', testsDirectory)
+test('WASM and JS validators agree on the repo mock packages', async (t) => {
+  const mocksDirectory = new URL('../../GalGameService/mocks/', import.meta.url)
   if (!existsSync(mocksDirectory)) {
-    ctx.skip()
+    t.skip('GalGameService mocks not present in this build context')
     return
   }
   const adapter = await createWasmAdapter({ wasmBytes })
@@ -146,13 +145,13 @@ test('WASM and JS validators agree on the repo mock packages', async (ctx) => {
   let compared = 0
   for (const name of await readdir(mocksDirectory)) {
     if (!name.endsWith('.json')) continue
-    let parsed: unknown
+    let parsed
     try {
       parsed = JSON.parse(await readFile(new URL(name, mocksDirectory), 'utf8'))
     } catch {
       continue
     }
-    if (parsed === null || typeof parsed !== 'object' || !('scenes' in parsed)) continue
+    if (!parsed || typeof parsed !== 'object' || !('scenes' in parsed)) continue
     const jsResult = validateGamePackage(parsed)
     const wasmResult = adapter.loadPackage(parsed)
     assert.equal(wasmResult.valid, jsResult.valid, `${name}: valid flag parity`)
@@ -186,7 +185,7 @@ test('placeholder wasm falls back to the local JS shell', async () => {
 
 test('HTTP shell serves runtime resources and honest 501s', async () => {
   const { child, base } = await spawnServerOnTestPort(
-    fileURLToPath(new URL('../dist/server.js', testsDirectory)))
+    fileURLToPath(new URL('server.mjs', serviceDirectory)))
   try {
     const health = await (await fetch(`${base}/healthz`)).json()
     assert.equal(health.data.status, 'live')
@@ -212,8 +211,8 @@ test('HTTP shell serves runtime resources and honest 501s', async () => {
     assert.equal(createHash('sha256').update(served).digest('hex'), manifest.checksum)
 
     const adapterResponse = await fetch(`${base}${manifest.jsAdapterUrl}`)
-    assert.match(adapterResponse.headers.get('content-type') ?? '', /application\/javascript/)
-    assert.match(await adapterResponse.text(), /async function createWasmAdapter/)
+    assert.match(adapterResponse.headers.get('content-type'), /application\/javascript/)
+    assert.match(await adapterResponse.text(), /export async function createWasmAdapter/)
 
     const notImplemented = await fetch(`${base}/api/v1/review-sessions`, { method: 'POST' })
     assert.equal(notImplemented.status, 501)

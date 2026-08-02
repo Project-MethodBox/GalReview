@@ -187,6 +187,18 @@ public sealed class UserDatabase(string connectionString)
     public MySqlConnection OpenConnection() { var connection = new MySqlConnection(_connectionString); connection.Open(); return connection; }
     public void EnsureCreated()
     {
+        var builder = new MySqlConnectionStringBuilder(_connectionString);
+        if (string.IsNullOrWhiteSpace(builder.Database) || !builder.Database.All(c => char.IsLetterOrDigit(c) || c == '_'))
+            throw new InvalidOperationException("Invalid MySQL database name.");
+        var database = builder.Database;
+        builder.Database = string.Empty;
+        using (var server = new MySqlConnection(builder.ConnectionString))
+        {
+            server.Open();
+            using var create = server.CreateCommand();
+            create.CommandText = $"CREATE DATABASE IF NOT EXISTS `{database}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;";
+            create.ExecuteNonQuery();
+        }
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """

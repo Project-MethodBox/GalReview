@@ -39,8 +39,6 @@ public class GalGameServiceIntegrationTests : IClassFixture<WebApplicationFactor
             builder.UseSetting("Gateway:ServiceKey", GatewayKey);
             builder.UseSetting("Gateway:BaseUrl", "http://localhost:5000");
             builder.UseSetting("MOONSTONE_MODE", "Mock");
-            // 集成测试使用内存存储，不依赖 MongoDB
-            builder.UseSetting("GalGameStore:Provider", "Memory");
             // 覆盖 contentRoot 以找到 appsettings.json
             builder.UseSetting("contentRoot", AppContext.BaseDirectory);
         });

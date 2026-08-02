@@ -21,7 +21,12 @@ try {
     Write-Host "Starting OCR service at http://127.0.0.1:5110 ..."
     $previousErrorActionPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
-    & $python -m uvicorn app:app --host 127.0.0.1 --port 5110 2>&1 | Tee-Object -FilePath $serviceLog -Append
+    # Uvicorn writes its normal INFO lifecycle log to stderr. Convert merged
+    # records to ordinary text before teeing them, otherwise PowerShell renders
+    # every INFO line as a NativeCommandError.
+    & $python -m uvicorn app:app --host 127.0.0.1 --port 5110 2>&1 |
+        ForEach-Object { $_.ToString() } |
+        Tee-Object -FilePath $serviceLog -Append
     $serviceExitCode = $LASTEXITCODE
     $ErrorActionPreference = $previousErrorActionPreference
     if ($serviceExitCode -ne 0) { throw "OCR service stopped with exit code $serviceExitCode." }
