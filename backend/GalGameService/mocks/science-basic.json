@@ -24,7 +24,7 @@
                        "choices":  [
                                        {
                                            "choiceId":  "c-scene-001-1",
-                                           "questionId":  "c3bd304f-dc44-df55-8608-64c20672e90a",
+                                           "questionId":  "3f8b1a9e-5c7d-4a2f-8b6e-c9d1e2f3a495",
                                            "text":  "准备好了，开始吧！",
                                            "nextSceneId":  "scene-002",
                                            "scoreDelta":  0,
@@ -34,7 +34,7 @@
                        "knowledgeBindings":  [
                                                  {
                                                      "knowledgePointId":  "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",
-                                                     "questionId":  "c3bd304f-dc44-df55-8608-64c20672e90a",
+                                                     "questionId":  null,
                                                      "purpose":  "FEEDBACK"
                                                  }
                                              ]
@@ -57,7 +57,7 @@
                        "choices":  [
                                        {
                                            "choiceId":  "c-scene-002-1",
-                                           "questionId":  "b8a4c1be-db80-1759-9ecf-8f4ad0cfcfd5",
+                                           "questionId":  "e6c3d7a2-9f1b-4c3d-b8a4-2f7e9c6d4a85",
                                            "text":  "了解了，继续。",
                                            "nextSceneId":  "scene-003",
                                            "scoreDelta":  0,
@@ -67,7 +67,7 @@
                        "knowledgeBindings":  [
                                                  {
                                                      "knowledgePointId":  "84f7d873-e573-4689-b18d-6f82c745d1bf",
-                                                     "questionId":  "b8a4c1be-db80-1759-9ecf-8f4ad0cfcfd5",
+                                                     "questionId":  null,
                                                      "purpose":  "EXPLAIN"
                                                  }
                                              ]
@@ -90,7 +90,7 @@
                        "choices":  [
                                        {
                                            "choiceId":  "c-scene-003-d3",
-                                           "questionId":  "25c0c346-081e-e95a-9e76-41d3f78c799d",
+                                           "questionId":  "6428a20a-66dd-44c9-944f-d7b36fa9c95a",
                                            "text":  "与题目无关的选项",
                                            "nextSceneId":  "scene-004",
                                            "scoreDelta":  0,
@@ -98,7 +98,7 @@
                                        },
                                        {
                                            "choiceId":  "c-scene-003-d1",
-                                           "questionId":  "25c0c346-081e-e95a-9e76-41d3f78c799d",
+                                           "questionId":  "6428a20a-66dd-44c9-944f-d7b36fa9c95a",
                                            "text":  "水稻基本生长周期",
                                            "nextSceneId":  "scene-004",
                                            "scoreDelta":  0,
@@ -106,7 +106,7 @@
                                        },
                                        {
                                            "choiceId":  "c-scene-003-d2",
-                                           "questionId":  "25c0c346-081e-e95a-9e76-41d3f78c799d",
+                                           "questionId":  "6428a20a-66dd-44c9-944f-d7b36fa9c95a",
                                            "text":  "以上都不对",
                                            "nextSceneId":  "scene-004",
                                            "scoreDelta":  0,
@@ -114,7 +114,7 @@
                                        },
                                        {
                                            "choiceId":  "c-scene-003-correct",
-                                           "questionId":  "25c0c346-081e-e95a-9e76-41d3f78c799d",
+                                           "questionId":  "6428a20a-66dd-44c9-944f-d7b36fa9c95a",
                                            "text":  "水稻分蘖期最关键的管理目标是协调群体数量与个体生长，通过水肥调控促进有效分蘖",
                                            "nextSceneId":  "scene-004",
                                            "scoreDelta":  1,
@@ -124,7 +124,7 @@
                        "knowledgeBindings":  [
                                                  {
                                                      "knowledgePointId":  "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",
-                                                     "questionId":  "25c0c346-081e-e95a-9e76-41d3f78c799d",
+                                                     "questionId":  "6428a20a-66dd-44c9-944f-d7b36fa9c95a",
                                                      "purpose":  "QUESTION"
                                                  }
                                              ]
