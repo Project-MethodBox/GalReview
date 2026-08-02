@@ -4,5 +4,9 @@
 !src/**
 !service
 !service/**
+service/node_modules
+service/node_modules/**
+service/dist
+service/dist/**
 !Dockerfile
 !.dockerignore

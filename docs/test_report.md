@@ -671,3 +671,54 @@ Render 代理回退 `5257-5259`，测试临时端口 `5260-5299`。接口路径�
 和既有自动化测试确认其端口迁移未破坏服务可达性。Render 基础壳的 manifest、Adapter 和
 WASM 均再次经 Gateway 读取成功；manifest 如实为 `runtimeMode=SHELL`、
 `reviewSessionsAvailable=false`，WASM 为 8 字节最小模块。OCR 功能仍未测试。
+
+## 15. 2026-08-02 Render 会话与掌握度闭环（cpp-wasm-0.2.0）
+
+### 15.1 结论
+
+RenderService 已从基础壳升级为真实实现：§8.3 八个 ABI 函数在 C++ 中实现并经
+emcc 4.0.13 编译为 standalone WASM（179 KB），§8.1 五个 ReviewSession 接口与
+§8.2.1 学习证据回传上线。默认 12 容器环境中，manifest 经 Gateway 首次如实返回
+`runtimeMode=FULL`、`reviewSessionsAvailable=true`、`wasmAbiComplete=true`
+（三个标志均由服务端对实际 wasm 产物导出自省与回调配置推导，非硬编码）。
+
+### 15.2 自动化回归
+
+| 项目 | 结果 |
+|---|---:|
+| C++ 原生自检（JSON/校验器/状态机/ABI） | 129 / 129 |
+| JS Adapter 测试（含 JS↔WASM 校验器奇偶校验） | 7 / 7 |
+| ReviewSession 领域 + HTTP wire 测试 | 11 / 11 |
+| build_support fixture 回归 | 183 / 183 |
+| scripts/Test-PortPolicy.ps1 | 通过 |
+| 镜像构建门禁（容器内编译 + 自检 + 服务层测试） | 通过 |
+
+奇偶校验将 `backend/GalGameService/mocks/` 全部包同时喂给 JS 与 WASM 两个校验器并
+断言 `valid` 与 `(path, code)` 集合一致；期间发现并修复了 C++ 侧对"多 QUESTION 绑定
+场景同时触发 SCORING_WITHOUT_QUESTION"的分支遗漏。
+
+### 15.3 集成 E2E（scripts/e2e-session.mjs，经 Gateway :5000）
+
+真实输入为脚本内置的 Markdown 题库（三章、每章 4 条名词解释），`enableOcr=false`：
+
+| 阶段 | 观测结果 |
+|---|---|
+| 注册、登录（邀请码） | 成功 |
+| 上传与提取 | `SUCCEEDED`，`ocrUsed=false` |
+| 构图 | 3 章、3 知识点，初始 mastery 全为 0 |
+| Assessment Plan | 3 节点、3 个出题点 |
+| GalGame 生成 | 5 场景、3 道题，包与计划快照一致 |
+| 创建会话 | 权威包 INTERNAL 读取 + 共同校验通过；`reviewPlanId+snapshotVersion` 冻结核对一致 |
+| 事件 | 首投 3 条全收，重投 3 条全去重 |
+| 进度 | 版本 0→1；相同载荷重投幂等返回原快照 |
+| 结果 | 首次 `ACCEPTED`；重放 `DUPLICATE` 且 resultId 不变；篡改载荷 `409 IDEMPOTENCY_CONFLICT` |
+| 掌握度 | 3 个作答知识点 0→35（quality=5 首答的 SM-2 期望值），version 递增至 1 |
+| 会话终态 | `COMPLETED`，completedAt 非空 |
+
+### 15.4 当前限制
+
+- 会话存储为 ephemeral-memory（/readyz 如实上报），容器重启丢失进行中会话；
+- `ReviewCompleted v2` 消息总线仍未接入，本轮闭环使用契约允许的同步 INTERNAL evidence；
+- 浏览器端（前端 `/review` 走服务端会话路径）本轮未做人工操作验证，前端逻辑按
+  `reviewSessionsAvailable` 自动切换，建议下轮补一次浏览器操作确认；
+- OCR 与远程部署仍未测试。
