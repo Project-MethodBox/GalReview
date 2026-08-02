@@ -2,7 +2,11 @@ import { createHash, randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 
-const port = Number.parseInt(process.env.PORT || '5106', 10)
+const portText = process.env.PORT || '5106'
+const port = Number.parseInt(portText, 10)
+if (!/^\d+$/.test(portText) || port < 5000 || port > 5300) {
+  throw new RangeError('PORT must be an integer between 5000 and 5300')
+}
 const runtimeDirectory = new URL('./', import.meta.url)
 const adapter = await readFile(new URL('runtime-adapter.js', runtimeDirectory))
 const wasm = Buffer.from(

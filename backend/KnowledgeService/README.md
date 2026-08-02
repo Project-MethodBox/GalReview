@@ -21,9 +21,9 @@ Gateway 时使用的同一服务身份密钥。开发配置使用
 
 默认地址：
 
-- KnowledgeService：`http://localhost:5080`
-- Neo4j Browser：`http://localhost:7474`
-- Neo4j Bolt：`bolt://localhost:7687`
+- KnowledgeService：`http://localhost:5104`
+- Neo4j Browser：`http://localhost:5254`
+- Neo4j Bolt：`bolt://localhost:5255`
 
 生产环境必须覆盖 `Neo4j__Password`、`GatewayMaterialText__BaseUrl` 和
 `GatewayMaterialText__ServiceKey`，不要使用 compose 的开发默认值。

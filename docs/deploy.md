@@ -2,7 +2,7 @@
 
 本文说明如何使用仓库根目录的 `compose.integration.yaml` 在本机或 Linux 服务器启动 GalReview。接口、鉴权头和跨服务调用以 [`contract.md`](contract.md) 为准；本文只记录部署方式，不另行定义接口。
 
-当前 Compose 是联调与单机部署基线，不是高可用集群方案。AuthService、UserService 已分别接入独立 MySQL 容器；仓库本地默认值仍是 `Mock`，服务器 `.env` 模板则使用 `MySql`。GalGameService 的任务与游戏包使用进程内存储。RenderService 当前只是 C++ 编译壳、最小 WASM 与 JS Adapter，尚未实现服务端复习会话和原生 WASM ABI。
+当前 Compose 是联调与单机部署基线，不是高可用集群方案。AuthService、UserService 已分别接入独立 MySQL 容器；仓库本地默认值仍是 `Mock`，服务器 `.env` 模板则使用 `MySql`。GalGameService 的任务与游戏包使用进程内存储。RenderService 当前只是 C++ 编译壳、最小 WASM 与 JS Adapter，尚未实现服务端复习会话和原生 WASM ABI。端口迁移不改变接口路径、鉴权头或请求/响应结构。
 
 ## 1. 部署范围
 
@@ -10,24 +10,37 @@
 
 | 组件 | Compose 服务名 | 容器端口 | 宿主机暴露 | 数据 |
 |---|---|---:|---|---|
-| API Gateway | `gateway` | `5000` | `${GATEWAY_HOST_PORT}` | 无状态 |
+| API Gateway | `gateway` | `5000` | `5000` | 无状态 |
 | UserService | `user-service` | `5101` | 不暴露 | 本地默认内存；服务器模板使用独立 MySQL |
 | AuthService | `auth-service` | `5102` | 不暴露 | 本地默认内存；服务器模板使用独立 MySQL |
 | FileService | `file-service` | `5103` | 不暴露 | MongoDB / GridFS |
-| KnowledgeService | `knowledge-service` | `8080` | `${KNOWLEDGE_HOST_PORT}`，仅诊断 | Neo4j |
+| KnowledgeService | `knowledge-service` | `5104` | `5104`，仅诊断 | Neo4j |
 | GalGameService | `galgame-service` | `5105` | 不暴露 | 当前为进程内临时存储 |
 | RenderService | `render-service` | `5106` | 不暴露 | C++ / JS 基础工具链壳；无会话存储 |
-| Frontend | `frontend` | `8080` | `${FRONTEND_HOST_PORT}` | Node 静态站点；同源代理 `/api` 到 Gateway |
-| User MySQL | `user-mysql` | `3306` | 不暴露 | `user-mysql-data` 卷 |
-| Auth MySQL | `auth-mysql` | `3306` | 不暴露 | `auth-mysql-data` 卷 |
-| MongoDB | `mongo` | `27017` | 不暴露 | `file-mongo-data` 卷 |
-| Neo4j | `neo4j` | `7474/7687` | 可配置的诊断端口 | `knowledge-neo4j-data` 卷 |
+| Frontend | `frontend` | `5120` | `5120` | Node 静态站点；同源代理 `/api` 到 Gateway |
+| User MySQL | `user-mysql` | `5251` | 不暴露 | `user-mysql-data` 卷 |
+| Auth MySQL | `auth-mysql` | `5252` | 不暴露 | `auth-mysql-data` 卷 |
+| MongoDB | `mongo` | `5253` | 不暴露 | `file-mongo-data` 卷 |
+| Neo4j | `neo4j` | `5254/5255` | `5254/5255`，仅诊断 | `knowledge-neo4j-data` 卷 |
 
 OCRService 使用 `ocr` profile，可按需加入：
 
 | 组件 | Compose 服务名 | 容器端口 | 宿主机暴露 | 说明 |
 |---|---|---:|---|---|
 | OCRService | `ocr-service` | `5110` | 不暴露 | 仅供 FileService 调用；不经过 Gateway |
+
+固定端口分配为：Gateway `5000`，User/Auth/File/Knowledge/GalGame/Render 分别为
+`5101-5106`（其中当前未分配 `5107-5109`），OCR `5110`，Frontend `5120`，Vite 开发与
+预览分别为 `5121`、`5122`，User/Auth MySQL 为 `5251`、`5252`，MongoDB `5253`，Neo4j
+Browser/Bolt 为 `5254`、`5255`，SMTP 转发入口 `5256`。Render 代理回退只使用
+`5257-5259`，测试临时端口只使用 `5260-5299`。
+
+MySQL 和 MongoDB 的上游镜像可能在 `docker compose ps` 中继续显示镜像自带的旧
+`EXPOSE` 元数据；它不是活动监听或宿主发布。Compose 已改写数据库进程的真实监听端口，
+并关闭未使用的 MySQL X Plugin，数据库也没有宿主端口映射。
+
+上述约束仅覆盖项目服务、项目侧代理和已配置依赖的显式监听端口。Docker 拉取镜像、
+NuGet/npm/PyPI 下载及调用外部 HTTPS 服务使用的协议隐式端口不纳入该范围。
 
 ## 2. 前置条件
 
@@ -95,13 +108,8 @@ Copy-Item .\.env.deploy.example .\.env
 | `AUTH_SERVICE_MODE` | AuthService 运行模式；服务器模板使用 `MySql`，本地默认值为 `Mock` |
 | `USER_SERVICE_MODE` | UserService 运行模式；服务器模板使用 `MySql`，本地默认值为 `Mock` |
 | `GATEWAY_BIND_ADDRESS` | Gateway 在宿主机的绑定地址 |
-| `GATEWAY_HOST_PORT` | Gateway 宿主端口 |
 | `FRONTEND_BIND_ADDRESS` | Frontend 在宿主机的绑定地址 |
-| `FRONTEND_HOST_PORT` | 前端静态站点的宿主端口 |
 | `DIAGNOSTIC_BIND_ADDRESS` | KnowledgeService 与 Neo4j 诊断端口的绑定地址 |
-| `KNOWLEDGE_HOST_PORT` | KnowledgeService 诊断端口 |
-| `NEO4J_BROWSER_HOST_PORT` | Neo4j Browser 宿主端口 |
-| `NEO4J_BOLT_HOST_PORT` | Neo4j Bolt 宿主端口 |
 | `CORS_ORIGINS` | 允许访问 Gateway 的前端 Origin，多个值用逗号分隔 |
 
 建议服务器只把 Frontend 或现有反向代理暴露给外部。Frontend 在容器网络内把 `/api` 转发到 Gateway；KnowledgeService 与 Neo4j 的诊断端口应保持 `127.0.0.1`，不应开放到公网。
@@ -162,9 +170,9 @@ docker compose --env-file .env -f compose.integration.yaml ps
 ```bash
 curl --fail http://127.0.0.1:5000/healthz
 curl --fail http://127.0.0.1:5000/readyz
-curl --fail http://127.0.0.1:5080/healthz
-curl --fail http://127.0.0.1:5080/readyz
-curl --fail http://127.0.0.1:8080/healthz
+curl --fail http://127.0.0.1:5104/healthz
+curl --fail http://127.0.0.1:5104/readyz
+curl --fail http://127.0.0.1:5120/healthz
 ```
 
 PowerShell 可使用：
@@ -172,7 +180,7 @@ PowerShell 可使用：
 ```powershell
 Invoke-WebRequest http://127.0.0.1:5000/healthz
 Invoke-WebRequest http://127.0.0.1:5000/readyz
-Invoke-WebRequest http://127.0.0.1:8080/healthz
+Invoke-WebRequest http://127.0.0.1:5120/healthz
 ```
 
 `/healthz` 只表示进程存活；`/readyz` 才表示 Gateway 配置中的关键依赖可用。内部服务未映射到宿主机时，以容器的 `healthy` 状态为准，也可查看具体结果：
@@ -191,10 +199,8 @@ Frontend 镜像以非 root Node 进程提供静态文件，并把 `/api` 同源�
 
 ```dotenv
 GATEWAY_BIND_ADDRESS=127.0.0.1
-GATEWAY_HOST_PORT=5000
 DIAGNOSTIC_BIND_ADDRESS=127.0.0.1
 FRONTEND_BIND_ADDRESS=0.0.0.0
-FRONTEND_HOST_PORT=8080
 ```
 
 如果暂时没有反向代理，可通过 Frontend 的宿主端口访问页面；直接暴露 HTTP 不具备 TLS，不能作为正式公网方案。只有调试 API 时才需要把 `GATEWAY_BIND_ADDRESS` 改为服务器网卡地址或 `0.0.0.0`，并用防火墙限制来源。
@@ -370,7 +376,7 @@ docker compose --env-file .env -f compose.integration.yaml logs --tail=200 gatew
 
 ### 宿主端口无法绑定
 
-修改 `.env` 中的 `FRONTEND_HOST_PORT`、`GATEWAY_HOST_PORT`、`KNOWLEDGE_HOST_PORT` 或 Neo4j 诊断端口，然后重新执行 `up -d`。Windows 可能有系统保留端口段，选择未占用端口即可；接口路径不随宿主端口变化。
+当前宿主端口按契约固定，不接受 `.env` 任意改写。先确认 `5000`、`5104`、`5120`、`5254`、`5255` 未被占用且未落入系统保留段；如操作系统保留策略发生变化，应统一修改 Compose、契约和端口策略测试，不能只在单机绕过。
 
 ### FileService 不就绪
 

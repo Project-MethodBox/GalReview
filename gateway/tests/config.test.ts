@@ -23,13 +23,17 @@ describe('loadConfig', () => {
     const cfg = loadConfig();
     expect(cfg.port).toBe(5000);
     expect(cfg.gatewayKey).toBe('moonstone-local-gateway-key');
-    expect(cfg.corsOrigins).toEqual(['http://localhost:5173', 'http://localhost:5174']);
+    expect(cfg.corsOrigins).toEqual([
+      'http://localhost:5120',
+      'http://localhost:5121',
+      'http://localhost:5122',
+    ]);
     expect(cfg.defaultTimeoutMs).toBe(30_000);
     expect(cfg.uploadTimeoutMs).toBe(120_000);
     expect(cfg.services.userService.url).toBe('http://localhost:5101');
     expect(cfg.services.authService.url).toBe('http://localhost:5102');
     expect(cfg.services.fileService.url).toBe('http://localhost:5103');
-    expect(cfg.services.knowledgeService.url).toBe('http://localhost:5080');
+    expect(cfg.services.knowledgeService.url).toBe('http://localhost:5104');
     expect(cfg.services.galGameService.url).toBe('http://localhost:5105');
     expect(cfg.services.renderService.url).toBe('http://localhost:5106');
     expect(cfg.readinessServices).toEqual([
@@ -43,18 +47,18 @@ describe('loadConfig', () => {
   });
 
   it('应读取环境变量覆盖默认值', () => {
-    process.env.GATEWAY_PORT = '6000';
+    process.env.GATEWAY_PORT = '5297';
     process.env.GATEWAY_KEY = 'custom-key';
-    process.env.CORS_ORIGINS = 'http://localhost:3000';
+    process.env.CORS_ORIGINS = 'http://localhost:5298';
     process.env.DEFAULT_TIMEOUT_MS = '10000';
-    process.env.USER_SERVICE_URL = 'http://custom:5201';
+    process.env.USER_SERVICE_URL = 'http://custom:5261';
 
     const cfg = loadConfig();
-    expect(cfg.port).toBe(6000);
+    expect(cfg.port).toBe(5297);
     expect(cfg.gatewayKey).toBe('custom-key');
-    expect(cfg.corsOrigins).toEqual(['http://localhost:3000']);
+    expect(cfg.corsOrigins).toEqual(['http://localhost:5298']);
     expect(cfg.defaultTimeoutMs).toBe(10_000);
-    expect(cfg.services.userService.url).toBe('http://custom:5201');
+    expect(cfg.services.userService.url).toBe('http://custom:5261');
   });
 
   it('应为每个服务配置独立密钥', () => {
@@ -83,10 +87,10 @@ describe('loadConfig', () => {
   });
 
   it('envInt 应返回数字值', () => {
-    process.env.GATEWAY_PORT = '8080';
+    process.env.GATEWAY_PORT = '5299';
 
     const cfg = loadConfig();
-    expect(cfg.port).toBe(8080);
+    expect(cfg.port).toBe(5299);
   });
 
   it('envInt 在非数字字符串时应返回 fallback', () => {

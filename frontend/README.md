@@ -9,7 +9,7 @@ npm ci
 npm run dev
 ```
 
-开发服务器打开 `http://127.0.0.1:5173`，默认把 `/api` 转发到 `http://localhost:5000`。如 Gateway 使用其他地址，可在 `vite.config.ts` 中调整开发代理；浏览器代码不保存任何业务服务直连地址。
+开发服务器打开 `http://127.0.0.1:5121`，预览服务器使用 `5122`，默认把 `/api` 转发到 `http://localhost:5000`。如 Gateway 使用其他地址，可在 `vite.config.ts` 中调整开发代理；浏览器代码不保存任何业务服务直连地址。
 
 提交前检查：
 
@@ -35,9 +35,9 @@ npm run build
 
 ```powershell
 docker build -t galreview-frontend ./frontend
-docker run --rm -p 8080:8080 -e GATEWAY_UPSTREAM=http://host.docker.internal:5000 galreview-frontend
+docker run --rm -p 5120:5120 -e GATEWAY_UPSTREAM=http://host.docker.internal:5000 galreview-frontend
 ```
 
-容器由非 root Node 进程在 `8080` 提供静态页面和 `/healthz`，并将同源 `/api` 转发至
+容器由非 root Node 进程在 `5120` 提供静态页面和 `/healthz`，并将同源 `/api` 转发至
 `GATEWAY_UPSTREAM`。在 Compose 网络中该值应使用 Gateway 的服务名和容器端口，例如
 `http://gateway:5000`。

@@ -55,7 +55,7 @@ GET http://localhost:5102/readyz  # 当前返回 MySQL 就绪状态
 | `Admin__Username` | 是 | 管理员用户名，仅服务端保存 |
 | `Admin__Password` | 是 | 管理员密码，仅服务端保存 |
 | `Email__SmtpHost` | 密码恢复需要 | SMTP 主机 |
-| `Email__SmtpPort` | 否 | 默认 `465` |
+| `Email__SmtpPort` | 否 | 项目统一默认 `5256`；外部 SMTP 端口由受控转发层映射到该端口 |
 | `Email__UseSsl` | 否 | 默认 `true`；为真时使用 SSL 直连 |
 | `Email__Username` | 密码恢复需要 | SMTP 登录名 |
 | `Email__Password` | 密码恢复需要 | 邮箱授权码，不是邮箱登录密码 |
@@ -67,7 +67,7 @@ GET http://localhost:5102/readyz  # 当前返回 MySQL 就绪状态
 ```powershell
 $env:ASPNETCORE_ENVIRONMENT = "Production"
 $env:ASPNETCORE_URLS = "http://127.0.0.1:5102"
-$env:ConnectionStrings__AuthDatabase = "Server=127.0.0.1;Port=3306;Database=moonstone_auth;User ID=moonstone_auth;Password=REPLACE_ME;SslMode=Required;"
+$env:ConnectionStrings__AuthDatabase = "Server=127.0.0.1;Port=5252;Database=moonstone_auth;User ID=moonstone_auth;Password=REPLACE_ME;SslMode=Required;"
 $env:Gateway__BaseUrl = "http://127.0.0.1:5000"
 $env:Gateway__ServiceKey = "REPLACE_WITH_ONE_LONG_RANDOM_SHARED_KEY"
 $env:Admin__Username = "REPLACE_ADMIN_USERNAME"
@@ -198,11 +198,11 @@ AuthService 在 `moonstone_auth` 中拥有以下表：
 
 ## 6. SMTP 与密码恢复邮件
 
-使用 126 邮箱时，推荐端口 `465` 与 `Email__UseSsl=true`。密码必须使用邮箱后台生成的 SMTP 授权码，不能使用邮箱网页登录密码。
+邮件供应商若要求范围外端口，先由本机或内网 SMTP 转发层适配；AuthService 只连接转发入口 `5256`。密码必须使用邮箱后台生成的 SMTP 授权码，不能使用邮箱网页登录密码。
 
 ```powershell
-$env:Email__SmtpHost = "smtp.126.com"
-$env:Email__SmtpPort = "465"
+$env:Email__SmtpHost = "YOUR_SMTP_RELAY_HOST"
+$env:Email__SmtpPort = "5256"
 $env:Email__UseSsl = "true"
 $env:Email__Username = "your-sender@126.com"
 $env:Email__Password = "YOUR_SMTP_AUTHORIZATION_CODE"
@@ -277,7 +277,7 @@ Gateway 调用内部接口时使用 `X-Gateway-Key`；服务间调用 Gateway �
 
 ## 10. 账户注销
 
-普通用户可通过下列接口永久注销自己的账户。浏览器必须经 Gateway 调用，不能直接请求 AuthService 的 `5101` 端口。
+普通用户可通过下列接口永久注销自己的账户。浏览器必须经 Gateway 调用，不能直接请求 AuthService 的 `5102` 端口。
 
 | 方法 | 地址 | 鉴权 | 请求体 | 成功状态 |
 | --- | --- | --- | --- | --- |

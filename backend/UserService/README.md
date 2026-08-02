@@ -55,7 +55,7 @@ GET http://localhost:5101/readyz
 ```powershell
 $env:ASPNETCORE_ENVIRONMENT = "Production"
 $env:ASPNETCORE_URLS = "http://127.0.0.1:5101"
-$env:ConnectionStrings__UserDatabase = "Server=127.0.0.1;Port=3306;Database=moonstone_auth;User ID=moonstone_user;Password=REPLACE_ME;SslMode=Required;"
+$env:ConnectionStrings__UserDatabase = "Server=127.0.0.1;Port=5251;Database=moonstone_auth;User ID=moonstone_user;Password=REPLACE_ME;SslMode=Required;"
 $env:Gateway__ServiceKey = "REPLACE_WITH_ONE_LONG_RANDOM_SHARED_KEY"
 ```
 

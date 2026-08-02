@@ -334,14 +334,15 @@ Compose 配置校验为 0，七个默认组件全部 healthy，OCR 运行数为 
 本轮完成了复习计划到 GalGame 游戏包的本地集成验证。Assessment 与 Learning 两条计划
 均可经 Gateway 提交生成任务、取得清单及内容，并通过游戏包校验接口。
 
-由于 Windows 排除端口范围包含默认主机端口，本轮使用以下仅限主机侧的端口覆盖：
+由于 Windows 排除端口范围与当时的默认映射冲突，本轮曾使用一组仅限主机侧的临时端口。
+该临时映射现已废止，不得复制到当前配置；当前统一端口以 `contract.md` 第 9.5 节为准：
 
 | 入口 | 本轮地址 |
 |---|---|
-| Gateway | `http://127.0.0.1:15000` |
-| KnowledgeService 诊断入口 | `http://127.0.0.1:15080` |
+| Gateway | 旧临时映射已废止；当前为 `http://127.0.0.1:5000` |
+| KnowledgeService 诊断入口 | 旧临时映射已废止；当前为 `http://127.0.0.1:5104` |
 
-默认主机端口 `5000` 和 `5080` 在本机无法绑定；容器内部端口和服务间调用地址不受影响。
+当时的默认主机映射在本机无法绑定；该历史现象不代表当前统一端口表的验证结果。
 最终 `auth`、`file`、`user`、`knowledge`、`galgame`、`gateway`、`mongo`、`neo4j`
 八个容器均为 `healthy`。
 
@@ -503,7 +504,8 @@ MySQL 8.4 的 `caching_sha2_password` 会拒绝原连接串。Compose 已在两�
 AuthService 与 UserService，再次使用同一账号登录并读取相同用户资料成功；两个 `/readyz`
 均明确返回 `storage=mysql`，证明不是回退到内存模式。
 
-Render 最终边界校验修复并重建镜像后，又在该 MySQL 模式下经 Frontend `:8080` 重跑完整
+Render 最终边界校验修复并重建镜像后，又在该 MySQL 模式下经当时的 Frontend 主机映射
+（现已废止）重跑完整
 API 与 Edge 浏览器流程。API 仍得到 7 章、243 个知识点、207 条关系和 3 个由 0 更新为
 35 的 mastery；浏览器完成 8 次场景选择并提交 5 条作答证据，控制台错误和页面异常均为 0。
 
@@ -572,10 +574,10 @@ Adapter/WASM 加载和本地游玩。结果为 7 章、243 个知识点、207 �
 2 倍导出还原后的验收视口为 `1728×1117`。原稿没有移动端、深色主题、错误态、加载态或
 交互态，因此桌面浅色页面按原稿对照，移动端按同一灰阶、圆角、图标和卡片语言补充设计。
 
-桌面端最终核对结果：认证内容区为 `x=183, y=256, width=502`；主页首排卡片从
-`x=60, y=202` 开始，卡片高 414，知识图谱宽卡从 `x=60, y=643` 开始。输入框浅色填充
-调整为 `#DBDADA`，主页卡片调整为 `#BDBDBD`、外框为 `#C6C6C6`，工具栏为
-`#BDBDBD`；这些值与原稿取样一致。标题因系统字体栅格化仍可能出现约 1--4 px 的视觉差异。
+桌面稿的 `1728×1117` 只作为比例和视觉语言基准，不再作为固定画布。认证内容区、字号、
+间距和品牌标志使用视口相关尺寸；主页使用 `100dvh` 和两行弹性网格，让功能卡占满标题区
+之外的剩余高度。输入框浅色填充保持 `#DBDADA`，主页卡片保持 `#BDBDBD`、外框为
+`#C6C6C6`、工具栏为 `#BDBDBD`，但不会把原稿坐标和 414 px 卡片高度无条件套到其他屏幕。
 
 以下差异为有意保留，不能为了静态截图改坏已冻结契约或基本可用性：
 
@@ -610,7 +612,7 @@ Adapter/WASM 加载和本地游玩。结果为 7 章、243 个知识点、207 �
 |---|---:|
 | Frontend TypeScript + Vite production build | 通过，107 modules |
 | Frontend 容器 | healthy |
-| 新增前端冒烟检查 | 23 / 23 |
+| 前端冒烟检查 | 36 / 36 |
 | 390×844 登录/忘密/主页横向溢出 | 无 |
 | 768×1024 主页横向溢出 | 无 |
 | 密码显隐、注册/忘密导航 | 通过 |
@@ -618,8 +620,54 @@ Adapter/WASM 加载和本地游玩。结果为 7 章、243 个知识点、207 �
 | 默认头像首字符 | 通过 |
 | 知识点与知识图谱独立路由 | 通过 |
 | 知识点/关系两页游标读取 | 通过 |
-| 1728×1117 关键坐标与浅色色值断言 | 通过 |
+| 1366×768、1728×1117、2560×1440 桌面满屏与无滚动溢出 | 通过 |
+| 三档桌面卡片随视口高度连续放缩 | 通过 |
+| 1728×1117 浅色色值断言 | 通过 |
 
 游标测试通过浏览器拦截构造两页合法契约响应，分别确认知识点页面请求两页、图谱页面请求
 两页知识点和两页关系；没有重复执行此前已经通过的注册、上传、提取、构图、GalGame 和
 Render 基础壳全流程。最终截图保存在忽略版本控制的 `.artifacts/visual-audit/`。
+
+## 14. 端口统一迁移记录
+
+仓库当前端口规范已统一为 `5000-5300`：Gateway `5000`，业务服务 `5101-5110`，Frontend
+`5120`，Vite 开发/预览 `5121/5122`，数据库与 Neo4j `5251-5255`，SMTP 转发入口 `5256`，
+Render 代理回退 `5257-5259`，测试临时端口 `5260-5299`。接口路径、方法、鉴权与数据契约
+不因本次端口迁移而改变。
+
+### 14.1 迁移后运行回归
+
+本轮先通过 Windows TCP 排除段检查确认本机不能监听 `5141-5240`，因此没有继续使用虽在
+政策范围内但本机不可绑定的端口，而是采用本节开头的最终端口表。迁移后的实际结果如下：
+
+| 检查项 | 实际结果 |
+|---|---|
+| `Test-PortPolicy.ps1` | 通过；已跟踪文件和未忽略的新文件均无范围外显式端口 |
+| Compose 配置展开 | 通过 |
+| 应用镜像构建 | Frontend、Gateway、User、Auth、File、Knowledge、GalGame、Render 全部成功 |
+| 默认 Compose | 12 个容器 healthy；OCR profile 未启动 |
+| Gateway / Frontend / Knowledge 健康端点 | 均为 HTTP 200 |
+| Gateway readiness | HTTP 200；User、Auth、File、Knowledge、GalGame、Render 依赖均可达 |
+| 基础设施实际监听 | User/Auth MySQL `5251/5252`，MongoDB `5253`，Neo4j HTTP/Bolt `5254/5255` |
+| MySQL X Plugin | 已显式关闭，避免额外监听其镜像默认范围外端口 |
+| KnowledgeService tests | 105 / 105 |
+| Gateway tests | 176 / 176；真实测试服务器只从 `5260-5299` 取端口 |
+| Render JS Adapter tests | 6 / 6 |
+| Frontend production build | 通过，107 modules |
+| 桌面/移动浏览器冒烟 | 36 / 36 |
+
+### 14.2 非 OCR 主链路
+
+迁移后的容器环境重新使用 `D:\AppData\test\农业生态学题库.pdf` 执行一次真实主链路：
+
+- Gateway 注册、登录、令牌内省和用户资料读取成功；
+- 上传和提取任务为 `SUCCEEDED`，`ocrRequested=false`、`ocrUsed=false`；
+- 得到 26,139 个 UTF-16 code unit、20 个 source span 和 20 个结构块，checksum 与偏移校验通过；
+- KnowledgeService 构建出 7 章、243 个知识点和 207 条先修关系；
+- API 与 Neo4j 数量一致，先修子图无环，初始 mastery 全为 0；
+- 幂等重放稳定，冲突请求返回 `IDEMPOTENCY_KEY_REUSED`。
+
+此前已经通过的 GalGame 生成业务用例没有重复执行；本轮通过镜像重建、Gateway readiness
+和既有自动化测试确认其端口迁移未破坏服务可达性。Render 基础壳的 manifest、Adapter 和
+WASM 均再次经 Gateway 读取成功；manifest 如实为 `runtimeMode=SHELL`、
+`reviewSessionsAvailable=false`，WASM 为 8 字节最小模块。OCR 功能仍未测试。

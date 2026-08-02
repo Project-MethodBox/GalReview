@@ -6,16 +6,20 @@ services:
     environment:
       NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-knowledge-dev-password}
       HEALTHCHECK_PASSWORD: ${NEO4J_PASSWORD:-knowledge-dev-password}
+      NEO4J_server_http_listen__address: :5254
+      NEO4J_server_http_advertised__address: :5254
+      NEO4J_server_bolt_listen__address: :5255
+      NEO4J_server_bolt_advertised__address: :5255
     ports:
-      - "7474:7474"
-      - "7687:7687"
+      - "5254:5254"
+      - "5255:5255"
     volumes:
       - knowledge-neo4j-data:/data
     healthcheck:
       test:
         - CMD-SHELL
         - >-
-          cypher-shell -u neo4j -p "$${HEALTHCHECK_PASSWORD}"
+          cypher-shell -a bolt://localhost:5255 -u neo4j -p "$${HEALTHCHECK_PASSWORD}"
           "RETURN 1" >/dev/null 2>&1
       interval: 5s
       timeout: 5s
@@ -28,8 +32,8 @@ services:
       dockerfile: KnowledgeService.API/Dockerfile
     environment:
       ASPNETCORE_ENVIRONMENT: Production
-      ASPNETCORE_URLS: http://+:8080
-      Neo4j__Uri: bolt://neo4j:7687
+      ASPNETCORE_URLS: http://+:5104
+      Neo4j__Uri: bolt://neo4j:5255
       Neo4j__Username: neo4j
       Neo4j__Password: ${NEO4J_PASSWORD:-knowledge-dev-password}
       Neo4j__Database: neo4j
@@ -43,7 +47,7 @@ services:
       neo4j:
         condition: service_healthy
     ports:
-      - "5080:8080"
+      - "5104:5104"
     restart: unless-stopped
 
 volumes:

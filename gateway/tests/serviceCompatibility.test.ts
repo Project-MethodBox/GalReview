@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
 import type { GatewayConfig } from '../src/config.js';
+import { listenOnTestPort } from './support/testPorts.js';
 
 const USER_ID = '7bc4918a-9079-4ea2-9e8e-369ad79a9f20';
 const MATERIAL_ID = '3a7f3d0f-1876-4879-8d6d-01a919d5c935';
@@ -188,12 +189,12 @@ function createConfig(
       },
       galGameService: {
         name: 'GalGameService',
-        url: 'http://127.0.0.1:19905',
+        url: 'http://127.0.0.1:5255',
         serviceKey: 'galgame-key',
       },
       renderService: {
         name: 'RenderService',
-        url: 'http://127.0.0.1:19906',
+        url: 'http://127.0.0.1:5256',
         serviceKey: 'render-key',
       },
     },
@@ -224,15 +225,8 @@ async function startStub(
       respondToStub(kind, captured, response);
     });
   });
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  const address = server.address();
-  if (!address || typeof address === 'string') {
-    throw new Error('Stub service did not bind a TCP port.');
-  }
-  return { server, origin: `http://127.0.0.1:${address.port}`, requests };
+  const origin = await listenOnTestPort(server);
+  return { server, origin, requests };
 }
 
 function respondToStub(

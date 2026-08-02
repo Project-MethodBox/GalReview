@@ -16,14 +16,15 @@ RUN npm run build
 FROM ${NODE_IMAGE} AS runtime
 
 ENV NODE_ENV=production \
+    PORT=5120 \
     GATEWAY_UPSTREAM=http://gateway:5000
 WORKDIR /app
 COPY server.mjs ./server.mjs
 COPY --from=build /app/dist ./dist
 
-EXPOSE 8080
+EXPOSE 5120
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=5 \
-  CMD node -e "fetch('http://127.0.0.1:8080/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+  CMD node -e "fetch('http://127.0.0.1:5120/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 
 USER node
 CMD ["node", "server.mjs"]

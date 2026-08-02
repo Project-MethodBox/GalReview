@@ -94,13 +94,13 @@ function parse_macos_system_proxy(text)
     end
     local http, https
     if enabled("HTTP") and value("HTTPProxy") then
-        http = "http://" .. value("HTTPProxy") .. ":" .. (value("HTTPPort") or "80")
+        http = "http://" .. value("HTTPProxy") .. ":" .. (value("HTTPPort") or "5257")
     end
     if enabled("HTTPS") and value("HTTPSProxy") then
-        https = "http://" .. value("HTTPSProxy") .. ":" .. (value("HTTPSPort") or "443")
+        https = "http://" .. value("HTTPSProxy") .. ":" .. (value("HTTPSPort") or "5258")
     end
     if not http and not https and enabled("SOCKS") and value("SOCKSProxy") then
-        local socks = "socks5h://" .. value("SOCKSProxy") .. ":" .. (value("SOCKSPort") or "1080")
+        local socks = "socks5h://" .. value("SOCKSProxy") .. ":" .. (value("SOCKSPort") or "5259")
         http = socks
         https = socks
     end

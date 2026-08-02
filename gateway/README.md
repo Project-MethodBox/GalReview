@@ -17,7 +17,9 @@ pnpm start
 - UserService：`http://localhost:5101`
 - AuthService：`http://localhost:5102`
 - FileService：`http://localhost:5103`
-- KnowledgeService：`http://localhost:5080`
+- KnowledgeService：`http://localhost:5104`
+- GalGameService：`http://localhost:5105`
+- RenderService：`http://localhost:5106`
 
 完整配置见 [`.env.example`](./.env.example)。
 
@@ -52,4 +54,4 @@ docker run --rm -p 5000:5000 --env-file .env galreview-gateway
 ```
 
 在 Compose 网络中，各 `*_SERVICE_URL` 应使用服务 DNS 名和容器端口，例如
-`http://knowledge-service:8080`，不能使用容器内的 `localhost`。
+`http://knowledge-service:5104`，不能使用容器内的 `localhost`。

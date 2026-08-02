@@ -12,9 +12,13 @@ builder.Services.Configure<FormOptions>(options => options.MultipartBodyLengthLi
 var extractedTextAllowedServices = InternalServiceAccessPolicy.CreateAllowlist(
     builder.Configuration.GetSection("InternalAccess:ExtractedTextAllowedServices"),
     "KnowledgeService");
+var ocrBaseUri = new Uri(
+    builder.Configuration["Ocr:BaseUrl"] ?? "http://127.0.0.1:5110/",
+    UriKind.Absolute);
+EnsureAllowedServicePort(ocrBaseUri.Port, "Ocr:BaseUrl");
 builder.Services.AddHttpClient("ocr", client =>
 {
-    client.BaseAddress = new Uri(builder.Configuration["Ocr:BaseUrl"] ?? "http://127.0.0.1:5110/");
+    client.BaseAddress = ocrBaseUri;
     client.Timeout = TimeSpan.FromMinutes(builder.Configuration.GetValue<int?>("Ocr:TimeoutMinutes") ?? 20);
 }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { UseProxy = false });
 builder.Services.AddSingleton<MongoFileStore>();
@@ -147,6 +151,12 @@ app.MapGet("/internal/v1/materials/{materialId}/extracted-text", (string materia
     var document = store.GetExtractedText(materialId); return document is null ? Failure(c, 409, "MATERIAL_TEXT_NOT_READY", "Material text is not ready.") : Results.Ok(ApiSuccess.Create(document, c.TraceIdentifier));
 });
 app.Run();
+
+static void EnsureAllowedServicePort(int port, string settingName)
+{
+    if (port is < 5000 or > 5300)
+        throw new InvalidOperationException($"{settingName} port must be between 5000 and 5300.");
+}
 
 static string? GatewayUser(HttpContext context, string key) => context.Request.Headers["X-Gateway-Key"] == key && Guid.TryParse(context.Request.Headers["X-User-Id"], out _) ? context.Request.Headers["X-User-Id"].ToString() : null;
 static string? NormalizeSubjectCode(string? value)
