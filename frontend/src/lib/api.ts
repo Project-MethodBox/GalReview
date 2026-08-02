@@ -13,7 +13,9 @@ import type {
   GraphBuildJob,
   IngestionJob,
   KnowledgeGraphSummary,
+  KnowledgePoint,
   KnowledgePointPage,
+  KnowledgeRelation,
   KnowledgeRelationPage,
   Material,
   MaterialPage,
@@ -178,6 +180,25 @@ function query(params: Record<string, string | number | undefined>): string {
   return result ? `?${result}` : ''
 }
 
+async function collectPages<T>(load: (cursor?: string) => Promise<{ items: T[]; nextCursor: string | null }>): Promise<T[]> {
+  const items: T[] = []
+  const seenCursors = new Set<string>()
+  let cursor: string | undefined
+
+  do {
+    const page = await load(cursor)
+    items.push(...page.items)
+    if (!page.nextCursor) break
+    if (seenCursors.has(page.nextCursor)) {
+      throw new ApiClientError('分页游标重复，无法继续读取。', 'UPSTREAM_CONTRACT_INVALID', 502)
+    }
+    seenCursors.add(page.nextCursor)
+    cursor = page.nextCursor
+  } while (cursor)
+
+  return items
+}
+
 export const api = {
   login(email: string, password: string): Promise<AuthSessionResponse> {
     return request('/auth/sessions', {
@@ -271,12 +292,24 @@ export const api = {
     return request(`/knowledge-graphs/${encodeURIComponent(graphId)}/chapters`)
   },
 
-  getPoints(graphId: string): Promise<KnowledgePointPage> {
-    return request(`/knowledge-graphs/${encodeURIComponent(graphId)}/points${query({ limit: 100 })}`)
+  getPoints(graphId: string, cursor?: string): Promise<KnowledgePointPage> {
+    return request(`/knowledge-graphs/${encodeURIComponent(graphId)}/points${query({ limit: 100, cursor })}`)
   },
 
-  getRelations(graphId: string): Promise<KnowledgeRelationPage> {
-    return request(`/knowledge-graphs/${encodeURIComponent(graphId)}/relations${query({ limit: 100 })}`)
+  getAllPoints(graphId: string): Promise<KnowledgePoint[]> {
+    return collectPages<KnowledgePoint>((cursor) =>
+      request(`/knowledge-graphs/${encodeURIComponent(graphId)}/points${query({ limit: 100, cursor })}`),
+    )
+  },
+
+  getRelations(graphId: string, cursor?: string): Promise<KnowledgeRelationPage> {
+    return request(`/knowledge-graphs/${encodeURIComponent(graphId)}/relations${query({ limit: 100, cursor })}`)
+  },
+
+  getAllRelations(graphId: string): Promise<KnowledgeRelation[]> {
+    return collectPages<KnowledgeRelation>((cursor) =>
+      request(`/knowledge-graphs/${encodeURIComponent(graphId)}/relations${query({ limit: 100, cursor })}`),
+    )
   },
 
   createAssessmentPlan(graphId: string, chapterIds: string[]): Promise<PlanGraph> {

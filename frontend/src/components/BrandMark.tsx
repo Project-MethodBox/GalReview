@@ -1,6 +1,6 @@
 export default function BrandMark({ compact = false }: { compact?: boolean }) {
   return (
-    <svg viewBox="0 0 272 154" xmlns="http://www.w3.org/2000/svg" xmlnsXlink="http://www.w3.org/1999/xlink" width="272.000000" height="154.000000" fill="none">
+    <svg className={`brand-mark${compact ? ' brand-mark--compact' : ''}`} viewBox="0 0 272 154" xmlns="http://www.w3.org/2000/svg" xmlnsXlink="http://www.w3.org/1999/xlink" width="272.000000" height="154.000000" fill="none">
       <g id="组合 1">
         <rect id="矩形 4" width="25.961983" height="107.556786" x="0.000000" y="0.000000" rx="12.980991" fill="rgb(105,105,105)" transform="matrix(0.705972,-0.708239,0.705972,0.708239,177.739,18.3873)" />
         <rect id="矩形 5" width="25.961983" height="53.778393" x="0.000000" y="0.000000" rx="12.980991" fill="rgb(105,105,105)" transform="matrix(0.705972,-0.708239,0.705972,0.708239,59.2466,18.3873)" />

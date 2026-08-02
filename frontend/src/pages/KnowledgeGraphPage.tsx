@@ -9,19 +9,29 @@ export default function KnowledgeGraphPage() {
   const [chapters, setChapters] = useState<Chapter[]>(workflow.chapters || [])
   const [points, setPoints] = useState<KnowledgePoint[]>([])
   const [relations, setRelations] = useState<KnowledgeRelation[]>([])
+  const [loading, setLoading] = useState(Boolean(workflow.graph))
   const [error, setError] = useState('')
 
   useEffect(() => {
     if (!workflow.graph) return
+    let active = true
+    setLoading(true)
+    setError('')
     void Promise.all([
       api.getChapters(workflow.graph.graphId),
-      api.getPoints(workflow.graph.graphId),
-      api.getRelations(workflow.graph.graphId),
-    ]).then(([chapterList, pointPage, relationPage]) => {
+      api.getAllPoints(workflow.graph.graphId),
+      api.getAllRelations(workflow.graph.graphId),
+    ]).then(([chapterList, pointList, relationList]) => {
+      if (!active) return
       setChapters(chapterList)
-      setPoints(pointPage.items)
-      setRelations(relationPage.items)
-    }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : '图谱读取失败。'))
+      setPoints(pointList)
+      setRelations(relationList)
+    }).catch((reason: unknown) => {
+      if (active) setError(reason instanceof Error ? reason.message : '图谱读取失败。')
+    }).finally(() => {
+      if (active) setLoading(false)
+    })
+    return () => { active = false }
   }, [workflow.graph?.graphId])
 
   if (!workflow.graph) {
@@ -36,6 +46,7 @@ export default function KnowledgeGraphPage() {
         <nav><Link to="/home">返回主页</Link><Link to="/materials">创建计划</Link></nav>
       </header>
       {error ? <p className="error-banner">{error}</p> : null}
+      {loading ? <p className="workspace-loading" role="status">正在读取完整图谱…</p> : null}
       <section className="graph-summary">
         <span><strong>{workflow.graph.chapterCount}</strong>章节</span>
         <span><strong>{workflow.graph.pointCount}</strong>知识点</span>
