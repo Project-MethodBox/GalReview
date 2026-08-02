@@ -46,7 +46,7 @@
 - 同一业务事实只能由一个服务及其权威数据库写入；禁止 AuthService 与 UserService 互相直连或读写对方的 MySQL 数据表。
 - **FileService 的数据库为 MongoDB + GridFS**：文件二进制、资料元数据、解析任务和规范化文本只由 FileService 写入。
 - **KnowledgeService 的数据库为 Neo4j**：章节、知识点、关系、计划和掌握度只由 KnowledgeService 写入。
-- **GalGameService 当前使用进程内临时存储**：集成 Compose 使用 `ephemeral-memory`，容器重启后生成任务与游戏包会丢失；该实现只用于当前联调，不是生产持久化方案。
+- **GalGameService 的数据库为 MongoDB**：生成任务和游戏包存储在 MongoDB 中，容器重启后数据保留；支持 4 种运行模式（`mock-mongodb` / `mock-memory` / `mongodb` / `ephemeral-memory`），通过 `GalGameStore:Provider` 配置项切换。服务启动时自动将因重启而卡在 `RUNNING` 或 `QUEUED` 的生成任务标记为 `FAILED`。
 - **RenderService 当前只是 C++ / JS 基础工具链壳**：不创建或存储复习会话、进度、事件和结果；这些能力由后续负责人实现。
 - 不得将同一事实跨 MySQL、MongoDB、Neo4j 双写为多个权威来源。
 
@@ -1572,11 +1572,13 @@ GalGameService 在接受 `GameGenerationRequest` 后必须经 Gateway 调用
 - [x] 当前 `generatorVersion="gala-0.1.0"`。显式 seed 会稳定 questionId、场景顺序与
   选项顺序；`packageId` 和 manifest 时间仍在每次生成时新建，因此首版不承诺整个包或
   checksum 字节级相同。seed 省略时使用随机值；
-- [ ] 生产游戏包持久化、跨副本一致性、保留期和清理任务。
+- [x] 生产游戏包持久化、跨副本一致性、保留期和清理任务。
 
-当前 `InMemoryGameStore` 在普通模式与 Mock 模式都只使用进程内存；Mock 模式额外装载固定
-样例，集成 Compose 使用普通模式，不预置任务或游戏包。服务或容器重启后数据不可恢复，
-因此生产持久化、跨副本一致性和清理策略仍为 `OWNER-TBD`。
+`MongoGameStore` 将生成任务和游戏包持久化到 MongoDB，支持 4 种运行模式（`mock-mongodb` /
+`mock-memory` / `mongodb` / `ephemeral-memory`），通过 `GalGameStore:Provider` 配置项切换。
+MongoDB 模式下服务启动时自动将因重启而卡在 `RUNNING` 或 `QUEUED` 的生成任务标记为 `FAILED`；
+已完成 job 通过 TTL 索引 30 天自动过期，`MaxJobs=10000` 容量超限时清理最旧的已完成 job。
+`InMemoryGameStore` 仍作为本地开发和集成测试的降级选项保留。
 
 当前 GalGameService 已提供 INTERNAL 游戏包读取与校验端点，并保留 `RenderService` 精确
 服务身份允许名单。RenderService 本身只交付 C++ 编译壳、最小 WASM 和 JS Adapter；
@@ -1919,7 +1921,7 @@ Render runtime 资源。manifest 为 `runtimeMode=SHELL` 时只在浏览器本�
 | AuthService | `5102` | 不发布 | 集成环境可使用 `MOONSTONE_MODE=Mock` |
 | FileService | `5103` | 不发布 | 使用 MongoDB + GridFS；只由 Gateway 访问 |
 | KnowledgeService | `8080` | `5104` | `KNOWLEDGE_HOST_PORT`；仅诊断，绑定地址由 `DIAGNOSTIC_BIND_ADDRESS` 配置 |
-| GalGameService | `5105` | 不发布 | 只由 Gateway 访问；当前使用进程内临时存储 |
+| GalGameService | `5105` | 不发布 | 只由 Gateway 访问；使用 MongoDB 持久化 |
 | RenderService | `5106` | 不发布 | C++ / WASM 运行时与服务适配层，只由 Gateway 访问 |
 | Frontend | `8080` | `5120` | `FRONTEND_HOST_PORT`；非 root Node 静态站点，同源代理 `/api` 到 Gateway |
 | OCRService | `5110` | 不发布 | `ocr` profile 的可选内部依赖，本轮闭环不启动 |
@@ -1959,7 +1961,7 @@ Compose 文件和接口示例均不得打印真实值。Docker Desktop 的镜像
 目标主机复制为不提交版本库的 `.env`，替换服务密钥、数据库密码、管理员占位凭据、绑定
 地址、宿主端口、SMTP 和 CORS 源后，再由同一 `compose.integration.yaml` 启动。本地已验证
 12 个默认容器同时 healthy，并验证 AuthService/UserService 在 MySQL 模式重启后仍可登录
-和读取用户资料；尚未执行远程部署。GalGameService 仍是临时内存存储，RenderService 仅为
+和读取用户资料；尚未执行远程部署。GalGameService 已实现 MongoDB 持久化和启动恢复，RenderService 仅为
 基础工具链壳且完整 C++ WASM ABI 未完成，因此这两项不能据此宣称生产就绪。
 
 ## 10. 异步事件
