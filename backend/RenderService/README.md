@@ -156,7 +156,7 @@ Adapter 声明支持的 ABI 版本集合（当前 `{1}`），实例化后核对 
 游戏包合法性存在两份实现：C++ 核心（WASM 内）与 `adapter.js` 里的 JS 参考实现
 （占位回退与诊断用）。两者逐检查对齐——包括 JS 的怪癖语义（`trim()` 全量 Unicode
 空白、`undefined !== null`、多 QUESTION 绑定时同时触发 `SCORING_WITHOUT_QUESTION`
-分支等）。奇偶由双侧测试保障：原生套件内置变异夹具，`service/adapter.test.mjs`
+分支等）。奇偶由双侧测试保障：原生套件内置变异夹具，`service/tests/adapter.test.ts`
 把 `backend/GalGameService/mocks/` 全部包同时喂给两个校验器并断言 `valid` 与
 `(path, code)` 集合一致。修改任一侧校验逻辑必须同步另一侧并让两套测试通过。
 
@@ -164,9 +164,16 @@ Adapter 声明支持的 ABI 版本集合（当前 `{1}`），实例化后核对 
 
 1. ~~**URGENT §8.2.1**：证据幂等提交~~ 已完成（同步 INTERNAL 路径）；
 2. ~~§8.1 五个 REST 接口~~ 已完成，`reviewSessionsAvailable` 随配置翻转；
-3. `ReviewCompleted v2` 事件生产（待团队消息总线基线；同步闭环不冒充消息完成）；
-4. 会话持久化存储（当前 ephemeral-memory，重启丢失进行中会话）；
-5. 渲染侧：`renderFrame` 从计时核心扩展到真实帧驱动（视觉呈现仍由前端负责）。
+3. ~~渲染侧真实呈现~~ 首版完成：`src/stage.ts` WebGPU 视觉小说舞台
+   （WGSL 程序化背景×3 风格、噪声溶解转场、粒子、情绪色调，WebGPU 不可用时
+   Canvas2D 兜底），经 `/api/v1/render-runtime/stage.js` 公开；
+   自包含演示页 `/api/v1/render-runtime/stage-demo` 用真实 WASM 会话驱动完整
+   VN 体验。对白文字采用 DOM 叠加层（CJK 清晰度与可访问性），画面走 GPU；
+4. `ReviewCompleted v2` 事件生产（待团队消息总线基线；同步闭环不冒充消息完成）；
+5. 会话持久化存储（当前 ephemeral-memory，重启丢失进行中会话）；
+6. 舞台资源纹理通道：`AssetRef` 的 BACKGROUND/CHARACTER 贴图渲染
+   （待 `@F15EX` 生成器产出资源引用后接入；当前零素材由着色器程序化补足）；
+7. 前端 `/review` 挂载 stage.js 替换文字卡片（`@甲烷` 集成，接口已就绪）。
 
 ### 会话接口错误码（v1）
 
