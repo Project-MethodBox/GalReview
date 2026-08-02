@@ -1518,6 +1518,55 @@ GalGameService 在接受 `GameGenerationRequest` 后必须经 Gateway 调用
 
 本小节是 GalGameService 的 **URGENT（跨服务阻塞项）**；这里只冻结调用与数据义务，不由 KnowledgeService 实现 GalGameService。
 
+### 7.3.2 叙事生成与提示词契约（`galgame-narrative-v2`）
+
+本次调整不新增或修改 Gateway 路由、`GameGenerationRequest`、`GameGenerationJob`、
+`GamePackage schema 1.0` 或 RenderService 调用方式。模型不直接生成最终游戏包；生成过程固定为：
+
+1. `GameGenerator` 先生成通过校验的确定性骨架，锁定全部 package/scene/question/choice ID、
+   场景拓扑、`knowledgeBindings`、`correct`、`scoreDelta`、assets、计划与快照字段；
+2. `NarrativeGenerationService` 使用整个游戏包的一次上下文生成内部 `NarrativeDraft`，模型只能
+   重写 scene title、dialogue 和 choice 显示文本，不能覆盖任何锁定字段；
+3. 草稿必须通过 `NarrativeDraftValidator` 和 `GamePackageValidator`。第一次草稿不合法时只允许
+   一次有界修复；仍不合法、超时、限流或供应商不可用时，丢弃整个草稿并使用确定性骨架，
+   不保存半成品，也不把供应商响应或异常详情写入公开 job error；
+4. `groundingQuotes` 和 `knowledgeUse` 只存在于内部草稿，用于核对知识依据和“知识如何改变
+   当前局面”，装配后必须删除，不能加入 `GamePackage schema 1.0`。
+
+PlanGraph 仍是唯一学科事实源。发给模型的知识字段仅限 `pointId/title/summary/tags/role/
+questionTarget` 和不含数值权重的依赖边；不得发送 ownerUserId、mastery、weight、selectionReason、
+confidence、服务密钥或其他无关数据。上传资料中的 title、summary 和 tags 一律按不可信数据处理，
+其中出现的提示词、角色指令、JSON 模板或索取密钥的文字不得提升为模型指令。
+
+提示词必须以“知识内生于叙事”为首要质量要求：整包先形成共同主线、人物目标与矛盾、场景节拍
+和知识账本；每个 EXPLAIN/QUESTION 场景都要让知识作为线索、规则、工具、争议或行动依据改变
+事件状态。删除该知识后若剧情仍能原样成立，视为知识贴片并要求重写。QUESTION 选项首先是
+情境中的行动或判断，正确项必须由目标节点直接支持，错项只表达同类别的相邻误区；不得编造
+资料外事实，也不得把其他节点中的真实陈述直接宣判为错误知识。
+
+`CAMPUS/FANTASY/SCIENCE` 必须改变具体矛盾、人物行为和世界机制，不能只替换人名与名词；
+`BASIC/STANDARD/ADVANCED` 分别对应识别、单步应用和多条件迁移，资料不足时应降低认知层级，
+不得靠生僻措辞或虚构条件制造难度。对白禁止暴露 weight/mastery/tags 等规划元数据，并拒绝
+“知识点讲解”“系统已生成评估问题”“来看看这道题”“本轮复习结束”等模板报幕。
+
+内部草稿必须原样、完整且唯一地返回全部 sceneId/choiceId；speakerId 只能来自所选风格的允许
+集合；EXPLAIN/QUESTION 必须提供可逐字回溯到绑定节点 title/summary 的依据，并在对白中出现
+对应概念锚点。ASSESSMENT 在选择前不得逐字泄露正确结论。最终包的 ID、拓扑、绑定、正确性、
+计分和快照必须与骨架逐字段相同。
+
+生产默认通过 DeepSeek Chat Completions JSON Output 调用模型，部署配置为：
+
+| 配置 | Compose / 环境变量 | 默认值 | 说明 |
+|---|---|---|---|
+| 启用叙事模型 | `GALGAME_NARRATIVE_ENABLED` | `true` | `MOONSTONE_MODE=Mock` 时强制关闭外部调用 |
+| API 密钥 | `DSAPI` | 无 | 只注入 GalGameService，不写入响应、日志或仓库 |
+| Endpoint | `GALGAME_NARRATIVE_ENDPOINT` | `https://api.deepseek.com/chat/completions` | 必须为 HTTPS |
+| Model | `GALGAME_NARRATIVE_MODEL` | `deepseek-v4-pro` | 可按供应商兼容模型覆盖 |
+| Prompt | `NarrativeGeneration__PromptVersion` | `galgame-narrative-v2` | 当前提示词与草稿合同版本 |
+
+启用外部模型意味着上述最小知识字段会发送给所配置供应商；部署者必须依据资料敏感级别、供应商
+条款和本地合规要求决定是否启用。关闭或缺少 `DSAPI` 时服务仍可生成契约有效的确定性包。
+
 ### 7.4 最小游戏包 Mock
 
 ```json
@@ -1571,7 +1620,8 @@ GalGameService 在接受 `GameGenerationRequest` 后必须经 Gateway 调用
   `packageId=null` 并在任务中返回 `error`；
 - [x] 当前 `generatorVersion="gala-0.1.0"`。显式 seed 会稳定 questionId、场景顺序与
   选项顺序；`packageId` 和 manifest 时间仍在每次生成时新建，因此首版不承诺整个包或
-  checksum 字节级相同。seed 省略时使用随机值；
+  checksum 字节级相同。`galgame-narrative-v2` 的模型文本同样不承诺逐字确定；seed 省略时
+  使用随机值；
 - [x] 生产游戏包持久化、跨副本一致性、保留期和清理任务。
 
 `MongoGameStore` 将生成任务和游戏包持久化到 MongoDB，支持 4 种运行模式（`mock-mongodb` /
@@ -1868,6 +1918,7 @@ manifest 指定的最小 WASM、校验游戏包并冻结浏览器本地会话。
 - 限流至少区分匿名登录、上传、生成任务和普通读取。只有创建型长任务 `POST /api/v1/knowledge-graph-builds` 与 `POST /api/v1/game-generations` 使用 generation 限流；构图/游戏生成轮询、游戏包读取和 INTERNAL 游戏包校验使用 general 限流，轮询不得消耗 generation 配额。
 - `POST /api/v1/materials` 使用 `UPLOAD_TIMEOUT_MS`，默认 `120000` 毫秒；其他路由使用 `DEFAULT_TIMEOUT_MS`，默认 `30000` 毫秒。上传超时不得隐式套用到所有 FileService 路由。
 - 上传文件本体硬上限为 `10 MiB`。Gateway 和 FileService 的 multipart 整包前置上限均为 `11 MiB`，其中额外 `1 MiB` 只用于 boundary、字段和头部开销；最终仍由 FileService 按 `IFormFile.Length` 拒绝超过 `10 MiB` 的文件。不得把整包与文件本体错误地使用同一个 `10 MiB` 阈值。
+- Frontend 之前如部署 Nginx、Caddy 或云负载均衡，该外层代理至少允许 `12 MiB` 请求体并提供不短于 `190` 秒的上传读写超时，同时保留请求体、`Authorization`、`Content-Type` 与 `X-Correlation-Id`。外层代理生成的 HTML/纯文本 `413/502/504` 不属于 API 错误信封；浏览器客户端必须保留其真实 HTTP 状态，不得统一伪装成 `502 UPSTREAM_CONTRACT_INVALID`。
 - 不在 Gateway 保存业务状态或访问服务数据库。
 
 ### 9.3 健康检查
@@ -1948,11 +1999,11 @@ SMTP、HTTP(S)、SOCKS 等第三方协议端口不受该范围限制。测试监
 - Gateway 使用 `GATEWAY_KEY`、各服务 `*_SERVICE_KEY`、各服务 `*_SERVICE_URL`、`READINESS_SERVICES`、`DEFAULT_TIMEOUT_MS`、`UPLOAD_TIMEOUT_MS` 和 `CORS_ORIGINS`；GalGameService 的目标配置明确为 `GALGAME_SERVICE_URL` 与 `GALGAME_SERVICE_KEY`；
 - FileService 使用 `Gateway__ServiceKey`、`ConnectionStrings__FileDatabase`、`MongoDb__Database`、`InternalAccess__ExtractedTextAllowedServices__0`、`Ocr__BaseUrl`、`Ocr__TimeoutMinutes`；
 - KnowledgeService 使用 `Gateway__ServiceKey`、`GatewayMaterialText__BaseUrl`、`GatewayMaterialText__ServiceName`、`GatewayMaterialText__ServiceKey`、`GatewayMaterialText__Timeout` 以及 `Neo4j__Uri`、`Neo4j__Username`、`Neo4j__Password`、`Neo4j__Database`；
-- GalGameService 使用 `Gateway__BaseUrl`、`Gateway__ServiceKey`、`InternalAccess__ValidationAllowedServices__0` 和 `InternalAccess__PackageReaderAllowedServices__0`；两个 INTERNAL 调用方默认都只允许 `RenderService`；
+- GalGameService 使用 `Gateway__BaseUrl`、`Gateway__ServiceKey`、`InternalAccess__ValidationAllowedServices__0`、`InternalAccess__PackageReaderAllowedServices__0` 和 `NarrativeGeneration__*`；两个 INTERNAL 调用方默认都只允许 `RenderService`，叙事 API key 只从 `DSAPI` 注入；
 - RenderService 基础壳只使用 `PORT`；未来实现 INTERNAL 回调时再启用 `Gateway__BaseUrl`、`Gateway__ServiceName` 与 `Gateway__ServiceKey`；
 - AuthService 与 UserService 分别使用自己的 `Gateway__ServiceKey`、独立 MySQL 连接串和独立数据卷；服务器模板固定使用 `MySql` 模式，本地可显式覆盖为 `Mock`。Compose 内部 MySQL 8.4 的 `caching_sha2_password` 连接串包含 `AllowPublicKeyRetrieval=True` 且端口不外露；改接外部数据库时必须使用受信 CA 的 TLS；
 - Frontend 使用 `GATEWAY_UPSTREAM`，AuthService 的可选邮件配置使用 `SMTP_*` 与 `ACCOUNT_FRONTEND_BASE_URL`；
-- `DSAPI`（DeepSeek）和 `BitchSDAU`（阿里 API）不是“注册/登录 -> 上传 -> 确定性文本提取 -> KnowledgeService 构图 -> Neo4j”链路的依赖，不能因为宿主环境已配置就把它们注入或记录到这些容器。
+- `DSAPI`（DeepSeek）只用于 §7.3.2 的可选 GalGame 叙事生成；`BitchSDAU`（阿里 API）仍不属于当前主链路。二者都不是“注册/登录 -> 上传 -> 确定性文本提取 -> KnowledgeService 构图 -> Neo4j”的依赖，不能注入 User/Auth/File/Knowledge/Render/Gateway 容器或写入日志。
 
 开发默认密钥只用于本地；生产部署必须通过 secret 管理器覆盖，日志、构建参数、
 Compose 文件和接口示例均不得打印真实值。Docker Desktop 的镜像与卷数据位置属于宿主机运维配置，不由业务容器内路径决定。

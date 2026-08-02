@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>千知万理 · RenderService 舞台演示</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; background: #05060a;
+    font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif; }
+  #stage { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  #ui { position: fixed; inset: 0; display: flex; flex-direction: column;
+    justify-content: flex-end; pointer-events: none; }
+  #hud { position: fixed; top: 16px; left: 16px; right: 16px; display: flex;
+    gap: 8px; align-items: center; pointer-events: auto; }
+  .badge { padding: 4px 12px; border-radius: 999px; font-size: 12px;
+    color: #dfe7ff; background: rgba(10, 14, 28, 0.55); border: 1px solid rgba(255,255,255,0.18);
+    backdrop-filter: blur(8px); }
+  #styles { margin-left: auto; display: flex; gap: 6px; }
+  #styles button { padding: 5px 14px; border-radius: 999px; font-size: 12px; cursor: pointer;
+    color: #dfe7ff; background: rgba(10, 14, 28, 0.55); border: 1px solid rgba(255,255,255,0.18);
+    backdrop-filter: blur(8px); }
+  #styles button.active { background: rgba(255,255,255,0.85); color: #101425; font-weight: 600; }
+  #dialogue { margin: 0 auto 26px; width: min(880px, calc(100% - 32px));
+    pointer-events: auto; user-select: none; }
+  #namePlate { display: inline-block; padding: 6px 18px; border-radius: 12px 12px 0 0;
+    background: rgba(16, 20, 37, 0.82); color: #ffd9e4; font-weight: 600; font-size: 15px;
+    border: 1px solid rgba(255,255,255,0.16); border-bottom: none; }
+  #textBox { min-height: 108px; padding: 18px 22px; border-radius: 0 14px 14px 14px;
+    background: rgba(16, 20, 37, 0.82); border: 1px solid rgba(255,255,255,0.16);
+    backdrop-filter: blur(10px); color: #f2f5ff; font-size: 17px; line-height: 1.75;
+    cursor: pointer; }
+  #hint { margin-top: 6px; text-align: right; font-size: 12px; color: rgba(255,255,255,0.45); }
+  #choices { display: flex; flex-direction: column; gap: 10px; margin: 0 auto 12px;
+    width: min(720px, calc(100% - 32px)); pointer-events: auto; }
+  #choices button { padding: 13px 20px; border-radius: 12px; font-size: 15px; cursor: pointer;
+    color: #f2f5ff; text-align: left; background: rgba(22, 28, 52, 0.86);
+    border: 1px solid rgba(255,255,255,0.22); backdrop-filter: blur(10px);
+    transition: transform 0.15s ease, background 0.15s ease; }
+  #choices button:hover { transform: translateX(6px); background: rgba(64, 76, 128, 0.9); }
+  #complete { position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+    background: rgba(4, 6, 12, 0.62); backdrop-filter: blur(6px); pointer-events: auto; }
+  #complete .card { width: min(420px, calc(100% - 48px)); padding: 32px 36px; border-radius: 18px;
+    background: rgba(16, 20, 37, 0.92); border: 1px solid rgba(255,255,255,0.2);
+    color: #f2f5ff; text-align: center; }
+  #complete h2 { margin-bottom: 14px; font-size: 22px; }
+  #complete p { margin: 6px 0; color: rgba(235, 240, 255, 0.8); font-size: 14px; line-height: 1.7; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div id="ui">
+  <div id="hud">
+    <span class="badge" id="engineBadge">加载中…</span>
+    <span class="badge" id="backendBadge"></span>
+    <div id="styles">
+      <button data-style="CAMPUS" class="active">校园</button>
+      <button data-style="FANTASY">幻想</button>
+      <button data-style="SCIENCE">科幻</button>
+    </div>
+  </div>
+  <div id="choices" class="hidden"></div>
+  <div id="dialogue">
+    <span id="namePlate"></span>
+    <div id="textBox"><span id="text"></span></div>
+    <div id="hint">点击对话框继续 ▸</div>
+  </div>
+</div>
+<div id="complete"><div class="card">
+  <h2>本轮演示完成</h2>
+  <div id="completeBody"></div>
+</div></div>
+
+<script type="module">
+import { createWasmAdapter } from './adapter.js'
+import { createStage, typewriterVisibleChars } from './stage.js'
+
+// ---- 演示用游戏包（schema 1.0 合法；实际游玩时由 GalGameService 生成） ----
+const KP = '44444444-4444-4444-8444-444444444444'
+const QUESTION = '33333333-3333-4333-8333-333333333333'
+const NAV = '77777777-7777-4777-8777-777777777777'
+const demoPackage = {
+  schemaVersion: '1.0',
+  packageId: '11111111-1111-4111-8111-111111111111',
+  generatorVersion: 'stage-demo-0.1.0',
+  reviewPlanId: '22222222-2222-4222-8222-222222222222',
+  snapshotVersion: 'plan-graph-1.0:stage-demo',
+  entrySceneId: 'scene-intro',
+  scenes: [
+    {
+      sceneId: 'scene-intro',
+      dialogue: [
+        { speakerId: '林学姐', text: '欢迎来到千知万理的渲染舞台演示！', emotion: 'happy' },
+        { speakerId: '林学姐', text: '你现在看到的背景、粒子和转场，都由 WebGPU 着色器实时绘制，没有使用任何图片素材。', emotion: 'explaining' },
+        { speakerId: '林学姐', text: '右上角可以切换三种风格的程序化场景。准备好了吗？', emotion: 'curious' },
+      ],
+      choices: [
+        { choiceId: 'go', questionId: NAV, text: '准备好了，出发！', nextSceneId: 'scene-lesson', scoreDelta: 0, knowledgePointId: KP },
+      ],
+      knowledgeBindings: [],
+    },
+    {
+      sceneId: 'scene-lesson',
+      dialogue: [
+        { speakerId: '林学姐', text: '先复习一下：水稻分蘖期的管理目标，是协调群体数量与个体生长的关系。', emotion: 'explaining' },
+        { speakerId: '林学姐', text: '通过水肥调控促进有效分蘖、控制无效分蘖，才能形成合理的群体结构。', emotion: 'serious' },
+      ],
+      choices: [
+        { choiceId: 'quiz', questionId: NAV, text: '我记住了，考考我吧。', nextSceneId: 'scene-question', scoreDelta: 0, knowledgePointId: KP },
+      ],
+      knowledgeBindings: [{ knowledgePointId: KP, questionId: null, purpose: 'EXPLAIN' }],
+    },
+    {
+      sceneId: 'scene-question',
+      dialogue: [
+        { speakerId: '林学姐', text: '那么问题来了——水稻分蘖期最关键的管理目标是什么？', emotion: 'curious' },
+      ],
+      choices: [
+        { choiceId: 'right', questionId: QUESTION, text: '协调群体数量与个体生长', nextSceneId: 'scene-ending', scoreDelta: 1, knowledgePointId: KP, answerKind: 'CHOICE', correct: true },
+        { choiceId: 'wrong-a', questionId: QUESTION, text: '尽可能提高种植密度', nextSceneId: 'scene-question', scoreDelta: 0, knowledgePointId: KP, answerKind: 'CHOICE', correct: false },
+        { choiceId: 'wrong-b', questionId: QUESTION, text: '全程保持深水灌溉', nextSceneId: 'scene-question', scoreDelta: 0, knowledgePointId: KP, answerKind: 'CHOICE', correct: false },
+      ],
+      knowledgeBindings: [{ knowledgePointId: KP, questionId: QUESTION, purpose: 'QUESTION' }],
+    },
+    {
+      sceneId: 'scene-ending',
+      dialogue: [
+        { speakerId: '林学姐', text: '回答正确！这次的作答已经被 C++ 状态机记录下来了。', emotion: 'happy' },
+        { speakerId: '林学姐', text: '在正式流程里，这份证据会经 RenderService 提交给 KnowledgeService 更新掌握度。今天的演示就到这里～', emotion: 'gentle' },
+      ],
+      choices: [],
+      knowledgeBindings: [],
+    },
+  ],
+  assets: [],
+}
+const demoSession = {
+  sessionId: '55555555-5555-4555-8555-555555555555',
+  userId: '66666666-6666-4666-8666-666666666666',
+  packageId: demoPackage.packageId,
+  reviewPlanId: demoPackage.reviewPlanId,
+  snapshotVersion: demoPackage.snapshotVersion,
+  status: 'CREATED',
+  currentSceneId: null,
+  progressVersion: 0,
+  startedAt: null,
+  completedAt: null,
+}
+
+// ---- 舞台与运行时装配 ----
+const canvas = document.getElementById('stage')
+const textEl = document.getElementById('text')
+const nameEl = document.getElementById('namePlate')
+const choicesEl = document.getElementById('choices')
+const dialogueEl = document.getElementById('dialogue')
+const hintEl = document.getElementById('hint')
+
+const adapter = await createWasmAdapter({ wasmUrl: './runtime.wasm' })
+await adapter.initialize({})
+const validation = adapter.loadPackage(demoPackage)
+if (!validation.valid) throw new Error('demo package invalid: ' + JSON.stringify(validation.errors))
+adapter.startSession(demoSession)
+
+const stage = await createStage({ canvas, style: 'CAMPUS' })
+document.getElementById('engineBadge').textContent =
+  `runtime ${adapter.runtimeVersion} · ${adapter.engine === 'wasm' ? 'C++ WASM 状态机' : 'JS 壳'}`
+document.getElementById('backendBadge').textContent =
+  stage.backend === 'webgpu' ? '渲染后端 WebGPU' : '渲染后端 Canvas2D（WebGPU 不可用）'
+
+const scenesById = new Map(demoPackage.scenes.map((scene) => [scene.sceneId, scene]))
+let currentScene = scenesById.get(demoPackage.entrySceneId)
+let lineIndex = 0
+let lineElapsed = 0
+let completed = false
+stage.showScene(currentScene.sceneId)
+
+function currentLine() { return currentScene.dialogue[lineIndex] }
+
+function showLine() {
+  const line = currentLine()
+  nameEl.textContent = line.speakerId
+  lineElapsed = 0
+  stage.setEmotion(line.emotion ?? null)
+  choicesEl.classList.add('hidden')
+}
+
+function showChoices() {
+  choicesEl.innerHTML = ''
+  if (currentScene.choices.length === 0) {
+    hintEl.textContent = '点击对话框结束本轮 ▸'
+    return
+  }
+  for (const choice of currentScene.choices) {
+    const button = document.createElement('button')
+    button.textContent = choice.text
+    button.addEventListener('click', () => selectChoice(choice))
+    choicesEl.appendChild(button)
+  }
+  choicesEl.classList.remove('hidden')
+}
+
+function enterScene(sceneId) {
+  currentScene = scenesById.get(sceneId)
+  lineIndex = 0
+  stage.showScene(sceneId)
+  showLine()
+}
+
+function finishSession() {
+  const events = adapter.dispatchInput({ type: 'ADVANCE' })
+  const done = events.find((event) => event.type === 'SESSION_COMPLETED')
+  const state = adapter.serializeState()
+  completed = true
+  document.getElementById('completeBody').innerHTML = `
+    <p>游戏得分：${state.score} · 作答 ${done?.attemptCount ?? 0} 次 · 访问场景 ${done?.visitedSceneCount ?? 0} 个</p>
+    <p>runtime 状态：${state.status}（schema ${state.schemaVersion}）</p>
+    <p>WASM 计时 ${(state.elapsedMs / 1000).toFixed(1)}s —— 以上数字全部来自 C++ 状态机 serializeState()。</p>`
+  document.getElementById('complete').style.display = 'flex'
+}
+
+function selectChoice(choice) {
+  const events = adapter.dispatchInput({ type: 'CHOICE_SELECTED', choiceId: choice.choiceId })
+  for (const event of events) {
+    if (event.type === 'ANSWER_RECORDED') {
+      stage.setEmotion(event.correct ? 'happy' : 'sad')
+    }
+    if (event.type === 'SCENE_ENTERED') {
+      enterScene(event.sceneId)
+    }
+    if (event.type === 'SESSION_COMPLETED') {
+      finishSession()
+    }
+  }
+}
+
+dialogueEl.addEventListener('click', () => {
+  if (completed) return
+  const line = currentLine()
+  const total = [...line.text].length
+  if (typewriterVisibleChars(line.text, lineElapsed) < total) {
+    lineElapsed = 1e9 // 快进当前行
+    return
+  }
+  if (lineIndex + 1 < currentScene.dialogue.length) {
+    lineIndex += 1
+    showLine()
+  } else if (currentScene.choices.length === 0) {
+    finishSession()
+  } else {
+    showChoices()
+  }
+})
+
+for (const button of document.querySelectorAll('#styles button')) {
+  button.addEventListener('click', () => {
+    document.querySelectorAll('#styles button').forEach((b) => b.classList.remove('active'))
+    button.classList.add('active')
+    stage.setStyle(button.dataset.style)
+  })
+}
+
+function resize() {
+  stage.resize(window.innerWidth * devicePixelRatio, window.innerHeight * devicePixelRatio)
+}
+window.addEventListener('resize', resize)
+resize()
+showLine()
+
+let last = performance.now()
+function loop(now) {
+  const delta = now - last
+  last = now
+  adapter.renderFrame(delta)     // C++ 计时保持权威
+  lineElapsed += delta
+  const line = currentLine()
+  if (!completed && line) {
+    const visible = typewriterVisibleChars(line.text, lineElapsed)
+    textEl.textContent = [...line.text].slice(0, visible).join('')
+    if (visible >= [...line.text].length
+        && lineIndex === currentScene.dialogue.length - 1
+        && currentScene.choices.length > 0
+        && choicesEl.classList.contains('hidden')) {
+      showChoices()
+    }
+  }
+  stage.frame(delta)
+  requestAnimationFrame(loop)
+}
+requestAnimationFrame(loop)
+</script>
+</body>
+</html>

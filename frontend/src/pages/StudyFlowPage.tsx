@@ -47,9 +47,11 @@ export default function StudyFlowPage() {
 
   async function processMaterial(source: Material) {
     setBusy(true); setError(''); setMaterial(source)
+    let stage = '资料处理'
     try {
       let readyMaterial = source
       if (source.status !== 'READY' || force) {
+        stage = '文字提取'
         setProgress(enableOcr ? `正在准备${ocrMode === 'quick' ? '快速' : '标准'} OCR。` : '正在提取资料文字。')
         const accepted = await api.createIngestionJob(source.materialId, { force, enableOcr, ocrMode })
         const completed = await pollUntil(() => api.getIngestionJob(accepted.jobId), (job) => job.status === 'SUCCEEDED' || job.status === 'FAILED', (job) => setProgress(ingestionText(job)))
@@ -61,6 +63,7 @@ export default function StudyFlowPage() {
       }
 
       if (readyMaterial.status === 'READY' && !force) {
+        stage = '已有图谱读取'
         setProgress('正在读取资料已有的知识图谱。')
         const existingGraph = newestGraph(await api.getAllKnowledgeGraphs(readyMaterial.materialId))
         if (existingGraph) {
@@ -72,6 +75,7 @@ export default function StudyFlowPage() {
         }
       }
 
+      stage = '知识图谱构建'
       const acceptedBuild = await api.createGraphBuild(readyMaterial.materialId, subjectCode)
       const completedBuild = await pollUntil(() => api.getGraphBuild(acceptedBuild.buildId), (job) => job.status === 'SUCCEEDED' || job.status === 'FAILED', (job) => setProgress(`正在构建知识图谱 · ${job.progress}%`))
       if (completedBuild.status === 'FAILED') throw jobError(completedBuild.error, '知识图谱构建失败。')
@@ -83,7 +87,7 @@ export default function StudyFlowPage() {
       setProgress(`图谱完成：${summary.chapterCount} 章，${summary.pointCount} 个知识点。`)
     } catch (reason) {
       const suffix = reason instanceof ApiClientError && reason.traceId ? `（traceId: ${reason.traceId}）` : ''
-      setError(`${reason instanceof Error ? reason.message : '处理失败。'}${suffix}`)
+      setError(`${stage}失败：${reason instanceof Error ? reason.message : '处理失败。'}${suffix}`)
     } finally { setBusy(false) }
   }
 
@@ -97,8 +101,13 @@ export default function StudyFlowPage() {
       resetWorkflow(); setGraph(undefined); setChapters([]); setSelectedChapterIds([])
       const uploaded = await api.uploadMaterial(file, displayName || file.name, subjectCode)
       setMaterial(uploaded); setMaterials((current) => [uploaded, ...current.filter((item) => item.materialId !== uploaded.materialId)]); updateWorkflow({ material: uploaded })
+      setProgress('文件上传完成，正在处理资料。')
       await processMaterial(uploaded)
-    } catch (reason) { setError(reason instanceof Error ? reason.message : '资料上传失败。'); setBusy(false) }
+    } catch (reason) {
+      const suffix = reason instanceof ApiClientError && reason.traceId ? `（traceId: ${reason.traceId}）` : ''
+      setError(`文件上传失败：${reason instanceof Error ? reason.message : '资料上传失败。'}${suffix}`)
+      setBusy(false)
+    }
   }
 
   async function createPlan() {

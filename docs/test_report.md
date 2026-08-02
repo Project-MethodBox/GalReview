@@ -716,8 +716,10 @@ emcc 4.0.13 编译为 standalone WASM（179 KB），§8.1 五个 ReviewSession �
 
 - 会话存储为 ephemeral-memory（/readyz 如实上报），容器重启丢失进行中会话；
 - `ReviewCompleted v2` 消息总线仍未接入，本轮闭环使用契约允许的同步 INTERNAL evidence；
-- 浏览器端（前端 `/review` 走服务端会话路径）本轮未做人工操作验证，前端逻辑按
-  `reviewSessionsAvailable` 自动切换，建议下轮补一次浏览器操作确认；
+- 浏览器端已完成操作验证：真实登录后经 `/review` 生成 CAMPUS 游戏包、创建服务端
+  会话（页面显示 cpp-wasm-0.2.0）、UI 点击作答 2 题并提交，页面提示"本次复习结果
+  已提交，共记录 2 条作答证据"，控制台错误为 0，API 复核对应知识点 mastery 0→35
+  （`DIRECT:ASSESSMENT:quality=5`，version 1）；TS 迁移后复测；
 - OCR 与远程部署仍未测试。
 
 ## 16. 2026-08-02 端口纠偏后的容器复验
@@ -741,3 +743,80 @@ emcc 4.0.13 编译为 standalone WASM（179 KB），§8.1 五个 ReviewSession �
 
 MySQL `3306`、MongoDB `27017` 及各微服务内部监听端口没有发布到宿主，因此不会扩大
 服务器防火墙放行范围。SMTP 和系统代理端口也不再被项目端口策略改写。
+
+## 17. 2026-08-02 文件上传 Bad Gateway 排查与修复
+
+运行态检查确认 Frontend、Gateway、FileService 和 MongoDB 均 healthy，Gateway 容器访问
+FileService readiness 为 HTTP 200。10 MiB multipart 探针可以完整通过 Frontend 和 Gateway，
+仓库内两层代理的请求体限制不是故障点；失败现场也没有 `POST /api/v1/materials` 到达
+FileService，因此界面所见的纯文本/HTML Bad Gateway 来源于仓库外层反向代理。
+
+同时发现浏览器客户端在检查 HTTP 状态前无条件解析 JSON，导致外层代理返回的 HTML/纯文本
+`413/502/504` 被统一改写成客户端 `502 UPSTREAM_CONTRACT_INVALID`。本轮修复后，客户端保留
+真实 HTTP 状态、响应类型和 `X-Correlation-Id`；上传、文字提取、已有图谱读取和构图错误也
+分别标明阶段。Frontend 与 Gateway 代理增加了不记录凭证的结构化错误日志。接口路径、请求、
+成功响应和服务错误信封均未改变。
+
+| 复验项 | 结果 |
+|---|---:|
+| Frontend TypeScript + Vite production build | 通过，110 modules |
+| Gateway TypeScript build | 通过 |
+| Gateway 自动化测试 | 176 / 176 |
+| Nginx 上传反代示例 `nginx -t` | 通过 |
+| 浏览器代理非 JSON 错误保真 | 413 与 502 均保留真实状态和对应提示 |
+| 修复后 Gateway / Frontend 容器 | healthy |
+| 2.38 MiB 真实 PDF 经 Frontend `:5120` 上传 | HTTP 201 |
+| 1.53 MiB PDF 上传、非 OCR 提取与构图 | 7 章、243 点、207 条关系，DAG 合法 |
+| Frontend 入口完整注册至 mastery 闭环 | 通过，3 / 3 掌握度更新 |
+
+部署侧新增 `deploy/nginx/galreview.conf.example`：外层请求体允许 12 MiB，上传读写超时为
+190 秒并关闭请求缓冲。应用仍按契约拒绝超过 10 MiB 的单文件。
+
+## 18. 2026-08-02 GalGame 叙事提示词重构
+
+### 18.1 变更边界
+
+本轮没有改变 Gateway 路由、请求体、异步任务状态、GamePackage schema 1.0 或 RenderService
+读取方式。原 `GameGenerator` 继续负责确定性骨架；新增 `galgame-narrative-v2` 叙事层，只能
+重写 scene title、dialogue 与 choice 显示文本。所有 ID、跳转、知识绑定、`correct`、
+`scoreDelta`、assets、reviewPlanId 和 snapshotVersion 均由代码锁定。
+
+提示词按“整包共同主线”工作，要求知识作为线索、规则、工具、争议或行动依据改变剧情，禁止
+退化为“知识点讲解—来看看这道题—本轮复习结束”。内部草稿使用 `groundingQuotes` 核对事实
+出处，使用 `knowledgeUse` 说明知识怎样改变当前局面；两者在最终 GamePackage 中删除。
+
+### 18.2 自动化与真实模型验证
+
+| 项目 | 结果 |
+|---|---:|
+| GalGameService 全量测试 | 348 / 348 |
+| 新增叙事单元/集成测试 | 15 个，全部通过 |
+| DeepSeek `deepseek-v4-pro` 真实 JSON Output | 通过 |
+| GalGameService build | 通过，0 warning / 0 error |
+| `docker compose config --quiet` | 通过 |
+| `scripts/Test-PortPolicy.ps1` | 通过 |
+| GalGameService 镜像重建 | 未执行；本机 Docker Linux engine 未运行，Compose 静态解析已通过 |
+
+真实模型测试使用仓库测试 PlanGraph（CAMPUS / STANDARD），以
+`GALGAME_RUN_LIVE_LLM_TEST=1` 显式启用，API key 只从宿主 `DSAPI` 读取。最终草稿通过：
+
+- sceneId/choiceId 集合完整且无新增；
+- EXPLAIN/QUESTION 的依据可逐字回溯到绑定节点；
+- 对白包含对应概念锚点，且没有暴露权重、掌握度或内部 ID；
+- 装配前后所有锁定字段保持不变；
+- 最终 GamePackage 通过现有跨字段校验器。
+
+第一次校准暴露出“强迫对白逐字复述依据会重新产生教材腔”的问题，因此最终实现把原文引用
+保留为隐藏审计字段，只要求对白自然包含概念锚点，并增加“删除知识后剧情是否仍能原样成立”
+与“删除选择后事件是否仍以相同方式推进”两项提示词拒收检查。真实模型复测通过。
+
+### 18.3 异常路径
+
+测试覆盖恶意 summary 提示注入、缺失/伪造 scene 或 choice ID、错误 promptVersion、无依据
+题目、知识场景没有 grounding、模板化问答文本、非法草稿整包回退，以及第一次失败后的一次
+有界修复。Mock 模式强制关闭外部调用；模型超时、HTTP 错误、空响应、非 JSON、修复后仍非法
+时均不保存半成品，继续返回契约有效的确定性包。供应商响应正文、异常详情和 API key 不进入
+公开 job error。
+
+本轮没有重新执行文件上传、文本提取、KnowledgeService 构图、浏览器渲染和 mastery 全流程；
+这些接口及数据结构未变，沿用本报告前述已通过结果。
