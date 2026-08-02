@@ -16,14 +16,9 @@ var isMockMode = string.Equals(Environment.GetEnvironmentVariable("MOONSTONE_MOD
 var connectionString = builder.Configuration.GetConnectionString("AuthDatabase");
 if (!isMockMode && string.IsNullOrWhiteSpace(connectionString))
     throw new InvalidOperationException("ConnectionStrings:AuthDatabase must be configured.");
-if (!isMockMode)
-    EnsureAllowedServicePort(
-        checked((int)new MySqlConnectionStringBuilder(connectionString!).Port),
-        "ConnectionStrings:AuthDatabase");
 var gatewayKey = builder.Configuration["Gateway:ServiceKey"] ?? throw new InvalidOperationException("Gateway:ServiceKey must be configured.");
 var gatewayBaseUrl = builder.Configuration["Gateway:BaseUrl"] ?? "http://localhost:5000";
 var gatewayUri = new Uri(gatewayBaseUrl, UriKind.Absolute);
-EnsureAllowedServicePort(gatewayUri.Port, "Gateway:BaseUrl");
 var adminUsername = builder.Configuration["Admin:Username"] ?? throw new InvalidOperationException("Admin:Username must be configured.");
 var adminPassword = builder.Configuration["Admin:Password"] ?? throw new InvalidOperationException("Admin:Password must be configured.");
 var isDevelopment = builder.Environment.IsDevelopment();
@@ -306,12 +301,6 @@ app.MapPost("/internal/v1/auth/introspections", (TokenIntrospectionRequest reque
     return Results.Ok(ApiSuccess.Create(result, c.TraceIdentifier));
 });
 app.Run();
-
-static void EnsureAllowedServicePort(int port, string settingName)
-{
-    if (port != 3306 && port is < 5000 or > 5300)
-        throw new InvalidOperationException($"{settingName} port must be 3306 or between 5000 and 5300.");
-}
 
 static async Task<bool> CreateProfileAsync(HttpClient client, string key, string correlationId, string userId, string displayName, CancellationToken cancellation)
 {

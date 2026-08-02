@@ -40,7 +40,7 @@ GET http://localhost:5103/readyz
 开发环境默认连接：
 
 ```text
-mongodb://127.0.0.1:5253/qzwl_file
+mongodb://127.0.0.1:27017/qzwl_file
 ```
 
 数据库 `qzwl_file` 中的集合：
@@ -52,7 +52,10 @@ mongodb://127.0.0.1:5253/qzwl_file
 | `material_content.files` | GridFS 文件索引和元数据 |
 | `material_content.chunks` | GridFS 的实际二进制分块 |
 
-可通过环境变量覆盖连接信息：`ConnectionStrings__FileDatabase`、`MongoDb__Database`。生产环境应通过密钥管理系统注入连接字符串，不要将密码提交到仓库。
+可通过环境变量覆盖连接信息：`ConnectionStrings__FileDatabase`、`MongoDb__Database`。
+根目录 Compose 中 MongoDB 保持原生端口 `27017` 且不发布到宿主机；连接串端口不属于
+Docker 宿主 published 端口的 `5000-5300` 防火墙约束。生产环境应通过密钥管理系统注入
+连接字符串，不要将密码提交到仓库。
 
 ## 资料状态与解析流程
 

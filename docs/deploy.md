@@ -2,7 +2,7 @@
 
 本文说明如何使用仓库根目录的 `compose.integration.yaml` 在本机或 Linux 服务器启动 GalReview。接口、鉴权头和跨服务调用以 [`contract.md`](contract.md) 为准；本文只记录部署方式，不另行定义接口。
 
-当前 Compose 是联调与单机部署基线，不是高可用集群方案。AuthService、UserService 已分别接入独立 MySQL 容器；仓库本地默认值仍是 `Mock`，服务器 `.env` 模板则使用 `MySql`。GalGameService 的任务与游戏包使用进程内存储。RenderService 当前只是 C++ 编译壳、最小 WASM 与 JS Adapter，尚未实现服务端复习会话和原生 WASM ABI。端口迁移不改变接口路径、鉴权头或请求/响应结构。
+当前 Compose 是联调与单机部署基线，不是高可用集群方案。AuthService、UserService 已分别接入独立 MySQL 容器；仓库本地默认值仍是 `Mock`，服务器 `.env` 模板则使用 `MySql`。GalGameService 的任务与游戏包使用进程内存储。宿主发布端口的调整不改变接口路径、鉴权头、请求/响应结构或容器内部协议。
 
 ## 1. 部署范围
 
@@ -10,18 +10,18 @@
 
 | 组件 | Compose 服务名 | 容器端口 | 宿主机暴露 | 数据 |
 |---|---|---:|---|---|
-| API Gateway | `gateway` | `5000` | `5000` | 无状态 |
+| API Gateway | `gateway` | `5000` | `5000`（`GATEWAY_HOST_PORT`） | 无状态 |
 | UserService | `user-service` | `5101` | 不暴露 | 本地默认内存；服务器模板使用独立 MySQL |
 | AuthService | `auth-service` | `5102` | 不暴露 | 本地默认内存；服务器模板使用独立 MySQL |
 | FileService | `file-service` | `5103` | 不暴露 | MongoDB / GridFS |
-| KnowledgeService | `knowledge-service` | `5104` | `5104`，仅诊断 | Neo4j |
+| KnowledgeService | `knowledge-service` | `8080` | `5104`（`KNOWLEDGE_HOST_PORT`），仅诊断 | Neo4j |
 | GalGameService | `galgame-service` | `5105` | 不暴露 | 当前为进程内临时存储 |
 | RenderService | `render-service` | `5106` | 不暴露 | C++ / JS 基础工具链壳；无会话存储 |
-| Frontend | `frontend` | `5120` | `5120` | Node 静态站点；同源代理 `/api` 到 Gateway |
-| User MySQL | `user-mysql` | `5251` | 不暴露 | `user-mysql-data` 卷 |
-| Auth MySQL | `auth-mysql` | `5252` | 不暴露 | `auth-mysql-data` 卷 |
-| MongoDB | `mongo` | `5253` | 不暴露 | `file-mongo-data` 卷 |
-| Neo4j | `neo4j` | `5254/5255` | `5254/5255`，仅诊断 | `knowledge-neo4j-data` 卷 |
+| Frontend | `frontend` | `8080` | `5120`（`FRONTEND_HOST_PORT`） | Node 静态站点；同源代理 `/api` 到 Gateway |
+| User MySQL | `user-mysql` | `3306` | 不暴露 | `user-mysql-data` 卷 |
+| Auth MySQL | `auth-mysql` | `3306` | 不暴露 | `auth-mysql-data` 卷 |
+| MongoDB | `mongo` | `27017` | 不暴露 | `file-mongo-data` 卷 |
+| Neo4j | `neo4j` | Browser `7474` / Bolt `7687` | `5254/5255`（`NEO4J_*_HOST_PORT`），仅诊断 | `knowledge-neo4j-data` 卷 |
 
 OCRService 使用 `ocr` profile，可按需加入：
 
@@ -29,18 +29,19 @@ OCRService 使用 `ocr` profile，可按需加入：
 |---|---|---:|---|---|
 | OCRService | `ocr-service` | `5110` | 不暴露 | 仅供 FileService 调用；不经过 Gateway |
 
-固定端口分配为：Gateway `5000`，User/Auth/File/Knowledge/GalGame/Render 分别为
-`5101-5106`（其中当前未分配 `5107-5109`），OCR `5110`，Frontend `5120`，Vite 开发与
-预览分别为 `5121`、`5122`，User/Auth MySQL 为 `5251`、`5252`，MongoDB `5253`，Neo4j
-Browser/Bolt 为 `5254`、`5255`，SMTP 转发入口 `5256`。Render 代理回退只使用
-`5257-5259`，测试临时端口只使用 `5260-5299`。
+服务器防火墙的 `5000-5300` 约束只作用于 Docker 发布到宿主机的端口。默认发布值为
+Gateway `5000`、KnowledgeService 诊断 `5104`、Frontend `5120`、Neo4j Browser `5254`
+和 Bolt `5255`；它们分别由 `.env` 中的五个 `*_HOST_PORT` 变量覆盖。修改时仍应选择该
+范围内且未被操作系统保留或占用的端口。
 
-MySQL 和 MongoDB 的上游镜像可能在 `docker compose ps` 中继续显示镜像自带的旧
-`EXPOSE` 元数据；它不是活动监听或宿主发布。Compose 已改写数据库进程的真实监听端口，
-并关闭未使用的 MySQL X Plugin，数据库也没有宿主端口映射。
+容器内部保留各组件的原生语义：KnowledgeService 与 Frontend 监听 `8080`，两套 MySQL
+监听 `3306`，MongoDB 监听 `27017`，Neo4j 使用 `7474/7687`。这些 target 没有因为宿主
+防火墙而改写；数据库也不发布到宿主机。Dockerfile `EXPOSE` 只是镜像元数据，不等于
+防火墙入口。
 
-上述约束仅覆盖项目服务、项目侧代理和已配置依赖的显式监听端口。Docker 拉取镜像、
-NuGet/npm/PyPI 下载及调用外部 HTTPS 服务使用的协议隐式端口不纳入该范围。
+服务间 URL、数据库连接串、SMTP 供应商端口、系统 HTTP(S)/SOCKS 代理以及测试进程的
+临时端口同样不属于 `5000-5300`。例如 SMTP 默认仍为 `465`，测试监听由操作系统分配；
+不得为了通过端口检查而改写第三方协议标准或预留一段固定测试端口。
 
 ## 2. 前置条件
 
@@ -108,8 +109,13 @@ Copy-Item .\.env.deploy.example .\.env
 | `AUTH_SERVICE_MODE` | AuthService 运行模式；服务器模板使用 `MySql`，本地默认值为 `Mock` |
 | `USER_SERVICE_MODE` | UserService 运行模式；服务器模板使用 `MySql`，本地默认值为 `Mock` |
 | `GATEWAY_BIND_ADDRESS` | Gateway 在宿主机的绑定地址 |
+| `GATEWAY_HOST_PORT` | Gateway 宿主发布端口，默认 `5000` |
 | `FRONTEND_BIND_ADDRESS` | Frontend 在宿主机的绑定地址 |
+| `FRONTEND_HOST_PORT` | Frontend 宿主发布端口，默认 `5120` |
 | `DIAGNOSTIC_BIND_ADDRESS` | KnowledgeService 与 Neo4j 诊断端口的绑定地址 |
+| `KNOWLEDGE_HOST_PORT` | KnowledgeService 诊断宿主端口，默认 `5104` |
+| `NEO4J_BROWSER_HOST_PORT` | Neo4j Browser 诊断宿主端口，默认 `5254` |
+| `NEO4J_BOLT_HOST_PORT` | Neo4j Bolt 诊断宿主端口，默认 `5255` |
 | `CORS_ORIGINS` | 允许访问 Gateway 的前端 Origin，多个值用逗号分隔 |
 
 建议服务器只把 Frontend 或现有反向代理暴露给外部。Frontend 在容器网络内把 `/api` 转发到 Gateway；KnowledgeService 与 Neo4j 的诊断端口应保持 `127.0.0.1`，不应开放到公网。
@@ -118,7 +124,10 @@ Compose 内的两套 MySQL 连接使用 `caching_sha2_password`，并在隔离�
 `AllowPublicKeyRetrieval=True`；MySQL 端口不得映射到公网。若改接 Compose 网络之外的
 数据库，应改用受信 CA 的 TLS 连接串，不要沿用当前的 `SslMode=Disabled`。
 
-启用密码重置邮件时，必须完整配置 SMTP 主机、认证信息和发件地址；若刻意留空，注册和登录仍可使用，但邮件重置功能不可用。`ACCOUNT_FRONTEND_BASE_URL` 与 `CORS_ORIGINS` 都应使用用户实际访问的 HTTPS 前端地址，后者只写 Origin，不带路径。
+启用密码重置邮件时，必须完整配置 SMTP 主机、供应商实际端口、认证信息和发件地址；
+模板端口 `465` 不是 Docker 宿主发布端口，也不受项目防火墙端口窗口限制。若刻意留空，
+注册和登录仍可使用，但邮件重置功能不可用。`ACCOUNT_FRONTEND_BASE_URL` 与
+`CORS_ORIGINS` 都应使用用户实际访问的 HTTPS 前端地址，后者只写 Origin，不带路径。
 
 配置完成后先做静态校验。`--quiet` 不会把插值后的密钥打印到终端：
 
@@ -376,7 +385,11 @@ docker compose --env-file .env -f compose.integration.yaml logs --tail=200 gatew
 
 ### 宿主端口无法绑定
 
-当前宿主端口按契约固定，不接受 `.env` 任意改写。先确认 `5000`、`5104`、`5120`、`5254`、`5255` 未被占用且未落入系统保留段；如操作系统保留策略发生变化，应统一修改 Compose、契约和端口策略测试，不能只在单机绕过。
+先检查 `.env` 中的 `GATEWAY_HOST_PORT`、`KNOWLEDGE_HOST_PORT`、
+`FRONTEND_HOST_PORT`、`NEO4J_BROWSER_HOST_PORT` 和 `NEO4J_BOLT_HOST_PORT`。若默认端口被
+占用或落入 Windows WinNAT 等系统保留段，可把对应变量改为 `5000-5300` 内的其他可用值，
+然后重新执行 `docker compose ... config` 和 `up -d --force-recreate`。只修改宿主 published
+侧，不要同步改容器 target、数据库原生端口或服务间 URL。
 
 ### FileService 不就绪
 

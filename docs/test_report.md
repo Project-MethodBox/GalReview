@@ -335,14 +335,16 @@ Compose 配置校验为 0，七个默认组件全部 healthy，OCR 运行数为 
 均可经 Gateway 提交生成任务、取得清单及内容，并通过游戏包校验接口。
 
 由于 Windows 排除端口范围与当时的默认映射冲突，本轮曾使用一组仅限主机侧的临时端口。
-该临时映射现已废止，不得复制到当前配置；当前统一端口以 `contract.md` 第 9.5 节为准：
+该临时映射现已废止，不得复制到当前配置；当前宿主 published 默认值以
+`contract.md` 第 9.5 节为准，实际值可由 `.env` 的 `*_HOST_PORT` 覆盖：
 
-| 入口 | 本轮地址 |
+| 入口 | 当前默认地址 |
 |---|---|
 | Gateway | 旧临时映射已废止；当前为 `http://127.0.0.1:5000` |
 | KnowledgeService 诊断入口 | 旧临时映射已废止；当前为 `http://127.0.0.1:5104` |
 
-当时的默认主机映射在本机无法绑定；该历史现象不代表当前统一端口表的验证结果。
+当时的默认主机映射在本机无法绑定；当前应在 `5000-5300` 内选择未被保留的宿主端口，
+不应为绕过冲突而修改容器 target。
 最终 `auth`、`file`、`user`、`knowledge`、`galgame`、`gateway`、`mongo`、`neo4j`
 八个容器均为 `healthy`。
 
@@ -628,37 +630,32 @@ Adapter/WASM 加载和本地游玩。结果为 7 章、243 个知识点、207 �
 两页知识点和两页关系；没有重复执行此前已经通过的注册、上传、提取、构图、GalGame 和
 Render 基础壳全流程。最终截图保存在忽略版本控制的 `.artifacts/visual-audit/`。
 
-## 14. 端口统一迁移记录
+## 14. 宿主发布端口策略与纠偏记录
 
-仓库当前端口规范已统一为 `5000-5300`：Gateway `5000`，业务服务 `5101-5110`，Frontend
-`5120`，Vite 开发/预览 `5121/5122`，数据库与 Neo4j `5251-5255`，SMTP 转发入口 `5256`，
-Render 代理回退 `5257-5259`，测试临时端口 `5260-5299`。接口路径、方法、鉴权与数据契约
-不因本次端口迁移而改变。
+2026-08-02 复核发现，早先把“服务器防火墙只放行 `5000-5300`”错误扩展到了容器 target、
+数据库监听、SMTP、系统代理和测试端口。该做法改变了协议语义，且把 Compose 宿主映射写死，
+在 Windows WinNAT 保留段存在时无法通过 `.env` 避让。原端口策略结论自本次纠偏起作废；
+接口路径、方法、鉴权与数据契约始终未因宿主端口调整而改变。
 
-### 14.1 迁移后运行回归
+正确边界只包含 Docker 发布到宿主机的端口：Gateway `5000`、KnowledgeService `5104`、
+Frontend `5120`、Neo4j Browser `5254` 和 Bolt `5255`。五项均为 `.env` 中可覆盖的
+`*_HOST_PORT` 默认值，覆盖后仍须处于 `5000-5300`。对应容器 target 分别保持
+`5000/8080/8080/7474/7687`；User/Auth MySQL 使用 `3306`、MongoDB 使用 `27017`，均不向
+宿主发布。SMTP 默认 `465`，代理端口按系统配置，测试监听由操作系统分配临时端口。
 
-本轮先通过 Windows TCP 排除段检查确认本机不能监听 `5141-5240`，因此没有继续使用虽在
-政策范围内但本机不可绑定的端口，而是采用本节开头的最终端口表。迁移后的实际结果如下：
+### 14.1 纠偏后的静态检查与历史结果边界
 
-| 检查项 | 实际结果 |
+| 检查项 | 结果或适用范围 |
 |---|---|
-| `Test-PortPolicy.ps1` | 通过；已跟踪文件和未忽略的新文件均无范围外显式端口 |
-| Compose 配置展开 | 通过 |
-| 应用镜像构建 | Frontend、Gateway、User、Auth、File、Knowledge、GalGame、Render 全部成功 |
-| 默认 Compose | 12 个容器 healthy；OCR profile 未启动 |
-| Gateway / Frontend / Knowledge 健康端点 | 均为 HTTP 200 |
-| Gateway readiness | HTTP 200；User、Auth、File、Knowledge、GalGame、Render 依赖均可达 |
-| 基础设施实际监听 | User/Auth MySQL `5251/5252`，MongoDB `5253`，Neo4j HTTP/Bolt `5254/5255` |
-| MySQL X Plugin | 已显式关闭，避免额外监听其镜像默认范围外端口 |
-| KnowledgeService tests | 105 / 105 |
-| Gateway tests | 176 / 176；真实测试服务器只从 `5260-5299` 取端口 |
-| Render JS Adapter tests | 6 / 6 |
-| Frontend production build | 通过，107 modules |
-| 桌面/移动浏览器冒烟 | 36 / 36 |
+| `Test-PortPolicy.ps1` | 通过；现在只检查 Compose/docker publish 的宿主侧和 `*_HOST_PORT` 默认值，不扫描 target、`EXPOSE`、URI、连接串、SMTP、代理或测试端口 |
+| 宿主端口参数化 | `GATEWAY_HOST_PORT`、`KNOWLEDGE_HOST_PORT`、`FRONTEND_HOST_PORT`、`NEO4J_BROWSER_HOST_PORT`、`NEO4J_BOLT_HOST_PORT` 均有范围内默认值 |
+| 数据库发布 | User/Auth MySQL 与 MongoDB 均不发布到宿主机；其原生内部端口不属于防火墙策略 |
+| 早先 12 容器 healthy、Gateway readiness 与全流程结果 | 仍可证明当时业务链路可运行，但不能证明错误的内部端口迁移合理；纠偏后的容器拓扑必须以本轮后续实际复测为准 |
+| 早先 KnowledgeService `105/105`、Gateway `176/176`、Render Adapter `6/6`、Frontend build/UI smoke | 功能回归结果保留；其中固定 `5260-5299` 测试端口的做法已废止 |
 
 ### 14.2 非 OCR 主链路
 
-迁移后的容器环境重新使用 `D:\AppData\test\农业生态学题库.pdf` 执行一次真实主链路：
+当时的容器环境使用 `D:\AppData\test\农业生态学题库.pdf` 执行过一次真实主链路：
 
 - Gateway 注册、登录、令牌内省和用户资料读取成功；
 - 上传和提取任务为 `SUCCEEDED`，`ocrRequested=false`、`ocrUsed=false`；
@@ -667,8 +664,8 @@ Render 代理回退 `5257-5259`，测试临时端口 `5260-5299`。接口路径�
 - API 与 Neo4j 数量一致，先修子图无环，初始 mastery 全为 0；
 - 幂等重放稳定，冲突请求返回 `IDEMPOTENCY_KEY_REUSED`。
 
-此前已经通过的 GalGame 生成业务用例没有重复执行；本轮通过镜像重建、Gateway readiness
-和既有自动化测试确认其端口迁移未破坏服务可达性。Render 基础壳的 manifest、Adapter 和
+此前已经通过的 GalGame 生成业务用例没有重复执行；当时通过镜像重建、Gateway readiness
+和既有自动化测试确认业务服务可达。该结论不再用于支持错误的内部端口策略。Render 基础壳的 manifest、Adapter 和
 WASM 均再次经 Gateway 读取成功；manifest 如实为 `runtimeMode=SHELL`、
 `reviewSessionsAvailable=false`，WASM 为 8 字节最小模块。OCR 功能仍未测试。
 
@@ -722,3 +719,25 @@ emcc 4.0.13 编译为 standalone WASM（179 KB），§8.1 五个 ReviewSession �
 - 浏览器端（前端 `/review` 走服务端会话路径）本轮未做人工操作验证，前端逻辑按
   `reviewSessionsAvailable` 自动切换，建议下轮补一次浏览器操作确认；
 - OCR 与远程部署仍未测试。
+
+## 16. 2026-08-02 端口纠偏后的容器复验
+
+按“仅约束宿主发布端口”的规则重新构建并启动 `compose.integration.yaml`，12 个容器全部
+进入 `healthy`。实际发布结果为 Gateway `5000 -> 5000`、KnowledgeService
+`5104 -> 8080`、Frontend `5120 -> 8080`、Neo4j Browser `5254 -> 7474`、Neo4j Bolt
+`5255 -> 7687`；五个宿主默认端口均可通过对应的 `*_HOST_PORT` 环境变量覆盖。
+
+| 复验项 | 结果 |
+|---|---:|
+| `docker compose up -d --build --wait` | 通过，12 / 12 healthy |
+| Gateway `http://127.0.0.1:5000/readyz` | HTTP 200 |
+| KnowledgeService `http://127.0.0.1:5104/readyz` | HTTP 200 |
+| Frontend `http://127.0.0.1:5120/healthz` | HTTP 200 |
+| Neo4j Browser `http://127.0.0.1:5254/` | HTTP 200 |
+| User/Auth MySQL 容器内 `3306` | `mysqld is alive` |
+| MongoDB 容器内 `27017` | ping = 1 |
+| Neo4j 容器内 Bolt `7687` | `RETURN 1` 成功 |
+| `scripts/Test-PortPolicy.ps1` | 通过 |
+
+MySQL `3306`、MongoDB `27017` 及各微服务内部监听端口没有发布到宿主，因此不会扩大
+服务器防火墙放行范围。SMTP 和系统代理端口也不再被项目端口策略改写。

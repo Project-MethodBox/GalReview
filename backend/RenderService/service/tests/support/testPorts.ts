@@ -1,51 +1,33 @@
-// Test-port allocation inside the repository's reserved range 5260-5299,
-// mirroring gateway/tests/support/testPorts.ts so every suite obeys the
-// project port policy (scripts/Test-PortPolicy.ps1, CI job "port-policy").
-// Parallel vitest workers may pick the same seed, so occupied ports are
-// skipped until the whole range has been tried.
+// Test servers bind to port 0 so the OS chooses an available ephemeral port.
+// Fixed ranges are unsafe on Windows because they may overlap WinNAT excluded
+// ranges, and they also create needless collisions between parallel workers.
 import { spawn, type ChildProcess } from 'node:child_process'
 import type { Server } from 'node:http'
 
-const FIRST_TEST_PORT = 5260
-const LAST_TEST_PORT = 5299
-const TEST_PORT_COUNT = LAST_TEST_PORT - FIRST_TEST_PORT + 1
-
-let nextCandidate = FIRST_TEST_PORT + (process.pid % TEST_PORT_COUNT)
-
-function takeCandidate(): number {
-  const port = nextCandidate
-  nextCandidate = port === LAST_TEST_PORT ? FIRST_TEST_PORT : port + 1
-  return port
-}
-
-// Binds an http.Server on a free port in the reserved range; returns the port.
+// Binds an http.Server on an OS-assigned ephemeral port; returns that port.
 export async function listenOnTestPort(server: Server, host = '127.0.0.1'): Promise<number> {
-  for (let attempt = 0; attempt < TEST_PORT_COUNT; attempt += 1) {
-    const port = takeCandidate()
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const cleanup = (): void => {
-          server.off('error', onError)
-          server.off('listening', onListening)
-        }
-        const onError = (error: Error): void => {
-          cleanup()
-          reject(error)
-        }
-        const onListening = (): void => {
-          cleanup()
-          resolve()
-        }
-        server.once('error', onError)
-        server.once('listening', onListening)
-        server.listen(port, host)
-      })
-      return port
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw error
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = (): void => {
+      server.off('error', onError)
+      server.off('listening', onListening)
     }
+    const onError = (error: Error): void => {
+      cleanup()
+      reject(error)
+    }
+    const onListening = (): void => {
+      cleanup()
+      resolve()
+    }
+    server.once('error', onError)
+    server.once('listening', onListening)
+    server.listen(0, host)
+  })
+  const address = server.address()
+  if (!address || typeof address === 'string') {
+    throw new Error('Test server did not bind a TCP port.')
   }
-  throw new Error(`No available test port in ${FIRST_TEST_PORT}-${LAST_TEST_PORT}.`)
+  return address.port
 }
 
 export interface SpawnedServer {
@@ -54,55 +36,68 @@ export interface SpawnedServer {
   base: string
 }
 
-// Spawns a node server script with PORT set to a free reserved port and waits
-// for its "listening on port" line. Retries on EADDRINUSE crashes.
+type StartupOutcome =
+  | { ok: true; port: number }
+  | { ok: false; stderr: string }
+
+// Spawns a node server with PORT=0 and reads the actual OS-assigned port from
+// its startup message.
 export async function spawnServerOnTestPort(
   scriptPath: string, extraEnv: Record<string, string> = {},
 ): Promise<SpawnedServer> {
-  let lastError = ''
-  for (let attempt = 0; attempt < TEST_PORT_COUNT; attempt += 1) {
-    const port = takeCandidate()
-    const child = spawn(process.execPath, [scriptPath], {
-      env: { ...process.env, ...extraEnv, PORT: String(port) },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    child.stdout!.setEncoding('utf8')
-    child.stderr!.setEncoding('utf8')
+  const child = spawn(process.execPath, [scriptPath], {
+    env: { ...process.env, ...extraEnv, PORT: '0' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  child.stdout!.setEncoding('utf8')
+  child.stderr!.setEncoding('utf8')
 
-    const outcome = await new Promise<{ ok: boolean; stderr?: string }>((resolve) => {
-      let stdoutBuffer = ''
-      let stderrBuffer = ''
-      const onStdout = (chunk: string): void => {
-        stdoutBuffer += chunk
-        if (/listening on port \d+/.test(stdoutBuffer)) {
-          cleanup()
-          resolve({ ok: true })
-        }
+  const outcome = await new Promise<StartupOutcome>((resolve) => {
+    let stdoutBuffer = ''
+    let stderrBuffer = ''
+    let settled = false
+    let startupTimer: ReturnType<typeof setTimeout>
+    function cleanup(): void {
+      clearTimeout(startupTimer)
+      child.stdout!.off('data', onStdout)
+      child.stderr!.off('data', onStderr)
+      child.off('error', onError)
+      child.off('exit', onExit)
+    }
+    function finish(result: StartupOutcome): void {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve(result)
+    }
+    function onStdout(chunk: string): void {
+      stdoutBuffer += chunk
+      const match = stdoutBuffer.match(/listening on port (\d+)/)
+      if (match) {
+        finish({ ok: true, port: Number.parseInt(match[1], 10) })
       }
-      const onStderr = (chunk: string): void => {
-        stderrBuffer += chunk
-      }
-      const onExit = (): void => {
-        cleanup()
-        resolve({ ok: false, stderr: stderrBuffer })
-      }
-      const cleanup = (): void => {
-        child.stdout!.off('data', onStdout)
-        child.stderr!.off('data', onStderr)
-        child.off('exit', onExit)
-      }
-      child.stdout!.on('data', onStdout)
-      child.stderr!.on('data', onStderr)
-      child.on('exit', onExit)
-    })
+    }
+    function onStderr(chunk: string): void {
+      stderrBuffer += chunk
+    }
+    function onError(error: Error): void {
+      finish({ ok: false, stderr: `${stderrBuffer}\n${error.message}` })
+    }
+    function onExit(): void {
+      finish({ ok: false, stderr: stderrBuffer })
+    }
+    startupTimer = setTimeout(() => {
+      child.kill()
+      finish({ ok: false, stderr: `${stderrBuffer}\nserver startup timed out` })
+    }, 15_000)
+    child.stdout!.on('data', onStdout)
+    child.stderr!.on('data', onStderr)
+    child.on('error', onError)
+    child.on('exit', onExit)
+  })
 
-    if (outcome.ok) {
-      return { child, port, base: `http://127.0.0.1:${port}` }
-    }
-    lastError = outcome.stderr ?? ''
-    if (!/EADDRINUSE/.test(lastError)) {
-      throw new Error(`server failed to start on port ${port}: ${lastError.slice(0, 500)}`)
-    }
+  if (!outcome.ok) {
+    throw new Error(`server failed to start on an ephemeral port: ${outcome.stderr.slice(0, 500)}`)
   }
-  throw new Error(`No available test port in ${FIRST_TEST_PORT}-${LAST_TEST_PORT}. Last error: ${lastError.slice(0, 200)}`)
+  return { child, port: outcome.port, base: `http://127.0.0.1:${outcome.port}` }
 }

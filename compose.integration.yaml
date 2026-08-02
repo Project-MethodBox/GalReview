@@ -3,9 +3,6 @@ name: ${COMPOSE_PROJECT_NAME:-galreview-integration}
 services:
   user-mysql:
     image: mysql:8.4
-    command:
-      - --port=5251
-      - --mysqlx=OFF
     environment:
       MYSQL_ROOT_PASSWORD: ${USER_MYSQL_ROOT_PASSWORD:-user-root-dev-password}
       MYSQL_DATABASE: galreview_user
@@ -16,7 +13,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - mysqladmin ping -h 127.0.0.1 -P 5251 -uroot -p"$${MYSQL_ROOT_PASSWORD}" --silent
+        - mysqladmin ping -h 127.0.0.1 -uroot -p"$${MYSQL_ROOT_PASSWORD}" --silent
       interval: 5s
       timeout: 5s
       retries: 30
@@ -25,9 +22,6 @@ services:
 
   auth-mysql:
     image: mysql:8.4
-    command:
-      - --port=5252
-      - --mysqlx=OFF
     environment:
       MYSQL_ROOT_PASSWORD: ${AUTH_MYSQL_ROOT_PASSWORD:-auth-root-dev-password}
       MYSQL_DATABASE: galreview_auth
@@ -38,7 +32,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - mysqladmin ping -h 127.0.0.1 -P 5252 -uroot -p"$${MYSQL_ROOT_PASSWORD}" --silent
+        - mysqladmin ping -h 127.0.0.1 -uroot -p"$${MYSQL_ROOT_PASSWORD}" --silent
       interval: 5s
       timeout: 5s
       retries: 30
@@ -47,11 +41,6 @@ services:
 
   mongo:
     image: mongo:8.0
-    command:
-      - mongod
-      - --bind_ip_all
-      - --port
-      - "5253"
     volumes:
       - file-mongo-data:/data/db
     healthcheck:
@@ -59,8 +48,6 @@ services:
         - CMD
         - mongosh
         - --quiet
-        - --port
-        - "5253"
         - --eval
         - db.adminCommand('ping').ok
       interval: 5s
@@ -73,20 +60,16 @@ services:
     environment:
       NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-knowledge-dev-password}
       HEALTHCHECK_PASSWORD: ${NEO4J_PASSWORD:-knowledge-dev-password}
-      NEO4J_server_http_listen__address: ":5254"
-      NEO4J_server_http_advertised__address: ":5254"
-      NEO4J_server_bolt_listen__address: ":5255"
-      NEO4J_server_bolt_advertised__address: ":5255"
     ports:
-      - "${DIAGNOSTIC_BIND_ADDRESS:-127.0.0.1}:5254:5254"
-      - "${DIAGNOSTIC_BIND_ADDRESS:-127.0.0.1}:5255:5255"
+      - "${DIAGNOSTIC_BIND_ADDRESS:-127.0.0.1}:${NEO4J_BROWSER_HOST_PORT:-5254}:7474"
+      - "${DIAGNOSTIC_BIND_ADDRESS:-127.0.0.1}:${NEO4J_BOLT_HOST_PORT:-5255}:7687"
     volumes:
       - knowledge-neo4j-data:/data
     healthcheck:
       test:
         - CMD-SHELL
         - >-
-          cypher-shell -a bolt://127.0.0.1:5255 -u neo4j -p "$${HEALTHCHECK_PASSWORD}"
+          cypher-shell -a bolt://127.0.0.1:7687 -u neo4j -p "$${HEALTHCHECK_PASSWORD}"
           "RETURN 1" >/dev/null 2>&1
       interval: 5s
       timeout: 5s
@@ -101,7 +84,7 @@ services:
       ASPNETCORE_URLS: http://+:5101
       MOONSTONE_MODE: ${USER_SERVICE_MODE:-Mock}
       Gateway__ServiceKey: ${USER_SERVICE_KEY:-moonstone-local-gateway-key}
-      ConnectionStrings__UserDatabase: "Server=user-mysql;Port=5251;Database=galreview_user;User ID=galreview_user;Password=${USER_MYSQL_PASSWORD:-user-dev-password};SslMode=Disabled;AllowPublicKeyRetrieval=True"
+      ConnectionStrings__UserDatabase: "Server=user-mysql;Port=3306;Database=galreview_user;User ID=galreview_user;Password=${USER_MYSQL_PASSWORD:-user-dev-password};SslMode=Disabled;AllowPublicKeyRetrieval=True"
     depends_on:
       user-mysql:
         condition: service_healthy
@@ -119,14 +102,14 @@ services:
       Admin__Username: ${GALREVIEW_ADMIN_USERNAME:-integration-admin}
       Admin__Password: ${GALREVIEW_ADMIN_PASSWORD:-integration-admin-password}
       Email__SmtpHost: ${SMTP_HOST:-}
-      Email__SmtpPort: ${SMTP_PORT:-5256}
+      Email__SmtpPort: ${SMTP_PORT:-465}
       Email__UseSsl: ${SMTP_USE_SSL:-true}
       Email__Username: ${SMTP_USERNAME:-}
       Email__Password: ${SMTP_PASSWORD:-}
       Email__FromAddress: ${SMTP_FROM_ADDRESS:-}
       Email__FromName: ${SMTP_FROM_NAME:-GalReview}
       AccountFrontend__BaseUrl: ${ACCOUNT_FRONTEND_BASE_URL:-http://localhost:5120}
-      ConnectionStrings__AuthDatabase: "Server=auth-mysql;Port=5252;Database=galreview_auth;User ID=galreview_auth;Password=${AUTH_MYSQL_PASSWORD:-auth-dev-password};SslMode=Disabled;AllowPublicKeyRetrieval=True"
+      ConnectionStrings__AuthDatabase: "Server=auth-mysql;Port=3306;Database=galreview_auth;User ID=galreview_auth;Password=${AUTH_MYSQL_PASSWORD:-auth-dev-password};SslMode=Disabled;AllowPublicKeyRetrieval=True"
     depends_on:
       auth-mysql:
         condition: service_healthy
@@ -141,7 +124,7 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:5103
       Gateway__ServiceKey: ${FILE_SERVICE_KEY:-moonstone-local-gateway-key}
-      ConnectionStrings__FileDatabase: mongodb://mongo:5253/qzwl_file
+      ConnectionStrings__FileDatabase: mongodb://mongo:27017/qzwl_file
       MongoDb__Database: qzwl_file
       InternalAccess__ExtractedTextAllowedServices__0: KnowledgeService
       Ocr__BaseUrl: http://ocr-service:5110/
@@ -157,8 +140,8 @@ services:
       dockerfile: KnowledgeService.API/Dockerfile
     environment:
       ASPNETCORE_ENVIRONMENT: Production
-      ASPNETCORE_URLS: http://+:5104
-      Neo4j__Uri: bolt://neo4j:5255
+      ASPNETCORE_URLS: http://+:8080
+      Neo4j__Uri: bolt://neo4j:7687
       Neo4j__Username: neo4j
       Neo4j__Password: ${NEO4J_PASSWORD:-knowledge-dev-password}
       Neo4j__Database: neo4j
@@ -170,7 +153,7 @@ services:
       neo4j:
         condition: service_healthy
     ports:
-      - "${DIAGNOSTIC_BIND_ADDRESS:-127.0.0.1}:5104:5104"
+      - "${DIAGNOSTIC_BIND_ADDRESS:-127.0.0.1}:${KNOWLEDGE_HOST_PORT:-5104}:8080"
     restart: unless-stopped
 
   galgame-service:
@@ -214,7 +197,7 @@ services:
       USER_SERVICE_URL: http://user-service:5101
       AUTH_SERVICE_URL: http://auth-service:5102
       FILE_SERVICE_URL: http://file-service:5103
-      KNOWLEDGE_SERVICE_URL: http://knowledge-service:5104
+      KNOWLEDGE_SERVICE_URL: http://knowledge-service:8080
       GALGAME_SERVICE_URL: http://galgame-service:5105
       RENDER_SERVICE_URL: http://render-service:5106
       READINESS_SERVICES: userService,authService,fileService,knowledgeService,galGameService,renderService
@@ -235,7 +218,7 @@ services:
       render-service:
         condition: service_healthy
     ports:
-      - "${GATEWAY_BIND_ADDRESS:-0.0.0.0}:5000:5000"
+      - "${GATEWAY_BIND_ADDRESS:-0.0.0.0}:${GATEWAY_HOST_PORT:-5000}:5000"
     restart: unless-stopped
 
   frontend:
@@ -243,12 +226,12 @@ services:
       context: ./frontend
     environment:
       GATEWAY_UPSTREAM: http://gateway:5000
-      PORT: 5120
+      PORT: 8080
     depends_on:
       gateway:
         condition: service_healthy
     ports:
-      - "${FRONTEND_BIND_ADDRESS:-0.0.0.0}:5120:5120"
+      - "${FRONTEND_BIND_ADDRESS:-0.0.0.0}:${FRONTEND_HOST_PORT:-5120}:8080"
     restart: unless-stopped
 
   ocr-service:

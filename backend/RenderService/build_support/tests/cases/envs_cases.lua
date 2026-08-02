@@ -77,25 +77,46 @@ function run(t)
         }, "\n")) == nil, "all-disabled dictionary")
     end)
 
-    t.case("envs: scutil proxy entries without ports use the repository port range", function ()
-        local proxy = envs.parse_macos_system_proxy(table.concat({
+    t.case("envs: scutil proxy entries without their corresponding ports are ignored", function ()
+        t.assert_true(envs.parse_macos_system_proxy(table.concat({
             "<dictionary> {",
             "  HTTPEnable : 1",
             "  HTTPProxy : 127.0.0.1",
             "  HTTPSEnable : 1",
             "  HTTPSProxy : 127.0.0.1",
             "}",
-        }, "\n"))
-        t.assert_eq(proxy.http, "http://127.0.0.1:5257", "HTTP default stays in range")
-        t.assert_eq(proxy.https, "http://127.0.0.1:5258", "HTTPS default stays in range")
+        }, "\n")) == nil, "HTTP(S) entries without ports are not configured")
 
-        local socks = envs.parse_macos_system_proxy(table.concat({
+        t.assert_true(envs.parse_macos_system_proxy(table.concat({
             "<dictionary> {",
             "  SOCKSEnable : 1",
             "  SOCKSProxy : 127.0.0.1",
             "}",
+        }, "\n")) == nil, "SOCKS entry without a port is not configured")
+    end)
+
+    t.case("envs: scutil preserves explicitly configured standard proxy ports", function ()
+        local proxy = envs.parse_macos_system_proxy(table.concat({
+            "<dictionary> {",
+            "  HTTPEnable : 1",
+            "  HTTPPort : 80",
+            "  HTTPProxy : 127.0.0.1",
+            "  HTTPSEnable : 1",
+            "  HTTPSPort : 443",
+            "  HTTPSProxy : 127.0.0.2",
+            "}",
         }, "\n"))
-        t.assert_eq(socks.http, "socks5h://127.0.0.1:5259", "SOCKS default stays in range")
-        t.assert_eq(socks.https, "socks5h://127.0.0.1:5259", "SOCKS default is shared")
+        t.assert_eq(proxy.http, "http://127.0.0.1:80", "explicit HTTP proxy port")
+        t.assert_eq(proxy.https, "http://127.0.0.2:443", "explicit HTTPS proxy port")
+
+        local socks = envs.parse_macos_system_proxy(table.concat({
+            "<dictionary> {",
+            "  SOCKSEnable : 1",
+            "  SOCKSPort : 1080",
+            "  SOCKSProxy : 127.0.0.1",
+            "}",
+        }, "\n"))
+        t.assert_eq(socks.http, "socks5h://127.0.0.1:1080", "explicit SOCKS proxy port")
+        t.assert_eq(socks.https, "socks5h://127.0.0.1:1080", "SOCKS proxy is shared")
     end)
 end

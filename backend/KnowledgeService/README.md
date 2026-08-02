@@ -19,11 +19,18 @@ docker compose up --build
 Gateway 时使用的同一服务身份密钥。开发配置使用
 `moonstone-local-gateway-key`，生产环境必须覆盖。
 
-默认地址：
+Compose 默认宿主地址：
 
-- KnowledgeService：`http://localhost:5104`
-- Neo4j Browser：`http://localhost:5254`
-- Neo4j Bolt：`bolt://localhost:5255`
+- KnowledgeService：`http://localhost:5104`（`KNOWLEDGE_HOST_PORT`）
+- Neo4j Browser：`http://localhost:5254`（`NEO4J_BROWSER_HOST_PORT`）
+- Neo4j Bolt：`bolt://localhost:5255`（`NEO4J_BOLT_HOST_PORT`）
+
+这些是发布到宿主机的诊断端口，默认值位于防火墙允许的 `5000-5300`，遇到占用或系统
+保留段时可通过对应环境变量修改。容器内部保持 KnowledgeService `8080`、Neo4j Browser
+`7474`、Neo4j Bolt `7687`；KnowledgeService 在 Compose 网络中连接
+`bolt://neo4j:7687`。容器 target、Neo4j 原生协议端口和测试临时端口不受宿主发布端口
+范围限制。若直接运行 `dotnet run` 并连接本机安装的 Neo4j，默认 Bolt 端口为 `7687`；
+若改连 Compose 发布入口，则显式把 `Neo4j__Uri` 设为实际宿主端口。
 
 生产环境必须覆盖 `Neo4j__Password`、`GatewayMaterialText__BaseUrl` 和
 `GatewayMaterialText__ServiceKey`，不要使用 compose 的开发默认值。

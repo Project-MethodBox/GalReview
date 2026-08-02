@@ -23,13 +23,7 @@ public sealed class MongoFileStore : IFileStore
     {
         _logger = logger;
         _httpClientFactory = httpClientFactory;
-        var connectionString = configuration.GetConnectionString("FileDatabase") ?? "mongodb://127.0.0.1:5253";
-        var mongoUrl = new MongoUrl(connectionString);
-        if (mongoUrl.Servers.Any(server => server.Port != 27017 && (server.Port is < 5000 or > 5300)))
-        {
-            throw new InvalidOperationException(
-                "ConnectionStrings:FileDatabase ports must be 27017 or between 5000 and 5300.");
-        }
+        var connectionString = configuration.GetConnectionString("FileDatabase") ?? "mongodb://127.0.0.1:27017";
         var databaseName = configuration["MongoDb:Database"] ?? "moonstone_file";
         _database = new MongoClient(connectionString).GetDatabase(databaseName);
         _materials = _database.GetCollection<MaterialDocument>("materials");

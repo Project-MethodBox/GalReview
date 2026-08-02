@@ -19,12 +19,10 @@ import type { SessionService } from './sessions.js'
 import { createSessionService } from './sessions.js'
 import { UUID_V4 } from './contract.js'
 
-// Project port policy (scripts/Test-PortPolicy.ps1): configured ports must
-// stay inside 5000-5300.
 const portText = process.env.PORT || '5106'
 const port = Number.parseInt(portText, 10)
-if (!/^\d+$/.test(portText) || port < 5000 || port > 5300) {
-  throw new RangeError('PORT must be an integer between 5000 and 5300')
+if (!/^\d+$/.test(portText) || port < 0 || port > 65_535) {
+  throw new RangeError('PORT must be an integer between 0 and 65535')
 }
 const gatewayBaseUrl = process.env.Gateway__BaseUrl || ''
 const gatewayServiceName = process.env.Gateway__ServiceName || 'RenderService'
