@@ -32,16 +32,7 @@ var gatewayKey = builder.Configuration["Gateway:ServiceKey"]
 var isMockMode = string.Equals(
     builder.Configuration["MOONSTONE_MODE"] ?? Environment.GetEnvironmentVariable("MOONSTONE_MODE"),
     "Mock", StringComparison.OrdinalIgnoreCase);
-var useMongoStore = !string.Equals(
-    builder.Configuration["GalGameStore:Provider"] ?? Environment.GetEnvironmentVariable("GalGameStore__Provider"),
-    "Memory", StringComparison.OrdinalIgnoreCase);
-var storageName = (isMockMode, useMongoStore) switch
-{
-    (true, true) => "mock-mongodb",
-    (true, false) => "mock-memory",
-    (false, true) => "mongodb",
-    (false, false) => "ephemeral-memory",
-};
+var storageName = isMockMode ? "mock-memory" : "ephemeral-memory";
 var validationAllowedServices = InternalServiceAccessPolicy.CreateAllowlist(
     builder.Configuration.GetSection("InternalAccess:ValidationAllowedServices"),
     "RenderService");
@@ -58,17 +49,7 @@ builder.Services.AddHttpClient("gateway", client =>
 
 // DI 注册
 builder.Services.AddSingleton<GamePackageValidator>();
-if (useMongoStore)
-{
-    builder.Services.AddSingleton<IGameStore>(sp => new MongoGameStore(
-        sp.GetRequiredService<IConfiguration>(),
-        sp.GetRequiredService<ILoggerFactory>().CreateLogger<MongoGameStore>(),
-        seedGoldenPackage: isMockMode));
-}
-else
-{
-    builder.Services.AddSingleton<IGameStore>(_ => new InMemoryGameStore(isMockMode));
-}
+builder.Services.AddSingleton<IGameStore>(_ => new InMemoryGameStore(isMockMode));
 builder.Services.AddSingleton<PlanGraphClient>(sp => new PlanGraphClient(
     sp.GetRequiredService<IHttpClientFactory>(),
     sp.GetRequiredService<ILoggerFactory>().CreateLogger<PlanGraphClient>(),
@@ -77,28 +58,6 @@ builder.Services.AddSingleton<PlanGraphClient>(sp => new PlanGraphClient(
 builder.Services.AddSingleton<GameGenerator>();
 
 var app = builder.Build();
-
-// ============================================================================
-// 启动恢复：将因服务重启而卡在 RUNNING/QUEUED 的生成任务标记为 FAILED
-// ============================================================================
-if (useMongoStore)
-{
-    try
-    {
-        var store = app.Services.GetRequiredService<IGameStore>();
-        var recovered = store.RecoverStaleJobs();
-        if (recovered > 0)
-        {
-            var startupLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("GalGameService");
-            startupLogger.LogWarning("Startup recovery: {Count} stale job(s) marked as FAILED", recovered);
-        }
-    }
-    catch (Exception ex)
-    {
-        var startupLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("GalGameService");
-        startupLogger.LogWarning(ex, "Startup recovery failed; stale jobs may remain in RUNNING/QUEUED state");
-    }
-}
 
 // ============================================================================
 // 中间件
@@ -178,17 +137,8 @@ app.Use(async (context, next) =>
 
 app.MapGet("/healthz", (HttpContext c) =>
     Results.Ok(ApiSuccess.Create(new { status = "live" }, c.TraceIdentifier)));
-app.MapGet("/readyz", async (HttpContext c, IGameStore store) =>
-{
-    if (useMongoStore && store is MongoGameStore mongoStore)
-    {
-        var ready = mongoStore.IsReady();
-        return ready
-            ? Results.Ok(ApiSuccess.Create(new { status = "ready", storage = storageName }, c.TraceIdentifier))
-            : Failure(c, 503, "SERVICE_UNAVAILABLE", "MongoDB is unavailable.");
-    }
-    return Results.Ok(ApiSuccess.Create(new { status = "ready", storage = storageName }, c.TraceIdentifier));
-});
+app.MapGet("/readyz", (HttpContext c) =>
+    Results.Ok(ApiSuccess.Create(new { status = "ready", storage = storageName }, c.TraceIdentifier)));
 
 // ============================================================================
 // 端点 1：POST /api/v1/game-generations — 创建游戏包生成任务

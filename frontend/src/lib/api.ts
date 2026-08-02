@@ -113,7 +113,7 @@ function resolveUrl(path: string): string {
   return `${API_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`
 }
 
-function errorFromPayload(payload: unknown, status: number): ApiClientError {
+function errorFromPayload(payload: unknown, status: number, responseTraceId?: string): ApiClientError {
   if (payload && typeof payload === 'object' && 'error' in payload) {
     const failure = payload as ApiFailure
     if (failure.error && typeof failure.error.code === 'string' && typeof failure.error.message === 'string') {
@@ -121,12 +121,58 @@ function errorFromPayload(payload: unknown, status: number): ApiClientError {
         localizedErrorMessage(failure.error.code, failure.error.message, status),
         failure.error.code,
         status,
-        failure.traceId,
+        failure.traceId || responseTraceId,
         failure.error.details ?? {},
       )
     }
   }
-  return new ApiClientError(STATUS_MESSAGES[status] || '请求失败，请稍后重试。', 'HTTP_ERROR', status)
+  return new ApiClientError('请求失败，请稍后再试。', 'HTTP_ERROR', status, responseTraceId)
+}
+
+function traceIdFromResponse(response: Response): string | undefined {
+  return response.headers.get('X-Correlation-Id')?.trim() || undefined
+}
+
+function nonJsonHttpError(response: Response, bodyText: string): ApiClientError {
+  const status = response.status
+  const traceId = traceIdFromResponse(response)
+  let code = 'HTTP_ERROR'
+  let message = `请求失败（HTTP ${status}）。`
+
+  if (status === 413) {
+    code = 'PAYLOAD_TOO_LARGE'
+    message = '请求体超过入口代理允许的大小（HTTP 413）。'
+  } else if (status === 502) {
+    code = 'UPSTREAM_HTTP_ERROR'
+    message = '入口代理无法连接上游服务（HTTP 502）。'
+  } else if (status === 503) {
+    code = 'SERVICE_UNAVAILABLE'
+    message = '服务暂时不可用（HTTP 503）。'
+  } else if (status === 504) {
+    code = 'SERVICE_UNAVAILABLE'
+    message = '入口代理等待上游服务超时（HTTP 504）。'
+  }
+
+  const normalizedBody = bodyText.replace(/\s+/g, ' ').trim()
+  return new ApiClientError(message, code, status, traceId, {
+    contentType: response.headers.get('Content-Type') || 'unknown',
+    responseKind: /bad gateway/i.test(normalizedBody) ? 'BAD_GATEWAY' : 'NON_JSON',
+  })
+}
+
+function parseResponseJson(response: Response, bodyText: string): unknown {
+  try {
+    return JSON.parse(bodyText) as unknown
+  } catch {
+    if (!response.ok) throw nonJsonHttpError(response, bodyText)
+    throw new ApiClientError(
+      '服务响应格式不符合契约。',
+      'UPSTREAM_CONTRACT_INVALID',
+      502,
+      traceIdFromResponse(response),
+      { contentType: response.headers.get('Content-Type') || 'unknown' },
+    )
+  }
 }
 
 async function refreshAccessToken(): Promise<TokenPair> {
@@ -170,22 +216,24 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   try {
     const response = await fetch(resolveUrl(path), { ...init, headers, signal: controller.signal })
     const bodyText = response.status === 204 ? '' : await response.text()
-    const payload = bodyText ? (JSON.parse(bodyText) as ApiSuccess<T> | ApiFailure) : null
+    const payload = bodyText
+      ? (parseResponseJson(response, bodyText) as ApiSuccess<T> | ApiFailure)
+      : null
 
     if (response.status === 401 && authenticated && retryAfterRefresh) {
       await refreshAccessToken()
       return request<T>(path, { ...options, retryAfterRefresh: false })
     }
-    if (!response.ok) throw errorFromPayload(payload, response.status)
+    if (!response.ok) {
+      if (!payload) throw nonJsonHttpError(response, bodyText)
+      throw errorFromPayload(payload, response.status, traceIdFromResponse(response))
+    }
     if (!bodyText) return undefined as T
     if (!payload || typeof payload !== 'object' || !('data' in payload)) {
       throw new ApiClientError('服务响应格式不符合契约。', 'UPSTREAM_CONTRACT_INVALID', 502)
     }
     return payload.data as T
   } catch (error) {
-    if (error instanceof SyntaxError) {
-      throw new ApiClientError('服务返回了无法解析的 JSON。', 'UPSTREAM_CONTRACT_INVALID', 502)
-    }
     if (error instanceof DOMException && error.name === 'AbortError') {
       throw new ApiClientError('请求超时，请稍后重试。', 'SERVICE_UNAVAILABLE', 503)
     }
@@ -209,8 +257,12 @@ async function requestRawJson<T>(path: string): Promise<T> {
   if (token) headers.set('Authorization', `Bearer ${token}`)
   try {
     const response = await fetch(resolveUrl(path), { headers, signal: controller.signal })
-    const payload = await response.json().catch(() => null)
-    if (!response.ok) throw errorFromPayload(payload, response.status)
+    const bodyText = response.status === 204 ? '' : await response.text()
+    const payload = bodyText ? parseResponseJson(response, bodyText) : null
+    if (!response.ok) {
+      if (!payload) throw nonJsonHttpError(response, bodyText)
+      throw errorFromPayload(payload, response.status, traceIdFromResponse(response))
+    }
     if (!payload || typeof payload !== 'object') {
       throw new ApiClientError('游戏包响应格式不符合契约。', 'UPSTREAM_CONTRACT_INVALID', 502)
     }

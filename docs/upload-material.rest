@@ -1,0 +1,56 @@
+# GalReview 文件上传接口测试
+# VS Code 扩展：REST Client（humao.rest-client）
+# 使用顺序：依次点击 registerUploadUser、uploadMaterial、getUploadedMaterial 上方的 Send Request。
+
+@baseUrl = http://127.0.0.1:5000
+@invitationCode = MS-MOCK2026
+@subjectCode = GENERAL
+
+### 1. Gateway 就绪检查
+GET {{baseUrl}}/readyz
+Accept: application/json
+X-Correlation-Id: {{$guid}}
+
+### 2. 注册一次性上传测试用户，并取得 Access Token
+# @name registerUploadUser
+POST {{baseUrl}}/api/v1/auth/registrations
+Accept: application/json
+Content-Type: application/json
+X-Correlation-Id: {{$guid}}
+
+{
+  "email": "upload-rest-{{$timestamp}}@example.test",
+  "password": "UploadRest!2026Aa",
+  "displayName": "REST Client Upload Test",
+  "invitationCode": "{{invitationCode}}",
+  "deviceName": "VS Code REST Client"
+}
+
+### 3. 上传 D:\AppData\TK.pdf
+# @name uploadMaterial
+POST {{baseUrl}}/api/v1/materials
+Accept: application/json
+Authorization: Bearer {{registerUploadUser.response.body.$.data.tokens.accessToken}}
+Content-Type: multipart/form-data; boundary=GalReviewBoundary
+X-Correlation-Id: {{$guid}}
+
+--GalReviewBoundary
+Content-Disposition: form-data; name="file"; filename="TK.pdf"
+Content-Type: application/pdf
+
+< D:\AppData\TK.pdf
+--GalReviewBoundary
+Content-Disposition: form-data; name="displayName"
+
+TK 复习资料
+--GalReviewBoundary
+Content-Disposition: form-data; name="subjectCode"
+
+{{subjectCode}}
+--GalReviewBoundary--
+
+### 4. 根据上传响应读取资料元数据
+GET {{baseUrl}}/api/v1/materials/{{uploadMaterial.response.body.$.data.materialId}}
+Accept: application/json
+Authorization: Bearer {{registerUploadUser.response.body.$.data.tokens.accessToken}}
+X-Correlation-Id: {{$guid}}
