@@ -1,0 +1,19 @@
+{
+  "name": "galreview-render-service",
+  "version": "0.2.0",
+  "description": "千知万理 RenderService - 运行时资源、ReviewSession 会话与学习证据回传",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "pretest": "npm run build",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
