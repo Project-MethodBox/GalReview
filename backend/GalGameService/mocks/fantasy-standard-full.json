@@ -1,6 +1,6 @@
 {
     "schemaVersion": "1.0",
-    "packageId": "1fb52a4c-9853-4aa9-ad39-ea15bf47c472",
+    "packageId": "576f8ebc-8da7-4ced-aac6-a4f5e6506619",
     "generatorVersion": "gala-0.1.0",
     "reviewPlanId": "8e812950-3311-40a7-93ab-636409df8cc2",
     "snapshotVersion": "plan-graph-1.0:3da5f48f37ac57c91b49ee747c11e45f1a9e9e73d8e892fcd1bd1f9f3f50c620",
@@ -8,21 +8,21 @@
     "scenes": [
         {
             "sceneId": "scene-001",
-            "title": "雨后的格宴记录本",
+            "title": "谷底的空档案",
             "dialogue": [
                 {
-                    "speakerId": "林澈",
-                    "text": "昨晚的暴雨浇灭了格宴的自动灌溉系统，周嵐说他今天下午就能修好。但这份观测记录……少了一整页。",
-                    "emotion": "worried"
+                    "speakerId": "艾黎",
+                    "text": "上渡桥的守护者说，谷底的田地有一块不明的枯萎。我去查过，土里没有毒，但谷物档案里缺了一段记载。",
+                    "emotion": "concerned"
                 },
                 {
-                    "speakerId": "周嵐",
-                    "text": "管线到了下午三点才能送电，水道也还没完全通。你先把现有的生长阶段记录排顺，我去看看有没有备份。",
-                    "emotion": "rushed"
+                    "speakerId": "洛恩",
+                    "text": "档案是我们的命根子。你说缺了一段，是哪一段？别告诉我是燃烧季的那段，那段从来不会出问题。",
+                    "emotion": "guarded"
                 },
                 {
                     "speakerId": "你",
-                    "text": "水稻从播种到成熟会经历幼苗期、分蘘期、拔节期、抽穗期和成熟期。少的那页记的就是分蘘期的数据。",
+                    "text": "谷物从播种到成熟会经历幼苗期、分蘘期、拔节期、抽穗期和成熟期。缺的就是分蘘期的记载，恰好是枯萎出现的时期。",
                     "emotion": "focused"
                 }
             ],
@@ -30,7 +30,7 @@
                 {
                     "choiceId": "c-scene-001-1",
                     "questionId": "71eaf449-6263-4e05-a059-170f55a0692b",
-                    "text": "先把生长阶段顺序还原，再去找缺失的数据",
+                    "text": "先把生长阶段顺序拼完，再去现场看枯萎",
                     "nextSceneId": "scene-002",
                     "scoreDelta": 0,
                     "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"
@@ -46,29 +46,29 @@
         },
         {
             "sceneId": "scene-002",
-            "title": "被打乱的生长日志",
+            "title": "折叠的羊皮纸",
             "dialogue": [
                 {
-                    "speakerId": "林澈",
-                    "text": "我把周嵐桌上的日志拿来了。幼苗期的记录在，拔节期之后的也在，但中间这段断了。",
-                    "emotion": "thoughtful"
+                    "speakerId": "艾黎",
+                    "text": "我在档案柜的夹层里找到了一张折叠的羊皮纸。上面的字迹被水浇过，但能辨认出「分蘘」两个字。",
+                    "emotion": "hopeful"
                 },
                 {
                     "speakerId": "你",
-                    "text": "幼苗期之后就是分蘘期，这段正是日志的断口。如果顺序错了，后面的判断都会失去依据。",
+                    "text": "幼苗期之后就是分蘘期，这段是记载的断口。如果顺序拼错，后面的判断全会走偏。",
                     "emotion": "calm"
                 },
                 {
-                    "speakerId": "周嵐",
-                    "text": "备份找到了，但只有半页，上面写的是分蘘期的管理要点。水道一通就得调灌溉，你先看看这些要点对不对。",
-                    "emotion": "hurried"
+                    "speakerId": "洛恩",
+                    "text": "羊皮纸的背面还有字。写的是分蘘期的管理要点，但有一句被滑笔涂掉了。你们看看能不能入这个空缺。",
+                    "emotion": "curious"
                 }
             ],
             "choices": [
                 {
                     "choiceId": "c-scene-002-1",
                     "questionId": "7b61787a-a6a1-4836-8531-e621eae47ec2",
-                    "text": "用生长阶段顺序定位日志缺页，再核对管理要点",
+                    "text": "用生长阶段顺序定位记载断口，再补入缺失的要点",
                     "nextSceneId": "scene-003",
                     "scoreDelta": 0,
                     "knowledgePointId": "84f7d873-e573-4689-b18d-6f82c745d1bf"
@@ -84,16 +84,16 @@
         },
         {
             "sceneId": "scene-003",
-            "title": "十分钟的取舍",
+            "title": "一次决定",
             "dialogue": [
                 {
-                    "speakerId": "周嵐",
-                    "text": "水道通了！但水压只够维持十分钟，之后还要切回去修其他管线。灌溉量只能调一次，你打算怎么用？",
-                    "emotion": "tense"
+                    "speakerId": "洛恩",
+                    "text": "上渡桥的守护者送了消息，谷底的灌溉只能维持十分钟，之后要让给上游的村庄。你只有一次调配的机会。",
+                    "emotion": "urgent"
                 },
                 {
-                    "speakerId": "林澈",
-                    "text": "如果只灌水不管肥，分蘘会徒长但根系走浅。如果只施肥不灌水，肥料根本化不开。你得告诉我们这十分钟的优先级。",
+                    "speakerId": "艾黎",
+                    "text": "如果只浅灌不施肥，分蘘会徒长但根系浮浅。如果只施肥不灌水，肥料封在土表。你得告诉我们怎么用这十分钟。",
                     "emotion": "pressured"
                 },
                 {
@@ -154,16 +154,16 @@
         },
         {
             "sceneId": "scene-004",
-            "title": "灯亮起来以后",
+            "title": "灌溉停下以后",
             "dialogue": [
                 {
-                    "speakerId": "周嵐",
-                    "text": "管线全通了，格宴的灯也亮了。十分钟的灌溉起到了作用，分蘘的长势和根系都笼住了。",
+                    "speakerId": "洛恩",
+                    "text": "灌溉停了，但分蘘的长势和根系都笼住了。谷底的枯萎区域已经扩散停住了。",
                     "emotion": "relieved"
                 },
                 {
-                    "speakerId": "林澈",
-                    "text": "缺失的那页记录我在备份里找到了，你的生长阶段还原帮了大忙。这次不是背一句话，而是真的解决了问题。",
+                    "speakerId": "艾黎",
+                    "text": "被涑掉的那句话我在羊皮纸的另一面找到了。你的生长阶段还原让整个档案对上了。这不是背书，是真的救了谷底。",
                     "emotion": "grateful"
                 }
             ],
@@ -175,47 +175,47 @@
         {
             "assetId": "asset-001",
             "type": "BACKGROUND",
-            "uri": "assets/campus/bg/campus_library_day.webp"
+            "uri": "assets/fantasy/bg/fantasy_tower_entrance.webp"
         },
         {
             "assetId": "asset-002",
             "type": "BACKGROUND",
-            "uri": "assets/campus/bg/campus_library_evening.webp"
+            "uri": "assets/fantasy/bg/fantasy_forest_mystic.webp"
         },
         {
             "assetId": "asset-003",
             "type": "BACKGROUND",
-            "uri": "assets/campus/bg/campus_courtyard.webp"
+            "uri": "assets/fantasy/bg/fantasy_star_chamber.webp"
         },
         {
             "assetId": "asset-004",
             "type": "CHARACTER",
-            "uri": "assets/campus/char/char_senior_linn_neutral.webp"
+            "uri": "assets/fantasy/char/char_elf_aria_neutral.webp"
         },
         {
             "assetId": "asset-005",
             "type": "CHARACTER",
-            "uri": "assets/campus/char/char_senior_linn_smile.webp"
+            "uri": "assets/fantasy/char/char_elf_aria_casting.webp"
         },
         {
             "assetId": "asset-006",
             "type": "CHARACTER",
-            "uri": "assets/campus/char/char_senior_linn_thinking.webp"
+            "uri": "assets/fantasy/char/char_elf_aria_smile.webp"
         },
         {
             "assetId": "asset-007",
             "type": "AUDIO",
-            "uri": "assets/campus/audio/bgm_campus_calm.ogg"
+            "uri": "assets/fantasy/audio/bgm_fantasy_mystic.ogg"
         },
         {
             "assetId": "asset-008",
             "type": "AUDIO",
-            "uri": "assets/campus/audio/sfx_page_flip.ogg"
+            "uri": "assets/fantasy/audio/sfx_magic_chime.ogg"
         },
         {
             "assetId": "asset-009",
             "type": "AUDIO",
-            "uri": "assets/campus/audio/sfx_chime_correct.ogg"
+            "uri": "assets/fantasy/audio/sfx_spell_cast.ogg"
         }
     ]
 }
