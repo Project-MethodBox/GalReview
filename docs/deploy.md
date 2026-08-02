@@ -2,7 +2,7 @@
 
 本文说明如何使用仓库根目录的 `compose.integration.yaml` 在本机或 Linux 服务器启动 GalReview。接口、鉴权头和跨服务调用以 [`contract.md`](contract.md) 为准；本文只记录部署方式，不另行定义接口。
 
-当前 Compose 是联调与单机部署基线，不是高可用集群方案。AuthService、UserService 已分别接入独立 MySQL 容器；仓库本地默认值仍是 `Mock`，服务器 `.env` 模板则使用 `MySql`。GalGameService 的任务与游戏包使用进程内存储。宿主发布端口的调整不改变接口路径、鉴权头、请求/响应结构或容器内部协议。
+当前 Compose 是联调与单机部署基线，不是高可用集群方案。AuthService、UserService 已分别接入独立 MySQL 容器；仓库本地默认值仍是 `Mock`，服务器 `.env` 模板则使用 `MySql`。GalGameService 的任务与游戏包使用 MongoDB。宿主发布端口的调整不改变接口路径、鉴权头、请求/响应结构或容器内部协议。
 
 ## 1. 部署范围
 
@@ -15,7 +15,7 @@
 | AuthService | `auth-service` | `5102` | 不暴露 | 本地默认内存；服务器模板使用独立 MySQL |
 | FileService | `file-service` | `5103` | 不暴露 | MongoDB / GridFS |
 | KnowledgeService | `knowledge-service` | `8080` | `5104`（`KNOWLEDGE_HOST_PORT`），仅诊断 | Neo4j |
-| GalGameService | `galgame-service` | `5105` | 不暴露 | 当前为进程内临时存储 |
+| GalGameService | `galgame-service` | `5105` | 不暴露 | MongoDB；可选 DeepSeek 叙事生成 |
 | RenderService | `render-service` | `5106` | 不暴露 | C++ / JS 基础工具链壳；无会话存储 |
 | Frontend | `frontend` | `8080` | `5120`（`FRONTEND_HOST_PORT`） | Node 静态站点；同源代理 `/api` 到 Gateway |
 | User MySQL | `user-mysql` | `3306` | 不暴露 | `user-mysql-data` 卷 |
@@ -95,6 +95,10 @@ Copy-Item .\.env.deploy.example .\.env
 | `KNOWLEDGE_SERVICE_KEY` | Gateway、KnowledgeService 及其回调 Gateway 的服务密钥 |
 | `GALGAME_SERVICE_KEY` | Gateway、GalGameService 及其回调 Gateway 的服务密钥 |
 | `RENDER_SERVICE_KEY` | Gateway 转发到 RenderService 的目标密钥；未来 INTERNAL 回调继续复用该身份 |
+| `DSAPI` | GalGameService 的 DeepSeek API key；只注入该容器，不得写入日志或镜像 |
+| `GALGAME_NARRATIVE_ENABLED` | 是否启用模型叙事；关闭或 key 缺失时使用确定性回退 |
+| `GALGAME_NARRATIVE_ENDPOINT` | DeepSeek Chat Completions HTTPS endpoint |
+| `GALGAME_NARRATIVE_MODEL` | 叙事模型，默认 `deepseek-v4-pro` |
 | `NEO4J_PASSWORD` | Neo4j 的 `neo4j` 用户密码 |
 | `USER_MYSQL_ROOT_PASSWORD` | UserService 专用 MySQL 实例的 root 密码，仅数据库容器使用 |
 | `USER_MYSQL_PASSWORD` | UserService 连接其 MySQL 的应用用户密码 |
@@ -324,7 +328,9 @@ docker compose --env-file .env -f compose.integration.yaml build
 docker compose --env-file .env -f compose.integration.yaml up -d --remove-orphans --wait
 ```
 
-回滚不要删除卷。服务器模板中的 AuthService 与 UserService 数据分别保存在 MySQL 卷中；本地 `Mock` 模式和 GalGameService 的生成状态无法通过卷恢复。RenderService 基础壳当前没有业务数据。
+回滚不要删除卷。服务器模板中的 AuthService 与 UserService 数据分别保存在 MySQL 卷中，
+FileService 与 GalGameService 数据保存在 MongoDB 卷中；仅显式使用 memory provider 时，
+GalGameService 的生成状态无法通过卷恢复。
 
 ## 9. 数据备份
 

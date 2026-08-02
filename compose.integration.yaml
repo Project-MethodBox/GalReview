@@ -166,9 +166,14 @@ services:
       Gateway__ServiceKey: ${GALGAME_SERVICE_KEY:-moonstone-local-gateway-key}
       InternalAccess__ValidationAllowedServices__0: RenderService
       InternalAccess__PackageReaderAllowedServices__0: RenderService
-      ConnectionStrings__GameDatabase: mongodb://mongo:5253
+      ConnectionStrings__GameDatabase: mongodb://mongo:27017
       MongoDb__Database: qzwl_galgame
       GalGameStore__Provider: MongoDB
+      NarrativeGeneration__Enabled: ${GALGAME_NARRATIVE_ENABLED:-true}
+      NarrativeGeneration__ApiKey: ${DSAPI:-}
+      NarrativeGeneration__Endpoint: ${GALGAME_NARRATIVE_ENDPOINT:-https://api.deepseek.com/chat/completions}
+      NarrativeGeneration__Model: ${GALGAME_NARRATIVE_MODEL:-deepseek-v4-pro}
+      NarrativeGeneration__PromptVersion: galgame-narrative-v2
     depends_on:
       knowledge-service:
         condition: service_healthy
