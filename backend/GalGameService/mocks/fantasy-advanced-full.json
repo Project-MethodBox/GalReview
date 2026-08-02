@@ -1,0 +1,313 @@
+{
+    "schemaVersion": "1.0",
+    "packageId": "0f76951b-0fb9-4901-9665-5d8051d68bd7",
+    "generatorVersion": "gala-0.1.0",
+    "reviewPlanId": "8e812950-3311-40a7-93ab-636409df8cc2",
+    "snapshotVersion": "plan-graph-1.0:3da5f48f37ac57c91b49ee747c11e45f1a9e9e73d8e892fcd1bd1f9f3f50c620",
+    "entrySceneId": "scene-001",
+    "scenes": [
+        {
+            "sceneId": "scene-001",
+            "title": "魔法学院的试炼",
+            "dialogue": [
+                {
+                    "speakerId": "精灵导师艾莉娅",
+                    "text": "勇敢的冒险者，欢迎踏入知识之塔。这里的每一块石砖都铭刻着自然法则的纹路，今天我们将一同解读大地生长的奥秘。",
+                    "emotion": "mystical"
+                },
+                {
+                    "speakerId": "精灵导师艾莉娅",
+                    "text": "知识之塔的试炼分为三重关卡，每一关都蕴含着水稻生长的智慧。唯有通过全部三关，你才能获得「丰收之印」。",
+                    "emotion": "encouraging"
+                },
+                {
+                    "speakerId": "精灵导师艾莉娅",
+                    "text": "今天我们要探索的主题是：水稻·生长周期。准备好了吗，冒险者？",
+                    "emotion": "serious"
+                }
+            ],
+            "choices": [
+                {
+                    "choiceId": "c-scene-001-1",
+                    "questionId": "1ea57585-b9e6-413e-a668-956043560d01",
+                    "text": "准备好了，开始吧！",
+                    "nextSceneId": "scene-002",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"
+                }
+            ],
+            "knowledgeBindings": [
+                {
+                    "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",
+                    "purpose": "FEEDBACK",
+                    "questionId": null
+                }
+            ]
+        },
+        {
+            "sceneId": "scene-002",
+            "title": "第一重启示：水稻基本生长周期",
+            "dialogue": [
+                {
+                    "speakerId": "精灵导师艾莉娅",
+                    "text": "在正式试炼之前，先让我为你揭示「水稻基本生长周期」的奥秘。这段知识将化作你的武器。",
+                    "emotion": "thoughtful"
+                },
+                {
+                    "speakerId": "精灵导师艾莉娅",
+                    "text": "水稻从播种到成熟的完整生长周期，包括幼苗期、分蘖期、拔节期、抽穗期和成熟期。这是大地的韵律，也是万物生长的基本法则。",
+                    "emotion": "explaining"
+                },
+                {
+                    "speakerId": "精灵导师艾莉娅",
+                    "text": "将这段周期铭刻于心，它将是你通过三重试炼的关键。",
+                    "emotion": "informative"
+                }
+            ],
+            "choices": [
+                {
+                    "choiceId": "c-scene-002-1",
+                    "questionId": "6f45eb34-797a-41c4-ac50-eb5a5155321b",
+                    "text": "了解了，继续。",
+                    "nextSceneId": "scene-003",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "84f7d873-e573-4689-b18d-6f82c745d1bf"
+                }
+            ],
+            "knowledgeBindings": [
+                {
+                    "knowledgePointId": "84f7d873-e573-4689-b18d-6f82c745d1bf",
+                    "purpose": "EXPLAIN",
+                    "questionId": null
+                }
+            ]
+        },
+        {
+            "sceneId": "scene-003",
+            "title": "试炼之一：水稻分蘖期管理",
+            "dialogue": [
+                {
+                    "speakerId": "精灵导师艾莉娅",
+                    "text": "第一重试炼开始了。请回答这个问题——",
+                    "emotion": "challenging"
+                },
+                {
+                    "speakerId": "精灵导师艾莉娅",
+                    "text": "在深入理解「水稻分蘖期管理」的基础上，以下哪个选项最符合实际？",
+                    "emotion": "questioning"
+                }
+            ],
+            "choices": [
+                {
+                    "choiceId": "c-scene-003-d2",
+                    "questionId": "c92590d3-0d2b-4612-abc8-8a749d70cc1f",
+                    "text": "分蘖期管理的核心是尽早追施大量氮肥，使分蘖数越多越好",
+                    "nextSceneId": "scene-004",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",
+                    "answerKind": "CHOICE",
+                    "correct": false
+                },
+                {
+                    "choiceId": "c-scene-003-correct",
+                    "questionId": "c92590d3-0d2b-4612-abc8-8a749d70cc1f",
+                    "text": "协调群体数量与个体生长，通过水肥调控促进有效分蘖，控制无效分蘖",
+                    "nextSceneId": "scene-004",
+                    "scoreDelta": 1,
+                    "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",
+                    "answerKind": "CHOICE",
+                    "correct": true
+                },
+                {
+                    "choiceId": "c-scene-003-d1",
+                    "questionId": "c92590d3-0d2b-4612-abc8-8a749d70cc1f",
+                    "text": "分蘖期应深水灌溉以促进分蘖芽萌发，水深保持 10cm 以上",
+                    "nextSceneId": "scene-004",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",
+                    "answerKind": "CHOICE",
+                    "correct": false
+                }
+            ],
+            "knowledgeBindings": [
+                {
+                    "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb",
+                    "purpose": "QUESTION",
+                    "questionId": "c92590d3-0d2b-4612-abc8-8a749d70cc1f"
+                }
+            ]
+        },
+        {
+            "sceneId": "scene-004",
+            "title": "第二重启示：水稻拔节期与抽穗期",
+            "dialogue": [
+                {
+                    "speakerId": "精灵导师艾莉娅",
+                    "text": "你的智慧之火正在燃烧。第一重试炼已经通过，现在让我为你揭示下一层奥秘。",
+                    "emotion": "thoughtful"
+                },
+                {
+                    "speakerId": "精灵导师艾莉娅",
+                    "text": "分蘖期之后，水稻进入拔节期。此时茎秆如同世界树的枝干般拔地而起，需要大量的水分和养分支撑，但不可过度施氮，否则茎秆徒长而柔弱，容易倒伏。",
+                    "emotion": "explaining"
+                },
+                {
+                    "speakerId": "精灵导师艾莉娅",
+                    "text": "拔节期的关键在于：保持田间浅水层，防止倒伏，适当控制氮肥。随后进入抽穗期，需保证充足水分和追肥，以决定穗粒数。",
+                    "emotion": "informative"
+                }
+            ],
+            "choices": [
+                {
+                    "choiceId": "c-scene-004-1",
+                    "questionId": "bb9e7e98-90c8-45de-9e13-4f7e7550ad95",
+                    "text": "我已铭记于心，继续试炼。",
+                    "nextSceneId": "scene-005",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "f6a7b8c9-d0e1-4f2a-3b4c-5d6e7f8090a0"
+                }
+            ],
+            "knowledgeBindings": [
+                {
+                    "knowledgePointId": "f6a7b8c9-d0e1-4f2a-3b4c-5d6e7f8090a0",
+                    "purpose": "EXPLAIN",
+                    "questionId": null
+                }
+            ]
+        },
+        {
+            "sceneId": "scene-005",
+            "title": "试炼之二：水稻拔节期管理",
+            "dialogue": [
+                {
+                    "speakerId": "精灵导师艾莉娅",
+                    "text": "第二重试炼降临，请听题——",
+                    "emotion": "challenging"
+                },
+                {
+                    "speakerId": "精灵导师艾莉娅",
+                    "text": "在深入理解「水稻拔节期管理」的基础上，以下哪个选项最符合实际？",
+                    "emotion": "questioning"
+                }
+            ],
+            "choices": [
+                {
+                    "choiceId": "c-scene-005-correct",
+                    "questionId": "4b31a36a-8fef-48c1-9f07-1c774cd2e080",
+                    "text": "拔节期需保持田间浅水层，注意防止倒伏，适当控制氮肥以防茎秆徒长",
+                    "nextSceneId": "scene-006",
+                    "scoreDelta": 1,
+                    "knowledgePointId": "f6a7b8c9-d0e1-4f2a-3b4c-5d6e7f8090a0",
+                    "answerKind": "CHOICE",
+                    "correct": true
+                },
+                {
+                    "choiceId": "c-scene-005-d2",
+                    "questionId": "4b31a36a-8fef-48c1-9f07-1c774cd2e080",
+                    "text": "拔节期主要管理目标是促进分蘖大量发生，增加有效穗数",
+                    "nextSceneId": "scene-006",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "f6a7b8c9-d0e1-4f2a-3b4c-5d6e7f8090a0",
+                    "answerKind": "CHOICE",
+                    "correct": false
+                },
+                {
+                    "choiceId": "c-scene-005-d1",
+                    "questionId": "4b31a36a-8fef-48c1-9f07-1c774cd2e080",
+                    "text": "拔节期应排水晒田至土壤开裂，促进根系向深层下扎",
+                    "nextSceneId": "scene-006",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "f6a7b8c9-d0e1-4f2a-3b4c-5d6e7f8090a0",
+                    "answerKind": "CHOICE",
+                    "correct": false
+                }
+            ],
+            "knowledgeBindings": [
+                {
+                    "knowledgePointId": "f6a7b8c9-d0e1-4f2a-3b4c-5d6e7f8090a0",
+                    "purpose": "QUESTION",
+                    "questionId": "4b31a36a-8fef-48c1-9f07-1c774cd2e080"
+                }
+            ]
+        },
+        {
+            "sceneId": "scene-006",
+            "title": "试炼之三：水稻成熟期判断",
+            "dialogue": [
+                {
+                    "speakerId": "精灵导师艾莉娅",
+                    "text": "最后一重试炼！这是对你整体理解的最终考验。",
+                    "emotion": "challenging"
+                },
+                {
+                    "speakerId": "精灵导师艾莉娅",
+                    "text": "在深入理解「水稻成熟期判断标准」的基础上，以下哪个选项最符合实际？",
+                    "emotion": "questioning"
+                }
+            ],
+            "choices": [
+                {
+                    "choiceId": "c-scene-006-d1",
+                    "questionId": "89472177-9f33-4e91-8c14-96645dbe895b",
+                    "text": "成熟期只需观察叶片是否全部变黄即可决定收获时间",
+                    "nextSceneId": "scene-007",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "c9d0e1f2-a3b4-4c5d-6e7f-8090a1b2c3d3",
+                    "answerKind": "CHOICE",
+                    "correct": false
+                },
+                {
+                    "choiceId": "c-scene-006-d2",
+                    "questionId": "89472177-9f33-4e91-8c14-96645dbe895b",
+                    "text": "乳熟期籽粒充满乳浆时是最佳收获期，此时产量最高",
+                    "nextSceneId": "scene-007",
+                    "scoreDelta": 0,
+                    "knowledgePointId": "c9d0e1f2-a3b4-4c5d-6e7f-8090a1b2c3d3",
+                    "answerKind": "CHOICE",
+                    "correct": false
+                },
+                {
+                    "choiceId": "c-scene-006-correct",
+                    "questionId": "89472177-9f33-4e91-8c14-96645dbe895b",
+                    "text": "水稻成熟期分为乳熟期、蜡熟期和完熟期，完熟期籽粒含水量降至 20%~25%，是最佳收获期",
+                    "nextSceneId": "scene-007",
+                    "scoreDelta": 1,
+                    "knowledgePointId": "c9d0e1f2-a3b4-4c5d-6e7f-8090a1b2c3d3",
+                    "answerKind": "CHOICE",
+                    "correct": true
+                }
+            ],
+            "knowledgeBindings": [
+                {
+                    "knowledgePointId": "c9d0e1f2-a3b4-4c5d-6e7f-8090a1b2c3d3",
+                    "purpose": "QUESTION",
+                    "questionId": "89472177-9f33-4e91-8c14-96645dbe895b"
+                }
+            ]
+        },
+        {
+            "sceneId": "scene-007",
+            "title": "试炼完成",
+            "dialogue": [
+                {
+                    "speakerId": "精灵导师艾莉娅",
+                    "text": "你的智慧之光闪耀夺目，三重试炼圆满完成！「丰收之印」已铭刻于你的灵魂。",
+                    "emotion": "proud"
+                },
+                {
+                    "speakerId": "精灵导师艾莉娅",
+                    "text": "本次试炼涵盖分蘖期、拔节期和成熟期三个知识维度。你的成长已被知识之塔铭记。",
+                    "emotion": "warm"
+                },
+                {
+                    "speakerId": "精灵导师艾莉娅",
+                    "text": "知识之塔将记住你的试炼轨迹。下次到来时，试炼会根据你的薄弱之处重新排列。",
+                    "emotion": "mystical"
+                }
+            ],
+            "choices": [],
+            "knowledgeBindings": []
+        }
+    ],
+    "assets": []
+}

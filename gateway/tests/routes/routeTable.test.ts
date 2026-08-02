@@ -21,6 +21,8 @@ describe('当前服务接口路由适配', () => {
     ['GET', '/api/v1/render-runtime/manifest', 'renderService', 'public'],
     ['GET', '/api/v1/render-runtime/runtime.wasm', 'renderService', 'public'],
     ['GET', '/api/v1/render-runtime/adapter.js', 'renderService', 'public'],
+    ['GET', '/api/v1/render-runtime/stage.js', 'renderService', 'public'],
+    ['GET', '/api/v1/render-runtime/stage-demo', 'renderService', 'public'],
     [
       'POST',
       '/internal/v1/game-package-validations',

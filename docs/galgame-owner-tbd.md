@@ -48,9 +48,39 @@ base64。
 
 ## 存储现状
 
-当前普通模式和 Mock 模式都使用 `InMemoryGameStore`。容器重启后任务、manifest 和游戏包
-都会丢失；生产持久化、跨副本一致性、保留期和清理任务仍为 OWNER-TBD。文档不得提前声明
-未实现的对象存储、过期宽限期或清理行为。
+普通模式和 Mock 模式均支持 MongoDB 持久化存储（`MongoGameStore`）。通过
+`GalGameStore:Provider` 配置项切换：
+
+| `GalGameStore:Provider` | `MOONSTONE_MODE` | 存储实现 | `readyz` 报告 |
+|---|---|---|---|
+| `MongoDB`（默认） | `Mock` | MongoDB + 黄金包预置 | `mock-mongodb` |
+| `MongoDB`（默认） | 非 Mock | MongoDB（无预置） | `mongodb` |
+| `Memory` | `Mock` | 纯内存 + 黄金包预置 | `mock-memory` |
+| `Memory` | 非 Mock | 纯内存（无预置） | `ephemeral-memory` |
+
+MongoDB 连接配置：
+
+- `ConnectionStrings:GameDatabase`：MongoDB 连接字符串（默认 `mongodb://127.0.0.1:5253`）
+- `MongoDb:Database`：数据库名（默认 `moonstone_galgame`，Docker 环境为 `qzwl_galgame`）
+
+集合设计：
+
+| 集合 | 文档 | `_id` | 用途 |
+|---|---|---|---|
+| `game_jobs` | `GameGenerationJob` | `GenerationId` | 生成任务状态 |
+| `game_packages` | `BsonDocument`（JSON 序列化的 `GamePackage`） | `PackageId` | 完整游戏包 |
+| `game_manifests` | `GamePackageManifest` | `PackageId` | 游戏包清单 |
+| `game_owners` | `{ PackageId, OwnerUserId }` | `PackageId` | 包-用户归属映射 |
+
+线程安全：
+
+- `TryTransitionJob` 使用 MongoDB `FindOneAndReplace` + 条件过滤器实现 CAS 语义，
+  无需应用层锁
+- `SavePackage` 使用 `IsUpsert=true` 保证幂等写入
+- 已完成 job 通过 TTL 索引自动 30 天过期
+- `MaxJobs=10000` 容量限制：超限时清理最旧的 10% 已完成 job
+
+`readyz` 端点在使用 MongoDB 存储时会执行 `ping` 命令检查连接可用性，不可用时返回 503。
 
 ## 已完成联调
 
@@ -60,4 +90,4 @@ base64。
 - 完整包 checksum、ETag、QUESTION 绑定、显式正确性和 INTERNAL owner 校验已有自动化或
   集成测试。
 
-仍未完成：生产游戏包持久化、`GamePackageReady v1` 消息发布，以及跨副本任务恢复。
+仍未完成：`GamePackageReady v1` 消息发布，以及跨副本任务恢复。

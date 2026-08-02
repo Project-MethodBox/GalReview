@@ -117,6 +117,20 @@ export const ROUTE_TABLE: RouteEntry[] = [
     rateLimitCategory: 'general',
     methods: ['GET'],
   },
+  {
+    path: '/api/v1/render-runtime/stage.js',
+    service: 'renderService',
+    auth: 'public',
+    rateLimitCategory: 'general',
+    methods: ['GET'],
+  },
+  {
+    path: '/api/v1/render-runtime/stage-demo',
+    service: 'renderService',
+    auth: 'public',
+    rateLimitCategory: 'general',
+    methods: ['GET'],
+  },
 
   // ===== 浏览器用户路由（需要用户令牌） =====
   {

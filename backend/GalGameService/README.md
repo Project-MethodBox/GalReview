@@ -22,6 +22,7 @@
 | `GET` | `/api/v1/game-packages/{packageId}` | 读取游戏包清单 | `200/400/401/404` |
 | `GET` | `/api/v1/game-packages/{packageId}/content` | 下载完整 JSON | `200/304/400/401/404` |
 | `POST` | `/internal/v1/game-package-validations` | 校验游戏包（服务间） | `200/400/403/422` |
+| `GET` | `/internal/v1/game-packages/{packageId}` | RenderService 按用户读取权威游戏包（服务间） | `200/400/403/404` |
 | `GET` | `/healthz` | 存活探针 | `200` |
 | `GET` | `/readyz` | 就绪探针 | `200` |
 
@@ -29,11 +30,13 @@
 
 ```
 GalGameService/
-├── Program.cs                  # 服务入口：中间件链 + 5 个端点
+├── Program.cs                  # 服务入口：中间件链 + 6 个端点
 ├── Contracts.cs                # 数据类型（GamePackage、Scene、Choice 等）
-├── GameGenerator.cs            # 游戏包生成器（3 风格 × 3 难度）
+├── GameGenerator.cs            # 游戏包生成器（3 风格 × 3 难度 + 资源生成）
 ├── GamePackageValidator.cs     # 校验器（15 类规则 + SHA-256 checksum）
+├── IGameStore.cs               # 存储接口（内联于 InMemoryGameStore.cs）
 ├── InMemoryGameStore.cs        # Mock 内存存储 + 黄金游戏包
+├── MongoGameStore.cs           # MongoDB 持久化存储 + 启动恢复
 ├── PlanGraphClient.cs          # PlanGraph 读取客户端（§7.3.1 URGENT）
 ├── GalGame.GalGameService.csproj
 ├── Dockerfile
@@ -63,6 +66,7 @@ GalGameService/
     ├── BoundaryTests.cs                  # 边界输入（特殊字符/超长文本）
     ├── GalGameServiceIntegrationTests.cs # WebApplicationFactory 集成测试
     ├── InMemoryGameStoreTests.cs         # 内存存储测试
+    ├── MongoGameStoreTests.cs            # MongoDB 持久化测试
     ├── InvalidPackageTests.cs            # 错误包负向测试（精确错误码断言）
     └── GamePackageSchemaTests.cs         # JSON Schema 契约测试
 ```

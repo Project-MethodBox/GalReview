@@ -716,8 +716,10 @@ emcc 4.0.13 编译为 standalone WASM（179 KB），§8.1 五个 ReviewSession �
 
 - 会话存储为 ephemeral-memory（/readyz 如实上报），容器重启丢失进行中会话；
 - `ReviewCompleted v2` 消息总线仍未接入，本轮闭环使用契约允许的同步 INTERNAL evidence；
-- 浏览器端（前端 `/review` 走服务端会话路径）本轮未做人工操作验证，前端逻辑按
-  `reviewSessionsAvailable` 自动切换，建议下轮补一次浏览器操作确认；
+- 浏览器端已完成操作验证：真实登录后经 `/review` 生成 CAMPUS 游戏包、创建服务端
+  会话（页面显示 cpp-wasm-0.2.0）、UI 点击作答 2 题并提交，页面提示"本次复习结果
+  已提交，共记录 2 条作答证据"，控制台错误为 0，API 复核对应知识点 mastery 0→35
+  （`DIRECT:ASSESSMENT:quality=5`，version 1）；TS 迁移后复测；
 - OCR 与远程部署仍未测试。
 
 ## 16. 2026-08-02 端口纠偏后的容器复验
