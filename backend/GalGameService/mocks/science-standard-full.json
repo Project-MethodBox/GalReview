@@ -1,6 +1,6 @@
 {
     "schemaVersion": "1.0",
-    "packageId": "1fb52a4c-9853-4aa9-ad39-ea15bf47c472",
+    "packageId": "a14d79e4-3124-489a-9250-397dc0d4bbc4",
     "generatorVersion": "gala-0.1.0",
     "reviewPlanId": "8e812950-3311-40a7-93ab-636409df8cc2",
     "snapshotVersion": "plan-graph-1.0:3da5f48f37ac57c91b49ee747c11e45f1a9e9e73d8e892fcd1bd1f9f3f50c620",
@@ -8,21 +8,21 @@
     "scenes": [
         {
             "sceneId": "scene-001",
-            "title": "雨后的格宴记录本",
+            "title": "绿色面板的闪烁",
             "dialogue": [
                 {
-                    "speakerId": "林澈",
-                    "text": "昨晚的暴雨浇灭了格宴的自动灌溉系统，周嵐说他今天下午就能修好。但这份观测记录……少了一整页。",
-                    "emotion": "worried"
+                    "speakerId": "NEXUS",
+                    "text": "水稻水培舱的生长曲线出现异常下降。数据库中该阶段的记录被标记为待审核，原因是上一班未完成交接。",
+                    "emotion": "alert"
                 },
                 {
-                    "speakerId": "周嵐",
-                    "text": "管线到了下午三点才能送电，水道也还没完全通。你先把现有的生长阶段记录排顺，我去看看有没有备份。",
-                    "emotion": "rushed"
+                    "speakerId": "姚真",
+                    "text": "我看过了，是分蘘阶段的数据丢失了。上一班的姚真——也就是我——在制冷回路跳闸的时候打开过舱门，可能抖动了传感器。",
+                    "emotion": "uneasy"
                 },
                 {
                     "speakerId": "你",
-                    "text": "水稻从播种到成熟会经历幼苗期、分蘘期、拔节期、抽穗期和成熟期。少的那页记的就是分蘘期的数据。",
+                    "text": "水稻从播种到成熟会经历幼苗期、分蘘期、拔节期、抽穗期和成熟期。丢失的就是分蘘期的记录，这个阶段的管理参数最关键。",
                     "emotion": "focused"
                 }
             ],
@@ -30,7 +30,7 @@
                 {
                     "choiceId": "c-scene-001-1",
                     "questionId": "71eaf449-6263-4e05-a059-170f55a0692b",
-                    "text": "先把生长阶段顺序还原，再去找缺失的数据",
+                    "text": "先按生长阶段顺序梳理现有数据，再定位缺失段",
                     "nextSceneId": "scene-002",
                     "scoreDelta": 0,
                     "knowledgePointId": "d1adc45a-52db-4de2-9cf7-02e1ac0d53cb"
@@ -46,29 +46,29 @@
         },
         {
             "sceneId": "scene-002",
-            "title": "被打乱的生长日志",
+            "title": "备份日志的缝隙",
             "dialogue": [
                 {
-                    "speakerId": "林澈",
-                    "text": "我把周嵐桌上的日志拿来了。幼苗期的记录在，拔节期之后的也在，但中间这段断了。",
-                    "emotion": "thoughtful"
+                    "speakerId": "NEXUS",
+                    "text": "备份服务器中检索到了部分分蘘期记录。数据片段被切断为两段，中间有一个时间空缺。",
+                    "emotion": "processing"
                 },
                 {
                     "speakerId": "你",
-                    "text": "幼苗期之后就是分蘘期，这段正是日志的断口。如果顺序错了，后面的判断都会失去依据。",
+                    "text": "幼苗期之后就是分蘘期，这段正是记录的缝隙。如果顺序错了，后面的营养液浓度判断都会失去参照。",
                     "emotion": "calm"
                 },
                 {
-                    "speakerId": "周嵐",
-                    "text": "备份找到了，但只有半页，上面写的是分蘘期的管理要点。水道一通就得调灌溉，你先看看这些要点对不对。",
-                    "emotion": "hurried"
+                    "speakerId": "姚真",
+                    "text": "我在本地终端的缓存里找到了一条未同步的管理参数记录，上面标注的是分蘘期的要点。但有一行被乱码覆盖了，你看看能不能还原。",
+                    "emotion": "hopeful"
                 }
             ],
             "choices": [
                 {
                     "choiceId": "c-scene-002-1",
                     "questionId": "7b61787a-a6a1-4836-8531-e621eae47ec2",
-                    "text": "用生长阶段顺序定位日志缺页，再核对管理要点",
+                    "text": "用生长阶段顺序定位记录缝隙，再还原缺失的参数",
                     "nextSceneId": "scene-003",
                     "scoreDelta": 0,
                     "knowledgePointId": "84f7d873-e573-4689-b18d-6f82c745d1bf"
@@ -84,21 +84,21 @@
         },
         {
             "sceneId": "scene-003",
-            "title": "十分钟的取舍",
+            "title": "十分钟的窗口",
             "dialogue": [
                 {
-                    "speakerId": "周嵐",
-                    "text": "水道通了！但水压只够维持十分钟，之后还要切回去修其他管线。灌溉量只能调一次，你打算怎么用？",
-                    "emotion": "tense"
+                    "speakerId": "NEXUS",
+                    "text": "制冷回路的隔离阀将在十分钟后关闭。此期间营养液供应可以重新连接，但浓度只能调一次。",
+                    "emotion": "warning"
                 },
                 {
-                    "speakerId": "林澈",
-                    "text": "如果只灌水不管肥，分蘘会徒长但根系走浅。如果只施肥不灌水，肥料根本化不开。你得告诉我们这十分钟的优先级。",
+                    "speakerId": "姚真",
+                    "text": "如果只调水位不调浓度，分蘘会徒长但根系偏弱。如果只调浓度不调水位，营养液无法均匀漫透。你要怎么用这个窗口？",
                     "emotion": "pressured"
                 },
                 {
                     "speakerId": "你",
-                    "text": "分蘘期的管理不能只看一个方向。如果只顾群体数量，个体长不壮；如果只顾个体，群体又散了。水和肥得同时起作用。",
+                    "text": "分蘘期的管理不能只看一个方向。如果只顾群体数量，个体长不壮；如果只顾个体，群体又散了。水位和浓度得同步调整，不能只动一个参数。",
                     "emotion": "decisive"
                 }
             ],
@@ -154,16 +154,16 @@
         },
         {
             "sceneId": "scene-004",
-            "title": "灯亮起来以后",
+            "title": "隔离阀关闭以后",
             "dialogue": [
                 {
-                    "speakerId": "周嵐",
-                    "text": "管线全通了，格宴的灯也亮了。十分钟的灌溉起到了作用，分蘘的长势和根系都笼住了。",
-                    "emotion": "relieved"
+                    "speakerId": "NEXUS",
+                    "text": "隔离阀已关闭。营养液供应恢复正常，分蘘的生长曲线回升。丢失的参数已被本地缓存补入。",
+                    "emotion": "stable"
                 },
                 {
-                    "speakerId": "林澈",
-                    "text": "缺失的那页记录我在备份里找到了，你的生长阶段还原帮了大忙。这次不是背一句话，而是真的解决了问题。",
+                    "speakerId": "姚真",
+                    "text": "被乱码覆盖的那行我在缓存的快照里找到了。你的生长阶段还原让整个数据库对上了。这不是复述手册，是真的解决了问题。",
                     "emotion": "grateful"
                 }
             ],
@@ -175,47 +175,47 @@
         {
             "assetId": "asset-001",
             "type": "BACKGROUND",
-            "uri": "assets/campus/bg/campus_library_day.webp"
+            "uri": "assets/science/bg/sci_station_hub.webp"
         },
         {
             "assetId": "asset-002",
             "type": "BACKGROUND",
-            "uri": "assets/campus/bg/campus_library_evening.webp"
+            "uri": "assets/science/bg/sci_station_lab.webp"
         },
         {
             "assetId": "asset-003",
             "type": "BACKGROUND",
-            "uri": "assets/campus/bg/campus_courtyard.webp"
+            "uri": "assets/science/bg/sci_holographic_display.webp"
         },
         {
             "assetId": "asset-004",
             "type": "CHARACTER",
-            "uri": "assets/campus/char/char_senior_linn_neutral.webp"
+            "uri": "assets/science/char/char_nexus_hologram_blue.webp"
         },
         {
             "assetId": "asset-005",
             "type": "CHARACTER",
-            "uri": "assets/campus/char/char_senior_linn_smile.webp"
+            "uri": "assets/science/char/char_nexus_hologram_green.webp"
         },
         {
             "assetId": "asset-006",
             "type": "CHARACTER",
-            "uri": "assets/campus/char/char_senior_linn_thinking.webp"
+            "uri": "assets/science/char/char_nexus_hologram_amber.webp"
         },
         {
             "assetId": "asset-007",
             "type": "AUDIO",
-            "uri": "assets/campus/audio/bgm_campus_calm.ogg"
+            "uri": "assets/science/audio/bgm_science_ambient.ogg"
         },
         {
             "assetId": "asset-008",
             "type": "AUDIO",
-            "uri": "assets/campus/audio/sfx_page_flip.ogg"
+            "uri": "assets/science/audio/sfx_ui_beep.ogg"
         },
         {
             "assetId": "asset-009",
             "type": "AUDIO",
-            "uri": "assets/campus/audio/sfx_chime_correct.ogg"
+            "uri": "assets/science/audio/sfx_data_process.ogg"
         }
     ]
 }
