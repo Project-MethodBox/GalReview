@@ -30,6 +30,12 @@ public interface IGameStore
     GamePackage? GetPackage(Guid packageId);
     GamePackageManifest? GetManifest(Guid packageId);
     string? GetPackageOwner(Guid packageId);
+
+    /// <summary>
+    /// 恢复因服务重启而卡住的生成任务。
+    /// InMemoryGameStore 的数据不持久化，重启后内存已清空，此方法为空操作。
+    /// </summary>
+    int RecoverStaleJobs() => 0;
 }
 
 public sealed class InMemoryGameStore : IGameStore
