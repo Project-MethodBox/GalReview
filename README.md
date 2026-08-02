@@ -38,6 +38,10 @@ GalGame 内容生成与完整交互体验仍在继续整合。
 docker compose -f compose.integration.yaml up -d --build --wait
 ```
 
+启动后从 `http://127.0.0.1:5120` 打开前端，Gateway 健康检查位于
+`http://127.0.0.1:5000/healthz`。项目服务与已配置依赖只使用 `5000-5300` 端口；完整分配见
+[部署指南](./docs/deploy.md)。
+
 停止环境：
 
 ```powershell

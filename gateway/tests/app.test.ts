@@ -15,12 +15,12 @@ const mockConfig: GatewayConfig = {
   defaultTimeoutMs: 5000,
   uploadTimeoutMs: 10000,
   services: {
-    userService: { name: 'UserService', url: 'http://localhost:19901' },
-    authService: { name: 'AuthService', url: 'http://localhost:19902' },
-    fileService: { name: 'FileService', url: 'http://localhost:19903' },
-    knowledgeService: { name: 'KnowledgeService', url: 'http://localhost:19904' },
-    galGameService: { name: 'GalGameService', url: 'http://localhost:19905' },
-    renderService: { name: 'RenderService', url: 'http://localhost:19906' },
+    userService: { name: 'UserService', url: 'http://localhost:5251' },
+    authService: { name: 'AuthService', url: 'http://localhost:5252' },
+    fileService: { name: 'FileService', url: 'http://localhost:5253' },
+    knowledgeService: { name: 'KnowledgeService', url: 'http://localhost:5254' },
+    galGameService: { name: 'GalGameService', url: 'http://localhost:5255' },
+    renderService: { name: 'RenderService', url: 'http://localhost:5256' },
   },
   rateLimit: {
     anonymous: { windowMs: 60000, max: 100 },
@@ -83,8 +83,8 @@ describe('Gateway App 集成测试', () => {
       expect(res.status).toBe(200);
       expect(fetchSpy).toHaveBeenCalledTimes(2);
       expect(fetchSpy.mock.calls.map(([url]) => String(url))).toEqual([
-        'http://localhost:19902/healthz',
-        'http://localhost:19904/healthz',
+        'http://localhost:5252/healthz',
+        'http://localhost:5254/healthz',
       ]);
     });
 

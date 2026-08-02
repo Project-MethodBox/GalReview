@@ -18,7 +18,7 @@ const mockConfig: GatewayConfig = {
   defaultTimeoutMs: 30000,
   uploadTimeoutMs: 120000,
   services: {
-    authService: { name: 'AuthService', url: 'http://localhost:19999' },
+    authService: { name: 'AuthService', url: 'http://localhost:5259' },
   },
   rateLimit: {
     anonymous: { windowMs: 60000, max: 20 },

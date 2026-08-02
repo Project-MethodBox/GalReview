@@ -4,7 +4,7 @@ public sealed class Neo4jOptions
 {
     public const string SectionName = "Neo4j";
 
-    public string Uri { get; init; } = "bolt://localhost:7687";
+    public string Uri { get; init; } = "bolt://localhost:5255";
 
     public string Username { get; init; } = "neo4j";
 
@@ -19,6 +19,12 @@ public sealed class Neo4jOptions
         {
             throw new InvalidOperationException(
                 "Neo4j:Uri must be an absolute bolt:// or neo4j:// URI.");
+        }
+
+        if (uri.Port is < 5000 or > 5300)
+        {
+            throw new InvalidOperationException(
+                "Neo4j:Uri port must be between 5000 and 5300.");
         }
 
         if (string.IsNullOrWhiteSpace(Username))

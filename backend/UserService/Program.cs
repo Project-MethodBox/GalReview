@@ -12,6 +12,10 @@ var isMockMode = string.Equals(Environment.GetEnvironmentVariable("MOONSTONE_MOD
 var connectionString = builder.Configuration.GetConnectionString("UserDatabase");
 if (!isMockMode && string.IsNullOrWhiteSpace(connectionString))
     throw new InvalidOperationException("ConnectionStrings:UserDatabase must be configured.");
+if (!isMockMode)
+    EnsureAllowedServicePort(
+        checked((int)new MySqlConnectionStringBuilder(connectionString!).Port),
+        "ConnectionStrings:UserDatabase");
 var gatewayKey = builder.Configuration["Gateway:ServiceKey"]
     ?? throw new InvalidOperationException("Gateway:ServiceKey must be configured.");
 var storageName = isMockMode ? "memory" : "mysql";
@@ -140,6 +144,12 @@ app.MapPut("/api/v1/users/me/preferences", async (HttpContext c, IUserRepository
 });
 
 app.Run();
+
+static void EnsureAllowedServicePort(int port, string settingName)
+{
+    if (port is < 5000 or > 5300)
+        throw new InvalidOperationException($"{settingName} port must be between 5000 and 5300.");
+}
 
 static bool IsGateway(HttpContext context, string key)
 {

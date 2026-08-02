@@ -26,7 +26,14 @@ public sealed class PasswordResetEmailSender(
             return false;
         }
 
-        var port = configuration.GetValue("Email:SmtpPort", 465);
+        var port = configuration.GetValue("Email:SmtpPort", 5256);
+        if (port is < 5000 or > 5300)
+        {
+            logger.LogError(
+                "Email:SmtpPort must be between 5000 and 5300. CorrelationId: {CorrelationId}",
+                correlationId);
+            return false;
+        }
         var useSsl = configuration.GetValue("Email:UseSsl", true);
         var fromName = configuration["Email:FromName"] ?? "\u5343\u77e5\u4e07\u7406";
 

@@ -40,7 +40,7 @@ GET http://localhost:5103/readyz
 开发环境默认连接：
 
 ```text
-mongodb://127.0.0.1:27017/qzwl_file
+mongodb://127.0.0.1:5253/qzwl_file
 ```
 
 数据库 `qzwl_file` 中的集合：

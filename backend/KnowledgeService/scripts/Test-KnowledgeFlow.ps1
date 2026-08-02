@@ -17,7 +17,7 @@ param(
 
     [switch]$VerifyNeo4j,
 
-    [string]$Neo4jHttpUrl = "http://localhost:7474",
+    [string]$Neo4jHttpUrl = "http://localhost:5254",
 
     [string]$Neo4jDatabase = "neo4j",
 

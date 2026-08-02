@@ -5,6 +5,7 @@ import request from 'supertest';
 import type { GatewayConfig } from '../../src/config.js';
 import type { RouteEntry } from '../../src/types.js';
 import { createProxyForRoute } from '../../src/proxy/createProxy.js';
+import { listenOnTestPort } from '../support/testPorts.js';
 
 const mockConfig: GatewayConfig = {
   port: 5000,
@@ -236,20 +237,15 @@ async function startUpstream(): Promise<{ server: Server; origin: string; reques
     response.end('{"ok":true}');
   });
 
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('Upstream test server did not bind a TCP port.');
-  return { server, origin: `http://127.0.0.1:${address.port}`, requestUrl };
+  const origin = await listenOnTestPort(server);
+  return { server, origin, requestUrl };
 }
 
 async function startHangingUpstream(): Promise<{ server: Server; origin: string }> {
   const server = createServer(() => {
     // 故意不写响应，等待 Gateway 的 proxyTimeout 生效。
   });
-  const origin = await listenOnEphemeralPort(server);
+  const origin = await listenOnTestPort(server);
   return { server, origin };
 }
 
@@ -257,27 +253,15 @@ async function startMalformedUpstream(): Promise<{ server: Server; origin: strin
   const server = createServer((_incoming, response) => {
     response.socket?.end('not-an-http-response\r\n\r\n');
   });
-  const origin = await listenOnEphemeralPort(server);
+  const origin = await listenOnTestPort(server);
   return { server, origin };
 }
 
 async function reserveUnavailableOrigin(): Promise<string> {
   const server = createServer();
-  const origin = await listenOnEphemeralPort(server);
+  const origin = await listenOnTestPort(server);
   await closeServer(server);
   return origin;
-}
-
-async function listenOnEphemeralPort(server: Server): Promise<string> {
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  const address = server.address();
-  if (!address || typeof address === 'string') {
-    throw new Error('Upstream test server did not bind a TCP port.');
-  }
-  return `http://127.0.0.1:${address.port}`;
 }
 
 async function closeServer(server: Server): Promise<void> {

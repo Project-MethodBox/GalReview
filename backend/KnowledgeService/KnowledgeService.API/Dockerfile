@@ -1,6 +1,6 @@
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
-EXPOSE 8080
+EXPOSE 5104
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
@@ -24,5 +24,5 @@ USER $APP_UID
 WORKDIR /app
 COPY --from=build /app/publish .
 HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=5 \
-    CMD curl --fail --silent http://127.0.0.1:8080/readyz > /dev/null || exit 1
+    CMD curl --fail --silent http://127.0.0.1:5104/readyz > /dev/null || exit 1
 ENTRYPOINT ["dotnet", "KnowledgeService.API.dll"]
