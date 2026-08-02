@@ -833,3 +833,21 @@ FileService，因此界面所见的纯文本/HTML Bad Gateway 来源于仓库外
 | `dotnet restore --force --no-cache` | 通过 |
 | CI 原命令 `dotnet test ... --nologo` | 348 / 348 通过 |
 | `git diff --check` | 通过 |
+
+## 20. 2026-08-02 Gateway CI 缓存与安装修复
+
+Gateway workflow 的 `cache-dependency-path` 正确指向 `gateway/package-lock.json`，但提交
+`507b0a2` 删除了该文件并将其加入 `gateway/.gitignore`，导致 `actions/setup-node` 无法计算
+npm 缓存键；即使关闭缓存，后续 `npm ci` 也会因缺少 lockfile 失败。本轮恢复原 lockfile 并
+解除忽略，workflow 与 Gateway 接口均无需修改。
+
+| 复验项 | 结果 |
+|---|---:|
+| lockfile v3 与 `package.json` 根依赖一致 | 通过 |
+| `npm ci --no-audit --no-fund` | 通过，干净安装 177 packages |
+| TypeScript build | 通过 |
+| Gateway 自动化测试 | 178 / 178 通过 |
+| `git diff --check` | 通过 |
+
+日志中的 Action Node 20/24 与 `punycode` 内容是非致命弃用提示，本次失败点是缺失的缓存依赖
+路径。项目测试运行时仍由 workflow 固定为 Node 22。
