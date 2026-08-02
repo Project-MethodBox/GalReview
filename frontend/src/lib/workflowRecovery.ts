@@ -42,6 +42,7 @@ export async function recoverWorkflow(): Promise<StudyWorkflow> {
         gameManifest: undefined,
         gamePackage: undefined,
         reviewSession: undefined,
+        visitedSceneIds: undefined,
         answerResults: undefined,
       })
     }
@@ -66,6 +67,7 @@ export async function recoverWorkflow(): Promise<StudyWorkflow> {
     let gameManifest = plan ? current.gameManifest : undefined
     let gamePackage = plan ? current.gamePackage : undefined
     let reviewSession = plan ? current.reviewSession : undefined
+    let visitedSceneIds = plan ? current.visitedSceneIds : undefined
 
     if (gameGeneration && gameGeneration.status !== 'FAILED') {
       try {
@@ -89,9 +91,10 @@ export async function recoverWorkflow(): Promise<StudyWorkflow> {
       gameManifest = undefined
       gamePackage = undefined
       reviewSession = undefined
+      visitedSceneIds = undefined
     }
 
-    return updateWorkflow({ material, graph, chapters, plan, gameGeneration, gameManifest, gamePackage, reviewSession })
+    return updateWorkflow({ material, graph, chapters, plan, gameGeneration, gameManifest, gamePackage, reviewSession, visitedSceneIds })
   })().then((workflow) => {
     lastRecoveryAt = Date.now()
     return workflow

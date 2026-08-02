@@ -77,7 +77,7 @@ export default function StudyFlowPage() {
         if (existingGraph) {
           const chapterList = await api.getChapters(existingGraph.graphId)
           setGraph(existingGraph); setChapters(chapterList); setSelectedChapterIds(chapterList[0] ? [chapterList[0].chapterId] : [])
-          updateWorkflow({ material: readyMaterial, graph: existingGraph, chapters: chapterList, plan: undefined, gameGeneration: undefined, gameStyle: undefined, gameDifficulty: undefined, gameManifest: undefined, gamePackage: undefined, reviewSession: undefined, answerResults: undefined, resultIdempotencyKey: undefined })
+          updateWorkflow({ material: readyMaterial, graph: existingGraph, chapters: chapterList, plan: undefined, gameGeneration: undefined, gameStyle: undefined, gameDifficulty: undefined, gameManifest: undefined, gamePackage: undefined, reviewSession: undefined, visitedSceneIds: undefined, answerResults: undefined, resultIdempotencyKey: undefined })
           setProgress(`已恢复图谱：${existingGraph.chapterCount} 章，${existingGraph.pointCount} 个知识点。`)
           return
         }
@@ -91,7 +91,7 @@ export default function StudyFlowPage() {
 
       const [summary, chapterList] = await Promise.all([api.getKnowledgeGraph(completedBuild.graphId), api.getChapters(completedBuild.graphId)])
       setGraph(summary); setChapters(chapterList); setSelectedChapterIds(chapterList[0] ? [chapterList[0].chapterId] : [])
-      updateWorkflow({ material: readyMaterial, graph: summary, chapters: chapterList, plan: undefined, gameGeneration: undefined, gameStyle: undefined, gameDifficulty: undefined, gameManifest: undefined, gamePackage: undefined, reviewSession: undefined, answerResults: undefined, resultIdempotencyKey: undefined })
+      updateWorkflow({ material: readyMaterial, graph: summary, chapters: chapterList, plan: undefined, gameGeneration: undefined, gameStyle: undefined, gameDifficulty: undefined, gameManifest: undefined, gamePackage: undefined, reviewSession: undefined, visitedSceneIds: undefined, answerResults: undefined, resultIdempotencyKey: undefined })
       setProgress(`图谱完成：${summary.chapterCount} 章，${summary.pointCount} 个知识点。`)
     } catch (reason) {
       const suffix = reason instanceof ApiClientError && reason.traceId ? `（traceId: ${reason.traceId}）` : ''
@@ -136,7 +136,7 @@ export default function StudyFlowPage() {
           maximumInferenceDepth,
         })
         : await api.createLearningPlan(graph.graphId, selectedChapterIds, { maxPoints, maximumDependencyDepth })
-      updateWorkflow({ plan, gameGeneration: undefined, gameStyle: undefined, gameDifficulty: undefined, gameManifest: undefined, gamePackage: undefined, reviewSession: undefined, answerResults: undefined, resultIdempotencyKey: undefined })
+      updateWorkflow({ plan, gameGeneration: undefined, gameStyle: undefined, gameDifficulty: undefined, gameManifest: undefined, gamePackage: undefined, reviewSession: undefined, visitedSceneIds: undefined, answerResults: undefined, resultIdempotencyKey: undefined })
       navigate('/review')
     } catch (reason) { setError(reason instanceof Error ? reason.message : '复习计划创建失败。') } finally { setBusy(false) }
   }

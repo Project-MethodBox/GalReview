@@ -68,7 +68,7 @@ export default function ReviewPage() {
   const [session, setSession] = useState<ReviewSession | undefined>(initial.reviewSession)
   const [runtimeManifest, setRuntimeManifest] = useState<RuntimeManifest>()
   const [sceneId, setSceneId] = useState(initial.reviewSession?.currentSceneId || initial.gamePackage?.entrySceneId || '')
-  const [visitedSceneIds, setVisitedSceneIds] = useState<string[]>(sceneId ? [sceneId] : [])
+  const [visitedSceneIds, setVisitedSceneIds] = useState<string[]>(initial.visitedSceneIds?.length ? initial.visitedSceneIds : sceneId ? [sceneId] : [])
   const [attempt, setAttempt] = useState<AttemptState>({
     answers: initial.answerResults || [],
     attemptsByQuestion: attemptsFromAnswers(initial.answerResults || []),
@@ -94,7 +94,12 @@ export default function ReviewPage() {
     const frame = (now: number) => {
       const adapter = adapterRef.current
       if (!adapter) return
-      adapter.renderFrame(Math.min(100, Math.max(0, now - previous)))
+      try {
+        adapter.renderFrame(Math.min(100, Math.max(0, now - previous)))
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : '渲染运行时已停止。')
+        return
+      }
       previous = now
       frameId = window.requestAnimationFrame(frame)
     }
@@ -112,8 +117,11 @@ export default function ReviewPage() {
     setAdapterVersion((value) => value + 1)
     setRuntimeManifest(manifest)
     const nextSceneId = reviewSession.currentSceneId || pack.entrySceneId
+    const savedVisited = readWorkflow().visitedSceneIds || []
+    const nextVisited = savedVisited.includes(nextSceneId) ? savedVisited : [...savedVisited, nextSceneId]
     setSceneId(nextSceneId)
-    setVisitedSceneIds((current) => current.includes(nextSceneId) ? current : [...current, nextSceneId])
+    setVisitedSceneIds(nextVisited)
+    updateWorkflow({ visitedSceneIds: nextVisited })
     sceneStartedAtRef.current = Date.now()
   }
 
@@ -147,14 +155,14 @@ export default function ReviewPage() {
     if (reviewSession.reviewPlanId !== pack.reviewPlanId || reviewSession.snapshotVersion !== pack.snapshotVersion) {
       throw new Error('复习会话与游戏包快照不一致。')
     }
-    await attachRuntime(renderManifest, pack, reviewSession)
     const resultIdempotencyKey = createUuidV4()
     resultKeyRef.current = resultIdempotencyKey
     setAttempt({ answers: [], attemptsByQuestion: {} })
     setShellCompleted(false)
     setGamePackage(pack)
     setSession(reviewSession)
-    updateWorkflow({ gameGeneration: completed, gameManifest: manifest, gamePackage: pack, reviewSession, answerResults: [], resultIdempotencyKey })
+    updateWorkflow({ gameGeneration: completed, gameManifest: manifest, gamePackage: pack, reviewSession, visitedSceneIds: [reviewSession.currentSceneId || pack.entrySceneId], answerResults: [], resultIdempotencyKey })
+    await attachRuntime(renderManifest, pack, reviewSession)
     setProgress('渲染器已加载，可以开始复习。')
     startedAtRef.current = Date.now()
   }
@@ -285,7 +293,7 @@ export default function ReviewPage() {
         updateWorkflow({ answerResults: nextAnswers })
       }
       if (runtimeManifest?.reviewSessionsAvailable !== false) {
-        await api.appendEvents(session.sessionId, [{
+        void api.appendEvents(session.sessionId, [{
           clientEventId: createUuidV4(),
           type: 'CHOICE_SELECTED',
           occurredAt,
@@ -295,7 +303,7 @@ export default function ReviewPage() {
             questionId: choice.questionId,
             knowledgePointId: choice.knowledgePointId,
           },
-        }])
+        }]).catch(() => undefined)
       }
       const entered = runtimeEvent(events, 'SCENE_ENTERED')
       const nextSceneId = typeof entered?.sceneId === 'string' ? entered.sceneId : choice.nextSceneId
@@ -304,6 +312,7 @@ export default function ReviewPage() {
         const nextVisited = visitedSceneIds.includes(nextSceneId) ? visitedSceneIds : [...visitedSceneIds, nextSceneId]
         await saveSceneProgress(nextSceneId, nextVisited)
         setVisitedSceneIds(nextVisited)
+        updateWorkflow({ visitedSceneIds: nextVisited })
         setSceneId(nextSceneId)
         sceneStartedAtRef.current = Date.now()
       } else {
@@ -325,6 +334,9 @@ export default function ReviewPage() {
     setError('')
     try {
       if (runtimeManifest?.reviewSessionsAvailable === false) {
+        const completedSession = { ...activeSession, status: 'COMPLETED' as const, completedAt: new Date().toISOString() }
+        setSession(completedSession)
+        updateWorkflow({ reviewSession: completedSession })
         setShellCompleted(true)
         setProgress('C++/JS 基础壳已完成本地体验；本次结果未提交，掌握度不会更新。')
         return
@@ -381,7 +393,7 @@ export default function ReviewPage() {
     setShellCompleted(false)
     setError('')
     setProgress('可以调整风格与难度，再生成一次。')
-    updateWorkflow({ gameGeneration: undefined, gameManifest: undefined, gamePackage: undefined, reviewSession: undefined, answerResults: undefined, resultIdempotencyKey: resultKeyRef.current })
+    updateWorkflow({ gameGeneration: undefined, gameManifest: undefined, gamePackage: undefined, reviewSession: undefined, visitedSceneIds: undefined, answerResults: undefined, resultIdempotencyKey: resultKeyRef.current })
   }
 
   if (!initial.plan) {

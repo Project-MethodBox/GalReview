@@ -73,6 +73,7 @@ export default function KnowledgeGraphPage() {
       gameManifest: undefined,
       gamePackage: undefined,
       reviewSession: undefined,
+      visitedSceneIds: undefined,
       answerResults: undefined,
     })
   }

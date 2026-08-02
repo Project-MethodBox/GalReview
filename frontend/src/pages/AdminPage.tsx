@@ -31,14 +31,29 @@ export default function AdminPage() {
     setMessage(`已读取 ${nextUsers.length} 个用户和 ${nextInvitations.length} 个邀请码。`)
   }
 
+  function reportError(reason: unknown, fallback: string) {
+    if (reason instanceof ApiClientError && (reason.status === 401 || reason.status === 403)) {
+      clearAdminSession()
+      navigate('/admin/login', { replace: true })
+      return
+    }
+    setError(reason instanceof Error ? reason.message : fallback)
+  }
+
+  async function refresh() {
+    setBusy(true)
+    try {
+      await load()
+    } catch (reason) {
+      reportError(reason, '管理数据读取失败。')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   useEffect(() => {
     void load().catch((reason: unknown) => {
-      if (reason instanceof ApiClientError && reason.status === 401) {
-        clearAdminSession()
-        navigate('/admin/login', { replace: true })
-        return
-      }
-      setError(reason instanceof Error ? reason.message : '管理数据读取失败。')
+      reportError(reason, '管理数据读取失败。')
     })
   }, [navigate])
 
@@ -58,6 +73,10 @@ export default function AdminPage() {
       setError('限时邀请码需要填写有效的开始和结束时间。')
       return
     }
+    if (type !== 'single-use' && (maxUses < 1 || maxUses > 10000)) {
+      setError('最大使用次数需要在 1 到 10000 之间。')
+      return
+    }
     setBusy(true)
     setError('')
     try {
@@ -70,7 +89,7 @@ export default function AdminPage() {
       setInvitations((current) => [invitation, ...current])
       setMessage(`邀请码 ${invitation.code} 已创建。`)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '邀请码创建失败。')
+      reportError(reason, '邀请码创建失败。')
     } finally {
       setBusy(false)
     }
@@ -85,7 +104,7 @@ export default function AdminPage() {
       setInvitations((current) => current.filter((item) => item.code !== invitation.code))
       setMessage('邀请码已删除。')
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '邀请码删除失败。')
+      reportError(reason, '邀请码删除失败。')
     } finally {
       setBusy(false)
     }
@@ -104,7 +123,7 @@ export default function AdminPage() {
       await api.resetAdminUserPassword(user.id, nextPassword)
       setMessage(`${user.displayName} 的密码已重置，原有会话已失效。`)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '密码重置失败。')
+      reportError(reason, '密码重置失败。')
     } finally {
       setBusy(false)
     }
@@ -119,7 +138,7 @@ export default function AdminPage() {
       setUsers((current) => current.filter((item) => item.id !== user.id))
       setMessage('用户已删除。')
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '用户删除失败。')
+      reportError(reason, '用户删除失败。')
     } finally {
       setBusy(false)
     }
@@ -127,7 +146,7 @@ export default function AdminPage() {
 
   return (
     <main className="admin-page">
-      <header className="admin-header"><div><BrandMark compact /><span><strong>千知万理</strong><small>管理后台</small></span></div><div><button className="button" type="button" disabled={busy} onClick={() => void load()}>刷新</button><button className="button" type="button" onClick={() => void logout()}>退出</button></div></header>
+      <header className="admin-header"><div><BrandMark compact /><span><strong>千知万理</strong><small>管理后台</small></span></div><div><button className="button" type="button" disabled={busy} onClick={() => void refresh()}>刷新</button><button className="button" type="button" onClick={() => void logout()}>退出</button></div></header>
       <div className="admin-content">
         <header className="page-header"><div><h1>系统管理</h1><p>管理用户账户和用于注册的邀请权限。</p></div></header>
         <section className="admin-grid">
