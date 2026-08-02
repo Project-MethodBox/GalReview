@@ -30,6 +30,12 @@ public interface IGameStore
     GamePackage? GetPackage(Guid packageId);
     GamePackageManifest? GetManifest(Guid packageId);
     string? GetPackageOwner(Guid packageId);
+
+    /// <summary>
+    /// 启动恢复：将卡在 RUNNING/QUEUED 的任务标记为 FAILED。
+    /// InMemoryGameStore 无持久化，直接返回 0。
+    /// </summary>
+    int RecoverStaleJobs() => 0;
 }
 
 public sealed class InMemoryGameStore : IGameStore

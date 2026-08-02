@@ -32,7 +32,30 @@ var gatewayKey = builder.Configuration["Gateway:ServiceKey"]
 var isMockMode = string.Equals(
     builder.Configuration["MOONSTONE_MODE"] ?? Environment.GetEnvironmentVariable("MOONSTONE_MODE"),
     "Mock", StringComparison.OrdinalIgnoreCase);
-var storageName = isMockMode ? "mock-memory" : "ephemeral-memory";
+var useMongoStore = !string.Equals(
+    builder.Configuration["GalGameStore:Provider"] ?? Environment.GetEnvironmentVariable("GalGameStore__Provider"),
+    "Memory", StringComparison.OrdinalIgnoreCase);
+var storageName = (isMockMode, useMongoStore) switch
+{
+    (true, true) => "mock-mongodb",
+    (true, false) => "mock-memory",
+    (false, true) => "mongodb",
+    (false, false) => "ephemeral-memory",
+};
+
+// 叙事生成配置（§7.3.2）
+var narrativeSection = builder.Configuration.GetSection(NarrativeGenerationOptions.SectionName);
+var narrativeOptions = narrativeSection.Get<NarrativeGenerationOptions>() ?? new NarrativeGenerationOptions();
+// Mock 模式强制关闭外部模型调用
+if (isMockMode)
+    narrativeOptions.Enabled = false;
+// 注册为单例供 DeepSeekNarrativeClient 和 NarrativeGenerationService 直接注入
+builder.Services.AddSingleton(narrativeOptions);
+
+var narrativeEnabled = narrativeOptions.CanCallProvider;
+var narrativeModel = narrativeOptions.Model;
+var narrativePromptVersion = narrativeOptions.PromptVersion;
+
 var validationAllowedServices = InternalServiceAccessPolicy.CreateAllowlist(
     builder.Configuration.GetSection("InternalAccess:ValidationAllowedServices"),
     "RenderService");
@@ -47,9 +70,32 @@ builder.Services.AddHttpClient("gateway", client =>
     client.Timeout = TimeSpan.FromSeconds(30);
 });
 
+// HttpClient：叙事生成模型调用（DeepSeek 等 OpenAI 兼容端点）
+builder.Services.AddHttpClient("narrative", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(Math.Clamp(narrativeOptions.TimeoutSeconds, 10, 300));
+    client.MaxResponseContentBufferSize = 2 * 1024 * 1024; // 2 MiB 安全上限
+});
+
 // DI 注册
 builder.Services.AddSingleton<GamePackageValidator>();
-builder.Services.AddSingleton<IGameStore>(_ => new InMemoryGameStore(isMockMode));
+builder.Services.AddSingleton<NarrativePromptBuilder>();
+builder.Services.AddSingleton<NarrativeDraftValidator>();
+builder.Services.AddSingleton<INarrativeModelClient>(sp => new DeepSeekNarrativeClient(
+    sp.GetRequiredService<IHttpClientFactory>(),
+    narrativeOptions));
+builder.Services.AddSingleton<NarrativeGenerationService>();
+if (useMongoStore)
+{
+    builder.Services.AddSingleton<IGameStore>(sp => new MongoGameStore(
+        sp.GetRequiredService<IConfiguration>(),
+        sp.GetRequiredService<ILoggerFactory>().CreateLogger<MongoGameStore>(),
+        seedGoldenPackage: isMockMode));
+}
+else
+{
+    builder.Services.AddSingleton<IGameStore>(_ => new InMemoryGameStore(isMockMode));
+}
 builder.Services.AddSingleton<PlanGraphClient>(sp => new PlanGraphClient(
     sp.GetRequiredService<IHttpClientFactory>(),
     sp.GetRequiredService<ILoggerFactory>().CreateLogger<PlanGraphClient>(),
@@ -58,6 +104,28 @@ builder.Services.AddSingleton<PlanGraphClient>(sp => new PlanGraphClient(
 builder.Services.AddSingleton<GameGenerator>();
 
 var app = builder.Build();
+
+// ============================================================================
+// 启动恢复：将因服务重启而卡在 RUNNING/QUEUED 的生成任务标记为 FAILED
+// ============================================================================
+if (useMongoStore)
+{
+    try
+    {
+        var store = app.Services.GetRequiredService<IGameStore>();
+        var recovered = store.RecoverStaleJobs();
+        if (recovered > 0)
+        {
+            var startupLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("GalGameService");
+            startupLogger.LogWarning("Startup recovery: {Count} stale job(s) marked as FAILED", recovered);
+        }
+    }
+    catch (Exception ex)
+    {
+        var startupLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("GalGameService");
+        startupLogger.LogWarning(ex, "Startup recovery failed; stale jobs may remain in RUNNING/QUEUED state");
+    }
+}
 
 // ============================================================================
 // 中间件
@@ -137,8 +205,23 @@ app.Use(async (context, next) =>
 
 app.MapGet("/healthz", (HttpContext c) =>
     Results.Ok(ApiSuccess.Create(new { status = "live" }, c.TraceIdentifier)));
-app.MapGet("/readyz", (HttpContext c) =>
-    Results.Ok(ApiSuccess.Create(new { status = "ready", storage = storageName }, c.TraceIdentifier)));
+app.MapGet("/readyz", (HttpContext c, IGameStore store) =>
+{
+    if (useMongoStore && store is MongoGameStore mongoStore)
+    {
+        var ready = mongoStore.IsReady();
+        if (!ready)
+            return Results.Json(ApiFailure.Create("NOT_READY", "MongoDB 未就绪", c.TraceIdentifier), statusCode: 503);
+    }
+    return Results.Ok(ApiSuccess.Create(new
+    {
+        status = "ready",
+        storage = storageName,
+        narrativeEnabled,
+        narrativeModel,
+        narrativePromptVersion,
+    }, c.TraceIdentifier));
+});
 
 // ============================================================================
 // 端点 1：POST /api/v1/game-generations — 创建游戏包生成任务
@@ -149,7 +232,7 @@ app.MapGet("/readyz", (HttpContext c) =>
 //   - 校验通过 → 202 Accepted，后台异步生成
 // ============================================================================
 
-app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, HttpContext c, IGameStore store, PlanGraphClient planClient, GameGenerator generator) =>
+app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, HttpContext c, IGameStore store, PlanGraphClient planClient, NarrativeGenerationService narrativeService) =>
 {
     var userId = GatewayUser(c, gatewayKey);
     if (userId is null) return Failure(c, 401, "AUTH_REQUIRED", "需要网关认证的用户身份。");
@@ -214,8 +297,10 @@ app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, Ht
             logger.LogInformation("Job {GenerationId} started generating. Style={Style}, Difficulty={Difficulty}",
                 job.GenerationId, request.Style, request.Difficulty);
 
-            // 生成游戏包
-            var package = generator.Generate(graph, request, userId);
+            // 生成游戏包：先由 GameGenerator 生成确定性骨架，
+            // 再由 NarrativeGenerationService 调用 AI 模型重写叙事文本（§7.3.2）
+            // 模型不可用或草稿不合法时自动降级为确定性骨架
+            var package = narrativeService.GenerateAsync(graph, request, userId).GetAwaiter().GetResult();
             var checksum = GamePackageValidator.ComputeChecksum(package);
             var manifest = new GamePackageManifest(
                 package.PackageId, package.SchemaVersion, package.GeneratorVersion,
