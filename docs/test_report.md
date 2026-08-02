@@ -820,3 +820,16 @@ FileService，因此界面所见的纯文本/HTML Bad Gateway 来源于仓库外
 
 本轮没有重新执行文件上传、文本提取、KnowledgeService 构图、浏览器渲染和 mastery 全流程；
 这些接口及数据结构未变，沿用本报告前述已通过结果。
+
+## 19. 2026-08-02 GalGameService CI 修复复验
+
+干净还原发现 `GalGame.GalGameService.csproj` 漏写 `MongoDB.Driver` 依赖，本机旧的
+`obj/project.assets.json` 曾掩盖该问题；同时，合并提交误删了 `GameGenerator` 已有的资源、
+学习模式、讲解深度和语义干扰项实现，却保留了对应测试。本轮恢复显式依赖和被误删的既有实现，
+未改变 Gateway 路由、请求响应结构或 GamePackage schema，因此 `contract.md` 无需调整。
+
+| 复验项 | 结果 |
+|---|---:|
+| `dotnet restore --force --no-cache` | 通过 |
+| CI 原命令 `dotnet test ... --nologo` | 348 / 348 通过 |
+| `git diff --check` | 通过 |
