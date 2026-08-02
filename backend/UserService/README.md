@@ -55,9 +55,13 @@ GET http://localhost:5101/readyz
 ```powershell
 $env:ASPNETCORE_ENVIRONMENT = "Production"
 $env:ASPNETCORE_URLS = "http://127.0.0.1:5101"
-$env:ConnectionStrings__UserDatabase = "Server=127.0.0.1;Port=5251;Database=moonstone_auth;User ID=moonstone_user;Password=REPLACE_ME;SslMode=Required;"
+$env:ConnectionStrings__UserDatabase = "Server=127.0.0.1;Port=3306;Database=moonstone_user;User ID=moonstone_user;Password=REPLACE_ME;SslMode=Required;"
 $env:Gateway__ServiceKey = "REPLACE_WITH_ONE_LONG_RANDOM_SHARED_KEY"
 ```
+
+根目录 Compose 中的 MySQL 保持原生容器端口 `3306`，且不发布到宿主机。连接串中的数据库
+端口属于容器内部或外部数据库协议配置，不受 Docker 宿主 published 端口
+`5000-5300` 的限制。
 
 临时验证时，可在同一个 PowerShell 窗口设置变量后启动服务：
 

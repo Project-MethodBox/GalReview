@@ -1881,7 +1881,8 @@ manifest 指定的最小 WASM、校验游戏包并冻结浏览器本地会话。
 可选 OCRService 不进入 readiness。配置中出现未知 key
 时 Gateway 必须拒绝启动。
 KnowledgeService 在宿主机的默认目标为 `http://localhost:5104`；集成容器网络内使用
-`http://knowledge-service:5104`。
+`http://knowledge-service:8080`。前者是 Docker 发布端口，后者是容器内部监听端口，两者
+不得混用。
 
 ### 9.4 前端适配原则
 
@@ -1900,7 +1901,7 @@ Render runtime 资源。manifest 为 `runtimeMode=SHELL` 时只在浏览器本�
 `reviewSessionsAvailable=true` 后才允许走这些服务端接口。桌面页面不得把 Prototype 的
 固定像素画布直接套到任意屏幕：宽屏主页使用视口高度和弹性网格填满浏览器，认证页的
 内容区、字号与间距随视口连续缩放；移动端和平板仍可按断点改为纵向滚动布局。生产容器
-只暴露 `5120`，并
+在容器内监听 `8080`，默认向宿主发布为 `5120`（由 `FRONTEND_HOST_PORT` 覆盖），并
 把相对 `/api/*` 同源代理到 Gateway；构建产物不得包含某台开发机的服务直连地址。代理
 无法连接 Gateway 时返回 `503 SERVICE_UNAVAILABLE`，保留合法的 `X-Correlation-Id`，
 请求未提供时生成新的关联 ID，并在响应头与 `ApiFailure.traceId` 中返回同一值。
@@ -1908,30 +1909,37 @@ Render runtime 资源。manifest 为 `runtimeMode=SHELL` 时只在浏览器本�
 ### 9.5 容器化运行基线
 
 当前闭环由根目录 `compose.integration.yaml` 编排。接口路径、请求方法、请求体、响应体和
-鉴权方式均保持本契约既有定义；本次只迁移监听端口与连接 URL，不改变任何 API 语义。
-端口和依赖边界固定如下：
+鉴权方式均保持本契约既有定义；宿主端口调整不改变任何 API 语义，也不得反向改写容器
+内部或第三方协议端口。端口和依赖边界如下：
 
-| 组件 | 容器监听 / 宿主暴露 | 说明 |
-|---|---|---|
-| Gateway | `5000 / 5000` | 浏览器和服务间调用的唯一入口；绑定地址由 `GATEWAY_BIND_ADDRESS` 配置 |
-| UserService | `5101 / 不暴露` | 集成环境可使用 `MOONSTONE_MODE=Mock` |
-| AuthService | `5102 / 不暴露` | 集成环境可使用 `MOONSTONE_MODE=Mock` |
-| FileService | `5103 / 不暴露` | 使用 MongoDB + GridFS；只由 Gateway 访问 |
-| KnowledgeService | `5104 / 5104` | 使用 Neo4j；仅诊断端口，绑定地址由 `DIAGNOSTIC_BIND_ADDRESS` 配置 |
-| GalGameService | `5105 / 不暴露` | 只由 Gateway 访问；当前使用进程内临时存储 |
-| RenderService | `5106 / 不暴露` | C++ 编译壳 + JS Adapter/WASM 静态运行时；ReviewSession 尚未实现 |
-| Frontend | `5120 / 5120` | 非 root Node 静态站点；同源代理 `/api` 到 Gateway |
-| OCRService | `5110 / 不暴露` | `ocr` profile 的可选内部依赖，本轮闭环不启动 |
-| User MySQL | `5251 / 不暴露` | 只供 UserService；独立卷 `user-mysql-data` |
-| Auth MySQL | `5252 / 不暴露` | 只供 AuthService；独立卷 `auth-mysql-data` |
-| MongoDB | `5253 / 不暴露` | 只供 FileService |
-| Neo4j | Bolt `5255 / 5255`，Browser `5254 / 5254` | 只由 KnowledgeService 写图，Browser 仅供本地诊断 |
-| SMTP 转发入口 | `5256` | AuthService 的项目侧默认端口；转发层负责适配邮件供应商 |
+| 组件 | 容器监听 | 宿主默认发布 | 说明 |
+|---|---:|---:|---|
+| Gateway | `5000` | `5000` | `GATEWAY_HOST_PORT`；浏览器和服务间调用的唯一入口，绑定地址由 `GATEWAY_BIND_ADDRESS` 配置 |
+| UserService | `5101` | 不发布 | 集成环境可使用 `MOONSTONE_MODE=Mock` |
+| AuthService | `5102` | 不发布 | 集成环境可使用 `MOONSTONE_MODE=Mock` |
+| FileService | `5103` | 不发布 | 使用 MongoDB + GridFS；只由 Gateway 访问 |
+| KnowledgeService | `8080` | `5104` | `KNOWLEDGE_HOST_PORT`；仅诊断，绑定地址由 `DIAGNOSTIC_BIND_ADDRESS` 配置 |
+| GalGameService | `5105` | 不发布 | 只由 Gateway 访问；当前使用进程内临时存储 |
+| RenderService | `5106` | 不发布 | C++ / WASM 运行时与服务适配层，只由 Gateway 访问 |
+| Frontend | `8080` | `5120` | `FRONTEND_HOST_PORT`；非 root Node 静态站点，同源代理 `/api` 到 Gateway |
+| OCRService | `5110` | 不发布 | `ocr` profile 的可选内部依赖，本轮闭环不启动 |
+| User MySQL | `3306` | 不发布 | 只供 UserService；独立卷 `user-mysql-data` |
+| Auth MySQL | `3306` | 不发布 | 只供 AuthService；独立卷 `auth-mysql-data` |
+| MongoDB | `27017` | 不发布 | 只供 FileService |
+| Neo4j Browser | `7474` | `5254` | `NEO4J_BROWSER_HOST_PORT`；仅供受限诊断 |
+| Neo4j Bolt | `7687` | `5255` | `NEO4J_BOLT_HOST_PORT`；KnowledgeService 在容器网络内连接 `neo4j:7687` |
 
-Frontend 本地开发使用 `5121`，本地预览使用 `5122`。RenderService 的代理回退端口仅可从
-`5257-5259` 中分配；测试进程的临时监听端口仅可从 `5260-5299` 中分配。项目服务、项目侧
-代理和已配置依赖的显式监听端口必须位于 `5000-5300`；Docker 拉取镜像、访问软件源或
-外部 HTTPS 服务时使用的协议隐式端口不属于本项目监听端口约束。
+`5000-5300` 只约束 Docker/Compose 发布到宿主机的端口及相应 `*_HOST_PORT` 默认值，因为
+这些端口才位于本项目的宿主防火墙边界。默认发布端口可通过
+`GATEWAY_HOST_PORT`、`KNOWLEDGE_HOST_PORT`、`FRONTEND_HOST_PORT`、
+`NEO4J_BROWSER_HOST_PORT` 和 `NEO4J_BOLT_HOST_PORT` 覆盖；覆盖值仍应位于该范围，并避开
+操作系统保留段。Frontend 本地开发与预览端口默认为 `5121/5122`。
+
+容器 target、Dockerfile `EXPOSE`、服务间 URL、数据库原生端口、测试进程临时端口以及
+SMTP、HTTP(S)、SOCKS 等第三方协议端口不受该范围限制。测试监听应让操作系统分配临时
+端口；AuthService 直接使用 `SMTP_PORT` 指定的供应商端口，默认 `465`，仓库不提供虚构的
+`5256` SMTP 转发服务；系统代理缺少端口时视为未配置，不得为满足项目端口范围而改写其
+协议语义。
 
 容器配置只记录变量名，不在本文或镜像中写真实密钥：
 

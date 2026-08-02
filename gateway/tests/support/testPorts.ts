@@ -1,37 +1,20 @@
 import type { Server } from 'node:http';
 
-const FIRST_TEST_PORT = 5260;
-const LAST_TEST_PORT = 5299;
-const TEST_PORT_COUNT = LAST_TEST_PORT - FIRST_TEST_PORT + 1;
-
-let nextCandidate = FIRST_TEST_PORT + (process.pid % TEST_PORT_COUNT);
-
 /**
- * Bind a test HTTP server inside the repository's reserved test-port range.
- * Parallel Vitest workers may choose the same initial candidate, so occupied
- * ports are skipped until the full range has been tried.
+ * Bind a test HTTP server to an OS-assigned ephemeral port. This avoids fixed
+ * ranges that may overlap Windows WinNAT exclusions or another test worker.
  */
 export async function listenOnTestPort(
   server: Server,
   host = '127.0.0.1',
 ): Promise<string> {
-  for (let attempt = 0; attempt < TEST_PORT_COUNT; attempt += 1) {
-    const port = nextCandidate;
-    nextCandidate = port === LAST_TEST_PORT ? FIRST_TEST_PORT : port + 1;
-
-    try {
-      await tryListen(server, port, host);
-      return `http://${host}:${port}`;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EADDRINUSE') {
-        throw error;
-      }
-    }
+  await tryListen(server, 0, host);
+  const address = server.address();
+  if (!address || typeof address === 'string') {
+    throw new Error('Test server did not bind a TCP port.');
   }
-
-  throw new Error(
-    `No available test port in ${FIRST_TEST_PORT}-${LAST_TEST_PORT}.`,
-  );
+  const originHost = host.includes(':') ? `[${host}]` : host;
+  return `http://${originHost}:${address.port}`;
 }
 
 async function tryListen(server: Server, port: number, host: string): Promise<void> {

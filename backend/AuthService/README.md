@@ -55,7 +55,7 @@ GET http://localhost:5102/readyz  # 当前返回 MySQL 就绪状态
 | `Admin__Username` | 是 | 管理员用户名，仅服务端保存 |
 | `Admin__Password` | 是 | 管理员密码，仅服务端保存 |
 | `Email__SmtpHost` | 密码恢复需要 | SMTP 主机 |
-| `Email__SmtpPort` | 否 | 项目统一默认 `5256`；外部 SMTP 端口由受控转发层映射到该端口 |
+| `Email__SmtpPort` | 否 | SMTP 供应商端口，默认 `465`；这是出站协议配置，不受 Docker 宿主发布端口范围限制 |
 | `Email__UseSsl` | 否 | 默认 `true`；为真时使用 SSL 直连 |
 | `Email__Username` | 密码恢复需要 | SMTP 登录名 |
 | `Email__Password` | 密码恢复需要 | 邮箱授权码，不是邮箱登录密码 |
@@ -67,12 +67,16 @@ GET http://localhost:5102/readyz  # 当前返回 MySQL 就绪状态
 ```powershell
 $env:ASPNETCORE_ENVIRONMENT = "Production"
 $env:ASPNETCORE_URLS = "http://127.0.0.1:5102"
-$env:ConnectionStrings__AuthDatabase = "Server=127.0.0.1;Port=5252;Database=moonstone_auth;User ID=moonstone_auth;Password=REPLACE_ME;SslMode=Required;"
+$env:ConnectionStrings__AuthDatabase = "Server=127.0.0.1;Port=3306;Database=moonstone_auth;User ID=moonstone_auth;Password=REPLACE_ME;SslMode=Required;"
 $env:Gateway__BaseUrl = "http://127.0.0.1:5000"
 $env:Gateway__ServiceKey = "REPLACE_WITH_ONE_LONG_RANDOM_SHARED_KEY"
 $env:Admin__Username = "REPLACE_ADMIN_USERNAME"
 $env:Admin__Password = "REPLACE_ADMIN_PASSWORD"
 ```
+
+根目录 Compose 中 AuthService 专用 MySQL 保持原生端口 `3306`，且不发布到宿主机。
+数据库连接串和 Gateway 服务间 URL 不属于 Docker 宿主 published 端口
+`5000-5300` 的限制范围。
 
 临时验证时，可在同一个 PowerShell 窗口设置变量后启动服务：
 
@@ -198,11 +202,14 @@ AuthService 在 `moonstone_auth` 中拥有以下表：
 
 ## 6. SMTP 与密码恢复邮件
 
-邮件供应商若要求范围外端口，先由本机或内网 SMTP 转发层适配；AuthService 只连接转发入口 `5256`。密码必须使用邮箱后台生成的 SMTP 授权码，不能使用邮箱网页登录密码。
+AuthService 直接连接 `Email__SmtpHost` 指定的邮件供应商，并使用供应商要求的端口；默认
+`465` 配合 `Email__UseSsl=true`。SMTP 是出站协议，不属于项目 Docker 宿主 published
+端口的 `5000-5300` 防火墙约束。仓库没有 `5256` SMTP 转发服务。密码必须使用邮箱后台
+生成的 SMTP 授权码，不能使用邮箱网页登录密码。
 
 ```powershell
-$env:Email__SmtpHost = "YOUR_SMTP_RELAY_HOST"
-$env:Email__SmtpPort = "5256"
+$env:Email__SmtpHost = "YOUR_SMTP_HOST"
+$env:Email__SmtpPort = "465"
 $env:Email__UseSsl = "true"
 $env:Email__Username = "your-sender@126.com"
 $env:Email__Password = "YOUR_SMTP_AUTHORIZATION_CODE"

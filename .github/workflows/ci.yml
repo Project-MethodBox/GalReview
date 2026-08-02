@@ -19,14 +19,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  port-policy:
-    name: Port policy
+  published-port-policy:
+    name: Published host port policy
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Require configured ports to stay in range
+      - name: Keep host-published ports inside the firewall range
         shell: pwsh
         run: ./scripts/Test-PortPolicy.ps1
 

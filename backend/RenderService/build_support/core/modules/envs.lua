@@ -92,17 +92,25 @@ function parse_macos_system_proxy(text)
     local function value(name)
         return text:match(name .. "%s*:%s*([^%s}]+)")
     end
-    local http, https
-    if enabled("HTTP") and value("HTTPProxy") then
-        http = "http://" .. value("HTTPProxy") .. ":" .. (value("HTTPPort") or "5257")
+    local function endpoint(enable_name, host_name, port_name, scheme)
+        if not enabled(enable_name) then
+            return nil
+        end
+        local host = value(host_name)
+        local port = value(port_name)
+        if not host or not port then
+            return nil
+        end
+        return scheme .. "://" .. host .. ":" .. port
     end
-    if enabled("HTTPS") and value("HTTPSProxy") then
-        https = "http://" .. value("HTTPSProxy") .. ":" .. (value("HTTPSPort") or "5258")
-    end
-    if not http and not https and enabled("SOCKS") and value("SOCKSProxy") then
-        local socks = "socks5h://" .. value("SOCKSProxy") .. ":" .. (value("SOCKSPort") or "5259")
-        http = socks
-        https = socks
+    local http = endpoint("HTTP", "HTTPProxy", "HTTPPort", "http")
+    local https = endpoint("HTTPS", "HTTPSProxy", "HTTPSPort", "http")
+    if not http and not https then
+        local socks = endpoint("SOCKS", "SOCKSProxy", "SOCKSPort", "socks5h")
+        if socks then
+            http = socks
+            https = socks
+        end
     end
     if not http and not https then
         return nil

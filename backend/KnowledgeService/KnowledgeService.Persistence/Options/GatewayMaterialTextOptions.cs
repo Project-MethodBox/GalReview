@@ -21,12 +21,6 @@ public sealed class GatewayMaterialTextOptions
                 "GatewayMaterialText:BaseUrl must be an absolute HTTP(S) URI.");
         }
 
-        if (!uri.IsDefaultPort && (uri.Port < 5000 || uri.Port > 5300))
-        {
-            throw new InvalidOperationException(
-                "GatewayMaterialText:BaseUrl port must be between 5000 and 5300.");
-        }
-
         if (string.IsNullOrWhiteSpace(ServiceName))
         {
             throw new InvalidOperationException(

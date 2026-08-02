@@ -5,16 +5,9 @@ import { createServer, request as httpRequest } from 'node:http'
 import { extname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const portText = process.env.PORT || '5120'
-const port = Number.parseInt(portText, 10)
-if (!/^\d+$/.test(portText) || port < 5000 || port > 5300) {
-  throw new RangeError('PORT must be an integer between 5000 and 5300')
-}
+const port = Number.parseInt(process.env.PORT || '8080', 10)
 const staticRoot = fileURLToPath(new URL('./dist/', import.meta.url))
 const gateway = new URL(process.env.GATEWAY_UPSTREAM || 'http://gateway:5000')
-if (gateway.port && (Number(gateway.port) < 5000 || Number(gateway.port) > 5300)) {
-  throw new RangeError('GATEWAY_UPSTREAM port must be between 5000 and 5300')
-}
 
 const contentTypes = new Map([
   ['.css', 'text/css; charset=utf-8'],

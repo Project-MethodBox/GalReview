@@ -33,21 +33,21 @@
 
 ## 服务职责
 
-| 服务 | 默认端口 | 职责 |
+| 服务 | 本地或宿主默认入口 | 职责 |
 | --- | ---: | --- |
 | Gateway | 5000 | 浏览器与服务间调用的统一入口；鉴权、代理、限流与追踪。 |
 | UserService | 5101 | 用户资料、学习偏好与账户生命周期。 |
 | AuthService | 5102 | 注册、登录、密码、令牌、会话、邀请码和管理员账户治理。 |
 | FileService | 5103 | 资料上传、GridFS 存储、文本提取与解析任务。 |
-| KnowledgeService | 5104 | 知识图谱、知识点、关系与学习计划。 |
+| KnowledgeService | 5104（Compose 宿主映射） | 知识图谱、知识点、关系与学习计划。 |
 | GalGameService | 5105 | 根据图谱与计划生成游戏包。 |
 | RenderService | 5106 | 提供 JS/WASM 运行时资源，供浏览器加载游戏包。 |
 | OCRService（可选） | 5110 | 图片与扫描件文字识别。 |
-| Frontend（生产） | 5120 | 对外提供前端静态站点，并同源代理 `/api`。 |
+| Frontend（生产） | 5120（Compose 宿主映射） | 对外提供前端静态站点，并同源代理 `/api`。 |
 | Frontend（开发） | 5121 | Vite 开发服务器。 |
 | Frontend（预览） | 5122 | Vite 预览服务器。 |
 
-> 完整的服务边界、接口、固定端口和安全要求以 [开发契约](./docs/contract.md) 为准。
+> 完整的服务边界、接口、容器内外端口映射和安全要求以 [开发契约](./docs/contract.md) 为准。
 
 ## 本地开发依赖
 
@@ -55,17 +55,22 @@
 - Node.js 22 或更新的 LTS 版本。
 - MySQL 8：本地开发配置，目前使用 `127.0.0.1:3306`。
 - MongoDB：本地开发配置，目前使用 `127.0.0.1:27017`。
-- Neo4j：Bolt `5255`，Browser `5254`。
+- Neo4j：本机原生端口为 Bolt `7687`、Browser `7474`；Compose 默认向宿主映射为
+  `5255/5254`。
 - 可选：Python 3.13 与 OCRService 所需依赖。
 
-本地开发中，MySQL 与 MongoDB 使用各自常见默认端口；端口策略已明确允许 `3306`、`27017`。集成与部署环境的固定端口规划见 [部署指南](./docs/deploy.md)。数据库服务仅供本机后端访问时，不应向公网开放。
+`5000-5300` 只约束 Docker 发布到宿主机、可能需要配置防火墙的端口。MySQL `3306`、
+MongoDB `27017`、Neo4j `7474/7687`、容器 target、服务间 URL、SMTP/代理端口和测试临时
+端口都不属于这一限制。宿主 published 端口可通过 `.env` 中的 `*_HOST_PORT` 调整；完整
+规划见[部署指南](./docs/deploy.md)。数据库不应向公网发布。
 
 ## 快速启动
 
 1. 启动 MySQL、MongoDB 与 Neo4j，并确认 Neo4j Bolt 可访问：
 
    ```powershell
-   Test-NetConnection 127.0.0.1 -Port 5255
+   # 本机安装的 Neo4j；若使用 Compose 宿主映射则改为实际 NEO4J_BOLT_HOST_PORT（默认 5255）
+   Test-NetConnection 127.0.0.1 -Port 7687
    ```
 
 2. 在两个终端安装 Node 依赖：
@@ -106,7 +111,7 @@
 ## 常用验证命令
 
 ```powershell
-# 端口策略：除 3306、27017 外，显式项目端口必须位于 5000–5300。
+# 只检查 Compose/docker publish 的宿主侧与 *_HOST_PORT 默认值是否位于 5000–5300。
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PortPolicy.ps1
 
 # Gateway
@@ -122,7 +127,7 @@ dotnet test backend\GalGameService\Tests\GalGame.GalGameService.Tests.csproj
 dotnet test backend\KnowledgeService\KnowledgeService.Tests\KnowledgeService.Tests.csproj
 ```
 
-GitHub Actions 会执行端口策略、.NET 构建与测试，以及 Gateway 构建与测试。
+GitHub Actions 会执行宿主发布端口策略、.NET 构建与测试，以及 Gateway 构建与测试。
 
 ## 目录结构
 

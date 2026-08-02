@@ -35,9 +35,11 @@ npm run build
 
 ```powershell
 docker build -t galreview-frontend ./frontend
-docker run --rm -p 5120:5120 -e GATEWAY_UPSTREAM=http://host.docker.internal:5000 galreview-frontend
+docker run --rm -p 5120:8080 -e GATEWAY_UPSTREAM=http://host.docker.internal:5000 galreview-frontend
 ```
 
-容器由非 root Node 进程在 `5120` 提供静态页面和 `/healthz`，并将同源 `/api` 转发至
-`GATEWAY_UPSTREAM`。在 Compose 网络中该值应使用 Gateway 的服务名和容器端口，例如
-`http://gateway:5000`。
+容器由非 root Node 进程在内部端口 `8080` 提供静态页面和 `/healthz`，上例把宿主
+`5120` 发布到该 target。根目录 Compose 使用 `FRONTEND_HOST_PORT` 配置宿主侧，默认
+`5120`；只有 published 侧受 `5000-5300` 防火墙范围限制。容器 target 和
+`GATEWAY_UPSTREAM` 这类服务间 URL 不受该范围限制。在 Compose 网络中上游应使用 Gateway
+服务名和容器端口，例如 `http://gateway:5000`。
