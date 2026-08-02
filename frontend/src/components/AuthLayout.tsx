@@ -3,7 +3,7 @@ import BrandMark from './BrandMark'
 
 interface AuthLayoutProps {
   children: ReactNode
-  page: 'login' | 'register' | 'forgot'
+  page: 'login' | 'register' | 'forgot' | 'admin'
 }
 
 export default function AuthLayout({ children, page }: AuthLayoutProps) {

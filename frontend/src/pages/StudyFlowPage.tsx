@@ -5,7 +5,7 @@ import { api, ApiClientError } from '../lib/api'
 import { pollUntil } from '../lib/poll'
 import { readWorkflow, resetWorkflow, updateWorkflow } from '../lib/workflow'
 import { newestGraph } from '../lib/workflowRecovery'
-import type { Chapter, IngestionJob, KnowledgeGraphSummary, Material, PlanGraph, ReviewPlanType } from '../types/api'
+import type { Chapter, ExtractedTextDocument, IngestionJob, KnowledgeGraphSummary, Material, PlanGraph, ReviewPlanType } from '../types/api'
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024
 
@@ -27,6 +27,11 @@ export default function StudyFlowPage() {
   const [chapters, setChapters] = useState<Chapter[]>(initial.chapters || [])
   const [selectedChapterIds, setSelectedChapterIds] = useState<string[]>(initial.chapters?.[0] ? [initial.chapters[0].chapterId] : [])
   const [planType, setPlanType] = useState<ReviewPlanType>('ASSESSMENT')
+  const [maxQuestions, setMaxQuestions] = useState(6)
+  const [coveragePercent, setCoveragePercent] = useState(80)
+  const [maximumInferenceDepth, setMaximumInferenceDepth] = useState(3)
+  const [maxPoints, setMaxPoints] = useState(12)
+  const [maximumDependencyDepth, setMaximumDependencyDepth] = useState(5)
   const [file, setFile] = useState<File | null>(null)
   const [displayName, setDisplayName] = useState('')
   const [subjectCode, setSubjectCode] = useState(initial.graph?.subjectCode || 'GENERAL')
@@ -37,6 +42,9 @@ export default function StudyFlowPage() {
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState(initial.graph ? '图谱已就绪，可以选择复习范围。' : '选择文件或已上传资料。')
   const [error, setError] = useState('')
+  const [preview, setPreview] = useState<ExtractedTextDocument>()
+  const [previewName, setPreviewName] = useState('')
+  const [previewBusy, setPreviewBusy] = useState(false)
 
   useEffect(() => {
     void api.getAllMaterials().then(setMaterials).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : '资料列表读取失败。'))
@@ -56,7 +64,7 @@ export default function StudyFlowPage() {
         const accepted = await api.createIngestionJob(source.materialId, { force, enableOcr, ocrMode })
         const completed = await pollUntil(() => api.getIngestionJob(accepted.jobId), (job) => job.status === 'SUCCEEDED' || job.status === 'FAILED', (job) => setProgress(ingestionText(job)))
         if (completed.status === 'FAILED') throw jobError(completed.error, '资料文字提取失败。')
-        readyMaterial = { ...source, status: 'READY', latestIngestionJobId: completed.jobId }
+        readyMaterial = await api.getMaterial(source.materialId)
         setMaterial(readyMaterial)
         setMaterials((current) => current.map((item) => item.materialId === source.materialId ? readyMaterial : item))
         setProgress(completed.ocrUsed ? 'OCR 已完成，正在构建图谱。' : '文字提取完成，正在构建图谱。')
@@ -69,7 +77,7 @@ export default function StudyFlowPage() {
         if (existingGraph) {
           const chapterList = await api.getChapters(existingGraph.graphId)
           setGraph(existingGraph); setChapters(chapterList); setSelectedChapterIds(chapterList[0] ? [chapterList[0].chapterId] : [])
-          updateWorkflow({ material: readyMaterial, graph: existingGraph, chapters: chapterList, plan: undefined, gameManifest: undefined, gamePackage: undefined, reviewSession: undefined, answerResults: undefined, resultIdempotencyKey: undefined })
+          updateWorkflow({ material: readyMaterial, graph: existingGraph, chapters: chapterList, plan: undefined, gameGeneration: undefined, gameStyle: undefined, gameDifficulty: undefined, gameManifest: undefined, gamePackage: undefined, reviewSession: undefined, answerResults: undefined, resultIdempotencyKey: undefined })
           setProgress(`已恢复图谱：${existingGraph.chapterCount} 章，${existingGraph.pointCount} 个知识点。`)
           return
         }
@@ -83,7 +91,7 @@ export default function StudyFlowPage() {
 
       const [summary, chapterList] = await Promise.all([api.getKnowledgeGraph(completedBuild.graphId), api.getChapters(completedBuild.graphId)])
       setGraph(summary); setChapters(chapterList); setSelectedChapterIds(chapterList[0] ? [chapterList[0].chapterId] : [])
-      updateWorkflow({ material: readyMaterial, graph: summary, chapters: chapterList, plan: undefined, gameManifest: undefined, gamePackage: undefined, reviewSession: undefined, answerResults: undefined, resultIdempotencyKey: undefined })
+      updateWorkflow({ material: readyMaterial, graph: summary, chapters: chapterList, plan: undefined, gameGeneration: undefined, gameStyle: undefined, gameDifficulty: undefined, gameManifest: undefined, gamePackage: undefined, reviewSession: undefined, answerResults: undefined, resultIdempotencyKey: undefined })
       setProgress(`图谱完成：${summary.chapterCount} 章，${summary.pointCount} 个知识点。`)
     } catch (reason) {
       const suffix = reason instanceof ApiClientError && reason.traceId ? `（traceId: ${reason.traceId}）` : ''
@@ -113,10 +121,22 @@ export default function StudyFlowPage() {
   async function createPlan() {
     if (!graph) return
     if (selectedChapterIds.length === 0) return setError('至少选择一个章节。')
+    if (planType === 'ASSESSMENT' && (maxQuestions < 1 || maxQuestions > 50 || coveragePercent < 25 || coveragePercent > 100 || maximumInferenceDepth < 0 || maximumInferenceDepth > 8)) {
+      return setError('测试计划参数超出允许范围，请检查题目数量、覆盖目标和推理深度。')
+    }
+    if (planType === 'LEARNING' && (maxPoints < 1 || maxPoints > 50 || maximumDependencyDepth < 0 || maximumDependencyDepth > 8)) {
+      return setError('学习计划参数超出允许范围，请检查知识点数量和依赖深度。')
+    }
     setBusy(true); setError(''); setProgress('正在生成复习计划。')
     try {
-      const plan: PlanGraph = planType === 'ASSESSMENT' ? await api.createAssessmentPlan(graph.graphId, selectedChapterIds) : await api.createLearningPlan(graph.graphId, selectedChapterIds)
-      updateWorkflow({ plan, gameManifest: undefined, gamePackage: undefined, reviewSession: undefined, answerResults: undefined, resultIdempotencyKey: undefined })
+      const plan: PlanGraph = planType === 'ASSESSMENT'
+        ? await api.createAssessmentPlan(graph.graphId, selectedChapterIds, {
+          maxQuestions,
+          coverageTarget: coveragePercent / 100,
+          maximumInferenceDepth,
+        })
+        : await api.createLearningPlan(graph.graphId, selectedChapterIds, { maxPoints, maximumDependencyDepth })
+      updateWorkflow({ plan, gameGeneration: undefined, gameStyle: undefined, gameDifficulty: undefined, gameManifest: undefined, gamePackage: undefined, reviewSession: undefined, answerResults: undefined, resultIdempotencyKey: undefined })
       navigate('/review')
     } catch (reason) { setError(reason instanceof Error ? reason.message : '复习计划创建失败。') } finally { setBusy(false) }
   }
@@ -130,6 +150,20 @@ export default function StudyFlowPage() {
       if (material?.materialId === item.materialId) { resetWorkflow(); setMaterial(undefined); setGraph(undefined); setChapters([]); setSelectedChapterIds([]) }
       setProgress('资料已删除。')
     } catch (reason) { setError(reason instanceof Error ? reason.message : '资料删除失败。') } finally { setBusy(false) }
+  }
+
+  async function openTextPreview(item: Material) {
+    setPreviewBusy(true)
+    setError('')
+    try {
+      const document = await api.getExtractedTextPreview(item.materialId)
+      setPreview(document)
+      setPreviewName(item.displayName)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '提取文本预览读取失败。')
+    } finally {
+      setPreviewBusy(false)
+    }
   }
 
   return (
@@ -155,7 +189,7 @@ export default function StudyFlowPage() {
             <section className="material-library">
               <header><div><h2>资料库</h2><p>{materials.filter((item) => item.status !== 'DELETED').length} 份资料</p></div><input aria-label="搜索资料" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索资料" /></header>
               <div className="material-table">
-                {visibleMaterials.map((item) => <article className={material?.materialId === item.materialId ? 'selected' : ''} key={item.materialId}><button className="material-open" type="button" disabled={busy} onClick={() => void processMaterial(item)}><span><strong>{item.displayName}</strong><small>{item.originalFileName}</small></span><em>{item.status}</em></button><button className="material-delete" type="button" disabled={busy || item.status === 'PROCESSING'} onClick={() => void deleteMaterial(item)}>删除</button></article>)}
+                {visibleMaterials.map((item) => <article className={material?.materialId === item.materialId ? 'selected' : ''} key={item.materialId}><button className="material-open" type="button" disabled={busy} onClick={() => void processMaterial(item)}><span><strong>{item.displayName}</strong><small>{item.originalFileName}</small></span><em>{item.status}</em></button><div className="material-actions">{item.status === 'READY' ? <button type="button" disabled={previewBusy} onClick={() => void openTextPreview(item)}>文本</button> : null}<button className="material-delete" type="button" disabled={busy || item.status === 'PROCESSING'} onClick={() => void deleteMaterial(item)}>删除</button></div></article>)}
                 {!visibleMaterials.length ? <p className="empty-row">没有匹配的资料。</p> : null}
               </div>
             </section>
@@ -168,11 +202,28 @@ export default function StudyFlowPage() {
               <div className="segmented-control"><button className={planType === 'ASSESSMENT' ? 'active' : ''} type="button" onClick={() => setPlanType('ASSESSMENT')}>全面测试</button><button className={planType === 'LEARNING' ? 'active' : ''} type="button" onClick={() => setPlanType('LEARNING')}>章节学习</button></div>
               <div className="chapter-actions"><button type="button" onClick={() => setSelectedChapterIds(chapters.map((item) => item.chapterId))}>全选</button><button type="button" onClick={() => setSelectedChapterIds([])}>清空</button></div>
               <div className="chapter-picker">{chapters.map((chapter) => <label key={chapter.chapterId} style={{ paddingLeft: `${chapter.depth * 14}px` }}><input type="checkbox" checked={selectedChapterIds.includes(chapter.chapterId)} onChange={() => setSelectedChapterIds((current) => current.includes(chapter.chapterId) ? current.filter((id) => id !== chapter.chapterId) : [...current, chapter.chapterId])} /><span>{chapter.title}</span></label>)}</div>
+              <details className="plan-options">
+                <summary>计划参数</summary>
+                {planType === 'ASSESSMENT' ? <div className="plan-options__grid">
+                  <label>题目上限<input type="number" min={1} max={50} value={maxQuestions} onChange={(event) => setMaxQuestions(Number(event.target.value))} /></label>
+                  <label>覆盖目标（%）<input type="number" min={25} max={100} value={coveragePercent} onChange={(event) => setCoveragePercent(Number(event.target.value))} /></label>
+                  <label>推理深度<input type="number" min={0} max={8} value={maximumInferenceDepth} onChange={(event) => setMaximumInferenceDepth(Number(event.target.value))} /></label>
+                </div> : <div className="plan-options__grid">
+                  <label>知识点上限<input type="number" min={1} max={50} value={maxPoints} onChange={(event) => setMaxPoints(Number(event.target.value))} /></label>
+                  <label>依赖深度<input type="number" min={0} max={8} value={maximumDependencyDepth} onChange={(event) => setMaximumDependencyDepth(Number(event.target.value))} /></label>
+                </div>}
+              </details>
               <button className="button button--primary" type="button" disabled={busy || selectedChapters.length === 0} onClick={() => void createPlan()}>创建{planType === 'ASSESSMENT' ? '测试' : '学习'}计划</button>
             </>}
           </aside>
         </div>
         <p className={error ? 'status-line status-line--error' : 'status-line'} role="status">{error || progress}</p>
+        {preview ? <div className="preview-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreview(undefined) }}>
+          <section className="text-preview" role="dialog" aria-modal="true" aria-labelledby="text-preview-title">
+            <header><div><span>提取文本</span><h2 id="text-preview-title">{previewName}</h2><p>{preview.textLength.toLocaleString('zh-CN')} 字符 · {preview.parserVersion}</p></div><button type="button" aria-label="关闭文本预览" onClick={() => setPreview(undefined)}>关闭</button></header>
+            <pre>{preview.text}</pre>
+          </section>
+        </div> : null}
       </main>
     </AppShell>
   )

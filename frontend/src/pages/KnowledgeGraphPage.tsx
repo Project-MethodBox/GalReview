@@ -3,18 +3,20 @@ import { Link } from 'react-router'
 import AppShell, { PageHeader } from '../components/AppShell'
 import KnowledgeDag from '../components/KnowledgeDag'
 import { api } from '../lib/api'
-import { readWorkflow } from '../lib/workflow'
-import type { Chapter, KnowledgePoint, KnowledgeRelation } from '../types/api'
+import { readWorkflow, updateWorkflow } from '../lib/workflow'
+import type { Chapter, KnowledgeGraphSummary, KnowledgePoint, KnowledgeRelation } from '../types/api'
 
 const relationText = { PREREQUISITE: '前置', RELATED: '相关', CONTRASTS: '对照' } as const
 type RelationFilter = 'all' | 'prerequisite' | 'related'
 
 export default function KnowledgeGraphPage() {
   const workflow = readWorkflow()
+  const [graph, setGraph] = useState<KnowledgeGraphSummary | undefined>(workflow.graph)
+  const [graphVersions, setGraphVersions] = useState<KnowledgeGraphSummary[]>(workflow.graph ? [workflow.graph] : [])
   const [chapters, setChapters] = useState<Chapter[]>(workflow.chapters || [])
   const [points, setPoints] = useState<KnowledgePoint[]>([])
   const [relations, setRelations] = useState<KnowledgeRelation[]>([])
-  const [loading, setLoading] = useState(Boolean(workflow.graph))
+  const [loading, setLoading] = useState(Boolean(graph))
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
   const [chapterId, setChapterId] = useState('all')
@@ -22,27 +24,58 @@ export default function KnowledgeGraphPage() {
   const [selectedPointId, setSelectedPointId] = useState<string>()
 
   useEffect(() => {
-    if (!workflow.graph) return
+    if (!workflow.material) return
+    let active = true
+    void api.getAllKnowledgeGraphs(workflow.material.materialId).then((items) => {
+      if (active) setGraphVersions(items.filter((item) => item.status !== 'DRAFT').sort((left, right) => right.version - left.version))
+    }).catch(() => undefined)
+    return () => { active = false }
+  }, [workflow.material?.materialId])
+
+  useEffect(() => {
+    if (!graph) return
     let active = true
     setLoading(true)
     setError('')
     void Promise.all([
-      api.getChapters(workflow.graph.graphId),
-      api.getAllPoints(workflow.graph.graphId),
-      api.getAllRelations(workflow.graph.graphId),
+      api.getChapters(graph.graphId),
+      api.getAllPoints(graph.graphId),
+      api.getAllRelations(graph.graphId),
     ]).then(([chapterList, pointList, relationList]) => {
       if (!active) return
       setChapters(chapterList)
       setPoints(pointList)
       setRelations(relationList)
       setSelectedPointId(pointList[0]?.pointId)
+      updateWorkflow({ graph, chapters: chapterList })
     }).catch((reason: unknown) => {
       if (active) setError(reason instanceof Error ? reason.message : '图谱读取失败。')
     }).finally(() => {
       if (active) setLoading(false)
     })
     return () => { active = false }
-  }, [workflow.graph?.graphId])
+  }, [graph?.graphId])
+
+  async function switchGraph(graphId: string) {
+    const nextGraph = graphVersions.find((item) => item.graphId === graphId)
+    if (!nextGraph || nextGraph.graphId === graph?.graphId) return
+    setGraph(nextGraph)
+    setChapters([])
+    setPoints([])
+    setRelations([])
+    setChapterId('all')
+    setSelectedPointId(undefined)
+    updateWorkflow({
+      graph: nextGraph,
+      chapters: undefined,
+      plan: undefined,
+      gameGeneration: undefined,
+      gameManifest: undefined,
+      gamePackage: undefined,
+      reviewSession: undefined,
+      answerResults: undefined,
+    })
+  }
 
   const sortedChapters = useMemo(() => [...chapters].sort((a, b) => b.depth - a.depth || a.ordinal - b.ordinal || a.title.localeCompare(b.title, 'zh-CN')), [chapters])
   const pointById = useMemo(() => new Map(points.map((point) => [point.pointId, point])), [points])
@@ -86,9 +119,9 @@ export default function KnowledgeGraphPage() {
   return (
     <AppShell>
       <main className="page graph-page">
-        <PageHeader title="知识图谱" description={workflow.material?.displayName || '查看知识点之间的先修路径和关联。'} actions={<Link className="button" to="/materials">创建计划</Link>} />
-        {!workflow.graph ? <section className="empty-state"><h2>还没有知识图谱</h2><p>处理资料后，章节、知识点和关系会显示在这里。</p><Link className="button button--primary" to="/materials">上传资料</Link></section> : <>
-          <section className="data-strip" aria-label="图谱概况"><div><span>章节</span><strong>{chapters.length || workflow.graph.chapterCount}</strong></div><div><span>知识点</span><strong>{points.length || workflow.graph.pointCount}</strong></div><div><span>关系</span><strong>{relations.length || workflow.graph.relationCount}</strong></div></section>
+        <PageHeader title="知识图谱" description={workflow.material?.displayName || '查看知识点之间的先修路径和关联。'} actions={<>{graphVersions.length > 1 ? <label className="graph-version-control"><span>图谱版本</span><select value={graph?.graphId || ''} onChange={(event) => void switchGraph(event.target.value)}>{graphVersions.map((item) => <option key={item.graphId} value={item.graphId}>v{item.version} · {item.status}</option>)}</select></label> : null}<Link className="button" to="/materials">创建计划</Link></>} />
+        {!graph ? <section className="empty-state"><h2>还没有知识图谱</h2><p>处理资料后，章节、知识点和关系会显示在这里。</p><Link className="button button--primary" to="/materials">上传资料</Link></section> : <>
+          <section className="data-strip" aria-label="图谱概况"><div><span>章节</span><strong>{chapters.length || graph.chapterCount}</strong></div><div><span>知识点</span><strong>{points.length || graph.pointCount}</strong></div><div><span>关系</span><strong>{relations.length || graph.relationCount}</strong></div></section>
           {error ? <p className="status-line status-line--error" role="alert">{error}</p> : null}
           <div className="graph-workbench">
             <aside className="chapter-outline">
