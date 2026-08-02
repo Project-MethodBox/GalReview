@@ -1,0 +1,22 @@
+{
+    "schemaVersion": "1.0",
+    "packageId": "22222222-2222-2222-2222-222222222222",
+    "generatorVersion": "gala-0.1.0",
+    "reviewPlanId": "8e812950-3311-40a7-93ab-636409df8cc2",
+    "snapshotVersion": "plan-graph-1.0:3da5f48f",
+    "entrySceneId": "scene-001",
+    "scenes": [
+        {
+            "sceneId": "scene-001",
+            "title": null,
+            "dialogue": [
+                { "speakerId": "", "text": "speakerId 为空", "emotion": null },
+                { "speakerId": "hero", "text": "   ", "emotion": null },
+                null
+            ],
+            "choices": [],
+            "knowledgeBindings": []
+        }
+    ],
+    "assets": []
+}
