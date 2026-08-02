@@ -181,6 +181,9 @@ dotnet test backend/GalGameService/Tests/GalGame.GalGameService.Tests.csproj
 - 使用 `InMemoryGameStore` 存储任务和游戏包
 - `PlanGraphClient` 返回内置 PlanGraph（无需 KnowledgeService）
 - 启动时预置黄金游戏包（`f2561bb2-b88c-47ef-b0ae-8f283ff64f1b`）
+- 默认 Mock 保持下表冻结的 `reviewPlanId`、`snapshotVersion` 与 `ownerUserId` 校验。用于全链路页面联调时，可显式设置 `GalGameMock:UseFixedStory=true`：服务仍校验请求字段和可信用户身份，但以当前请求的计划、快照和用户归属封装内置图谱，忽略上传资料、`style`、`difficulty`、`locale` 与 `seed` 对叙事文本的影响，始终生成同一套原创演示剧情《雾岚町的夏祭前夜》。
+- 演示包固定为四个场景：夏祭前夜 → 温室讲解 → 风铃谜题 → 夏祭灯火。每次生成仍创建新的 `packageId`，任务、包所有者与权限校验不会被 Mock 绕过。
+- Mock 不调用外部叙事模型，也不读取或依赖前端上传文件、FileService 或 KnowledgeService。
 
 ### Mock 测试数据
 
