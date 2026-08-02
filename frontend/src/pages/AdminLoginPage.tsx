@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router'
 import ActionButton from '../components/ActionButton'
-import AuthLayout, { AuthHeading } from '../components/AuthLayout'
+import AuthLayout, { AuthEntryHeading } from '../components/AuthLayout'
 import FormField from '../components/FormField'
 import { api } from '../lib/api'
 import { clearAdminSession, saveAdminSession } from '../lib/adminSession'
@@ -34,12 +34,12 @@ export default function AdminLoginPage() {
   }
 
   return (
-    <AuthLayout page="admin">
+    <AuthLayout page="admin" storyCardVariant="blue">
       <form className="auth-form" onSubmit={submit}>
-        <AuthHeading title="管理后台" subtitle="管理用户账户和注册邀请码。" />
-        <FormField label="管理员账号" name="admin-username" autoComplete="username" placeholder="输入管理员账号" value={username} onChange={(event) => setUsername(event.target.value)} onClear={() => setUsername('')} />
-        <FormField label="管理员密码" name="admin-password" autoComplete="current-password" placeholder="输入管理员密码" value={password} onChange={(event) => setPassword(event.target.value)} passwordToggle />
-        <div className="auth-form__actions"><ActionButton type="submit" disabled={busy}>{busy ? '验证中' : '进入后台'}</ActionButton></div>
+        <AuthEntryHeading kicker="受限访问" title="管理员登录" subtitle="使用管理员账号进入后台。" />
+        <FormField label="管理员账号" name="admin-username" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} onClear={() => setUsername('')} />
+        <FormField label="密码" name="admin-password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} passwordToggle />
+        <div className="auth-form__actions"><ActionButton type="submit" disabled={busy}><span>{busy ? '验证中' : '进入管理后台'}</span><b aria-hidden="true">→</b></ActionButton></div>
         <button className="auth-form__back-link" type="button" onClick={() => navigate('/login')}>返回用户登录</button>
         {message ? <p className="form-message" role="status">{message}</p> : null}
       </form>

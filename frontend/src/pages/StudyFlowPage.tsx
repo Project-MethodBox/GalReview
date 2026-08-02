@@ -169,7 +169,7 @@ export default function StudyFlowPage() {
   return (
     <AppShell>
       <main className="page materials-page">
-        <PageHeader title="资料与学习计划" description="上传文件、提取文字、构建图谱，再确定本轮复习范围。" actions={graph ? <Link className="button" to="/knowledge-graph">查看图谱</Link> : null} />
+        <PageHeader title="资料与学习计划" actions={graph ? <Link className="button" to="/knowledge-graph">查看图谱</Link> : null} />
 
         <div className="process-layout">
           <section className="process-primary">
@@ -179,10 +179,10 @@ export default function StudyFlowPage() {
               <label>资料名称<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder={file?.name || '选填'} /></label>
               <label>学科代码<input value={subjectCode} onChange={(event) => setSubjectCode(event.target.value.toUpperCase())} pattern="[A-Z][A-Z0-9_]{0,31}" placeholder="GENERAL" /></label>
               <div className="option-row">
-                <label className="toggle-field"><span><strong>启用 OCR</strong><small>仅在图片或扫描件需要时开启。</small></span><input type="checkbox" checked={enableOcr} onChange={(event) => setEnableOcr(event.target.checked)} /></label>
-                <label>OCR 模式<select disabled={!enableOcr} value={ocrMode} onChange={(event) => setOcrMode(event.target.value as 'quick' | 'standard')}><option value="standard">标准识别</option><option value="quick">快速识别</option></select></label>
+                <label className="toggle-field"><span><strong>启用 OCR</strong><small>仅在图片或扫描件需要时开启。</small></span><input type="checkbox" role="switch" aria-label="启用 OCR" checked={enableOcr} onChange={(event) => setEnableOcr(event.target.checked)} /></label>
+                <label className="inline-select-field"><span>OCR 模式</span><select aria-label="OCR 模式" disabled={!enableOcr} value={ocrMode} onChange={(event) => setOcrMode(event.target.value as 'quick' | 'standard')}><option value="standard">标准识别</option><option value="quick">快速识别</option></select></label>
               </div>
-              <label className="toggle-field compact-toggle"><span><strong>重新提取</strong><small>再次处理已完成的资料并更新提取结果。</small></span><input type="checkbox" checked={force} onChange={(event) => setForce(event.target.checked)} /></label>
+              <label className="toggle-field compact-toggle"><span><strong>重新提取</strong><small>再次处理已完成的资料并更新提取结果。</small></span><input type="checkbox" role="switch" aria-label="重新提取" checked={force} onChange={(event) => setForce(event.target.checked)} /></label>
               <button className="button button--primary" disabled={busy} type="submit">{busy ? '正在处理' : '上传并构建图谱'}</button>
             </form>
 
@@ -197,7 +197,7 @@ export default function StudyFlowPage() {
 
           <aside className="plan-panel">
             <header><span>下一步</span><h2>选择复习范围</h2></header>
-            {!graph ? <p>图谱构建完成后，这里会显示章节与计划选项。</p> : <>
+            {!graph ? null : <>
               <dl className="plan-summary"><div><dt>学科</dt><dd>{graph.subjectCode}</dd></div><div><dt>知识点</dt><dd>{graph.pointCount}</dd></div><div><dt>关系</dt><dd>{graph.relationCount}</dd></div></dl>
               <div className="segmented-control"><button className={planType === 'ASSESSMENT' ? 'active' : ''} type="button" onClick={() => setPlanType('ASSESSMENT')}>全面测试</button><button className={planType === 'LEARNING' ? 'active' : ''} type="button" onClick={() => setPlanType('LEARNING')}>章节学习</button></div>
               <div className="chapter-actions"><button type="button" onClick={() => setSelectedChapterIds(chapters.map((item) => item.chapterId))}>全选</button><button type="button" onClick={() => setSelectedChapterIds([])}>清空</button></div>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router'
 import AppShell, { PageHeader } from '../components/AppShell'
+import { GraphIcon, KnowledgeIcon, MaterialsIcon, ReviewIcon } from '../components/icons'
 import { api } from '../lib/api'
 import { readProfile, saveProfile } from '../lib/session'
 import { readWorkflow } from '../lib/workflow'
@@ -11,7 +12,7 @@ function resumeState() {
   if (workflow.plan) return { to: '/review', action: '开始复习', detail: `计划包含 ${workflow.plan.nodes.length} 个知识节点。`, step: '计划已生成' }
   if (workflow.graph) return { to: '/materials', action: '选择复习范围', detail: `${workflow.graph.chapterCount} 章，${workflow.graph.pointCount} 个知识点。`, step: '图谱已完成' }
   if (workflow.material) return { to: '/materials', action: '继续处理资料', detail: workflow.material.displayName, step: '资料已上传' }
-  return { to: '/materials', action: '上传第一份资料', detail: '支持 PDF、DOCX、Markdown、HTML、文本与图片。', step: '尚未开始' }
+  return { to: '/materials', action: '上传第一份资料', detail: '吹灭读书灯，一身都是月', step: '尚未开始' }
 }
 
 export default function HomePage() {
@@ -29,35 +30,27 @@ export default function HomePage() {
   return (
     <AppShell>
       <main className="page home-dashboard">
-        <PageHeader title={`你好，${profile?.displayName || '学习者'}`} description="继续尚未完成的复习，也可以上传新的学习资料。" />
+        <PageHeader title="主页" />
         {message ? <p className="status-line" role="status">{message}</p> : null}
 
-        <section className="home-workspace">
-          <article className="resume-panel">
-            <div><span>{resume.step}</span><h2>{resume.action}</h2><p>{resume.detail}</p></div>
-            <Link className="button button--light" to={resume.to}>{resume.action}</Link>
-          </article>
-
-          <aside className="study-snapshot">
-            <h2>当前学习档案</h2>
-            <dl>
-              <div><dt>学科</dt><dd>{workflow.graph?.subjectCode || profile?.preferredSubjectCodes[0] || '未设置'}</dd></div>
-              <div><dt>章节</dt><dd>{workflow.graph?.chapterCount ?? 0}</dd></div>
-              <div><dt>知识点</dt><dd>{workflow.graph?.pointCount ?? 0}</dd></div>
-              <div><dt>计划状态</dt><dd>{workflow.plan?.status || '无计划'}</dd></div>
-            </dl>
-            <Link to="/settings">编辑个人设置</Link>
-          </aside>
+        <section className="home-welcome">
+          <div className="home-welcome__intro">
+            <div><span>{resume.step}</span><h2>欢迎回来，{profile?.displayName || '学习者'}</h2><p>{resume.detail}</p></div>
+            <Link className="button button--primary" to={resume.to}>{resume.action}</Link>
+          </div>
+          <div className="home-quick-actions" aria-label="页面快捷入口">
+            <Link to="/materials"><span className="quick-action-icon"><MaterialsIcon /></span><span><strong>资料</strong><small>采章入卷</small></span><i aria-hidden="true">→</i></Link>
+            <Link to="/knowledge"><span className="quick-action-icon"><KnowledgeIcon /></span><span><strong>知识点</strong><small>循章识要</small></span><i aria-hidden="true">→</i></Link>
+            <Link to="/knowledge-graph"><span className="quick-action-icon"><GraphIcon /></span><span><strong>知识图谱</strong><small>观脉寻源</small></span><i aria-hidden="true">→</i></Link>
+            <Link to="/review"><span className="quick-action-icon"><ReviewIcon /></span><span><strong>复习</strong><small>温故知新</small></span><i aria-hidden="true">→</i></Link>
+          </div>
         </section>
 
-        <section className="home-destinations" aria-label="主要功能">
-          <header><h2>学习工具</h2><p>上传资料后，可以在这里查看知识点、梳理依赖关系并开始复习。</p></header>
-          <div className="destination-list">
-            <Link to="/materials"><span>资料</span><strong>上传、解析并创建计划</strong><small>从文件开始</small></Link>
-            <Link to="/knowledge"><span>知识点</span><strong>查找知识点并查看掌握情况</strong><small>{workflow.graph ? `${workflow.graph.pointCount} 项` : '尚未生成'}</small></Link>
-            <Link to="/knowledge-graph"><span>图谱</span><strong>查看章节和知识依赖</strong><small>{workflow.graph ? `${workflow.graph.relationCount} 条关系` : '尚未生成'}</small></Link>
-            <Link to="/review"><span>复习</span><strong>生成 GalGame 并作答</strong><small>{workflow.plan ? '计划可用' : '需要计划'}</small></Link>
-          </div>
+        <section className="home-summary" aria-label="学习概况">
+          <article><span>学科</span><strong>{workflow.graph?.subjectCode || profile?.preferredSubjectCodes[0] || '未设置'}</strong></article>
+          <article><span>章节</span><strong>{workflow.graph?.chapterCount ?? 0}</strong></article>
+          <article><span>知识点</span><strong>{workflow.graph?.pointCount ?? 0}</strong></article>
+          <article><span>计划</span><strong>{workflow.plan ? '已创建' : '未创建'}</strong></article>
         </section>
       </main>
     </AppShell>

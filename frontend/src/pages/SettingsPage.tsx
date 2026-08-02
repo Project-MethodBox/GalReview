@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router'
 import AppShell, { PageHeader } from '../components/AppShell'
 import { api } from '../lib/api'
 import { clearSession, readProfile, saveProfile } from '../lib/session'
-import { readReducedMotion, saveReducedMotion } from '../lib/theme'
+import { readColorTheme, readReducedMotion, saveColorTheme, saveReducedMotion, type ColorTheme } from '../lib/theme'
 import { resetWorkflow } from '../lib/workflow'
 import type { ContentDifficulty, UserPreferencesInput, UserProfile } from '../types/api'
 
@@ -20,6 +20,7 @@ export default function SettingsPage() {
   const [displayName, setDisplayName] = useState(stored?.displayName || '')
   const [subjectText, setSubjectText] = useState(stored?.preferredSubjectCodes.join(', ') || '')
   const [preferences, setPreferences] = useState<UserPreferencesInput>(defaults)
+  const [colorTheme, setColorTheme] = useState<ColorTheme>(readColorTheme())
   const [passwords, setPasswords] = useState({ current: '', next: '', confirm: '' })
   const [deletion, setDeletion] = useState({ password: '', confirmation: '' })
   const [busy, setBusy] = useState<string | null>('load')
@@ -44,6 +45,11 @@ export default function SettingsPage() {
   }, [])
 
   function start(section: string) { setBusy(section); setError(''); setMessage('') }
+
+  function changeColorTheme(value: ColorTheme) {
+    setColorTheme(value)
+    saveColorTheme(value)
+  }
 
   async function submitProfile(event: FormEvent) {
     event.preventDefault()
@@ -91,26 +97,41 @@ export default function SettingsPage() {
   return (
     <AppShell>
       <main className="page settings-page">
-        <PageHeader title="个人设置" description={profile ? `管理 ${profile.displayName} 的资料、学习偏好和账户安全。` : '管理资料、学习偏好和账户安全。'} />
+        <PageHeader title="个人设置" />
         <div className="settings-layout">
+          <aside className="settings-index" aria-label="设置分类">
+            <h2>设置</h2>
+            <nav>
+              <a href="#appearance-settings">外观</a>
+              <a href="#profile-settings">个人资料</a>
+              <a href="#learning-settings">学习偏好</a>
+              <a href="#security-settings">账户安全</a>
+              <a href="#danger-settings">账户注销</a>
+            </nav>
+          </aside>
           <section className="settings-main">
-            <form className="form-section" onSubmit={submitProfile}>
-              <header><h2>个人资料</h2><p>显示名称会出现在主页，学科代码用于资料分类。</p></header>
+            <section className="form-section" id="appearance-settings">
+              <header><h2>外观</h2></header>
+              <label className="toggle-field"><span><strong>深色模式</strong></span><input type="checkbox" role="switch" aria-label="深色模式" checked={colorTheme === 'dark'} onChange={(event) => changeColorTheme(event.target.checked ? 'dark' : 'light')} /></label>
+            </section>
+
+            <form className="form-section" id="profile-settings" onSubmit={submitProfile}>
+              <header><h2>个人资料</h2></header>
               <label>显示名称<input maxLength={64} required value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>
               <div className="settings-language"><span>界面语言</span><strong>简体中文</strong></div>
               <label>偏好学科<input value={subjectText} onChange={(event) => setSubjectText(event.target.value)} placeholder="GENERAL, AGRONOMY" /><small>逗号或空格分隔，最多 10 项。</small></label>
               <button className="button button--primary" disabled={busy !== null} type="submit">{busy === 'profile' ? '正在保存' : '保存资料'}</button>
             </form>
 
-            <form className="form-section" onSubmit={submitPreferences}>
-              <header><h2>学习偏好</h2><p>每日目标、内容难度和动态效果会用于后续复习。</p></header>
+            <form className="form-section" id="learning-settings" onSubmit={submitPreferences}>
+              <header><h2>学习偏好</h2></header>
               <label>每日目标（分钟）<input type="number" min={5} max={180} step={1} value={preferences.dailyGoalMinutes} onChange={(event) => setPreferences((current) => ({ ...current, dailyGoalMinutes: Number(event.target.value) }))} /></label>
               <label>内容难度<select value={preferences.contentDifficulty} onChange={(event) => setPreferences((current) => ({ ...current, contentDifficulty: event.target.value as ContentDifficulty }))}><option value="BASIC">基础</option><option value="STANDARD">标准</option><option value="ADVANCED">进阶</option></select></label>
-              <label className="toggle-field"><span><strong>减少动态效果</strong><small>关闭页面位移和非必要过渡。</small></span><input type="checkbox" checked={preferences.reducedMotion} onChange={(event) => setPreferences((current) => ({ ...current, reducedMotion: event.target.checked }))} /></label>
+              <label className="toggle-field"><span><strong>减少动态效果</strong><small>关闭页面位移和非必要过渡。</small></span><input type="checkbox" role="switch" aria-label="减少动态效果" checked={preferences.reducedMotion} onChange={(event) => setPreferences((current) => ({ ...current, reducedMotion: event.target.checked }))} /></label>
               <button className="button button--primary" disabled={busy !== null} type="submit">{busy === 'preferences' ? '正在保存' : '保存偏好'}</button>
             </form>
 
-            <form className="form-section" onSubmit={submitPassword}>
+            <form className="form-section" id="security-settings" onSubmit={submitPassword}>
               <header><h2>修改密码</h2><p>输入当前密码后设置至少 8 个字符的新密码。</p></header>
               <label>当前密码<input type="password" autoComplete="current-password" value={passwords.current} onChange={(event) => setPasswords((current) => ({ ...current, current: event.target.value }))} /></label>
               <label>新密码<input type="password" autoComplete="new-password" minLength={8} value={passwords.next} onChange={(event) => setPasswords((current) => ({ ...current, next: event.target.value }))} /></label>
@@ -120,7 +141,7 @@ export default function SettingsPage() {
           </section>
 
           <aside className="settings-side">
-            <form className="side-section danger-section" onSubmit={deleteAccount}><h2>永久注销账户</h2><p>操作立即生效且不可恢复。</p><label>当前密码<input type="password" autoComplete="current-password" value={deletion.password} onChange={(event) => setDeletion((current) => ({ ...current, password: event.target.value }))} /></label><label>输入“永久注销”<input value={deletion.confirmation} onChange={(event) => setDeletion((current) => ({ ...current, confirmation: event.target.value }))} /></label><button className="button button--danger" disabled={busy !== null || deletion.confirmation !== '永久注销' || !deletion.password} type="submit">{busy === 'delete' ? '正在注销' : '永久注销账户'}</button></form>
+            <form className="side-section danger-section" id="danger-settings" onSubmit={deleteAccount}><h2>永久注销账户</h2><p>操作立即生效且不可恢复。</p><label>当前密码<input type="password" autoComplete="current-password" value={deletion.password} onChange={(event) => setDeletion((current) => ({ ...current, password: event.target.value }))} /></label><label>输入“永久注销”<input value={deletion.confirmation} onChange={(event) => setDeletion((current) => ({ ...current, confirmation: event.target.value }))} /></label><button className="button button--danger" disabled={busy !== null || deletion.confirmation !== '永久注销' || !deletion.password} type="submit">{busy === 'delete' ? '正在注销' : '永久注销账户'}</button></form>
           </aside>
         </div>
         <p className={error ? 'status-line status-line--error' : 'status-line'} role="status">{error || message}</p>
