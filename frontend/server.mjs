@@ -33,16 +33,44 @@ function getCorrelationId(request) {
   return sanitized.length > 0 && sanitized.length <= 128 ? sanitized : randomUUID()
 }
 
+function requestPath(request) {
+  try {
+    return new URL(request.url || '/', 'http://frontend').pathname
+  } catch {
+    return '/'
+  }
+}
+
+function logProxyFailure(event, request, traceId, details) {
+  console.error(JSON.stringify({
+    timestamp: new Date().toISOString(),
+    level: 'error',
+    event,
+    traceId,
+    method: request.method || 'UNKNOWN',
+    path: requestPath(request),
+    upstream: gateway.origin,
+    ...details,
+  }))
+}
+
 function proxyToGateway(request, response) {
   const target = new URL(request.url || '/', gateway)
   const traceId = getCorrelationId(request)
   const headers = { ...request.headers, host: target.host, 'x-correlation-id': traceId }
   const upstream = httpRequest(target, { method: request.method, headers }, (upstreamResponse) => {
-    response.writeHead(upstreamResponse.statusCode || 502, upstreamResponse.headers)
+    const status = upstreamResponse.statusCode || 502
+    if (status >= 500) {
+      logProxyFailure('frontend_gateway_response_error', request, traceId, { status })
+    }
+    response.writeHead(status, upstreamResponse.headers)
     upstreamResponse.pipe(response)
   })
   upstream.setTimeout(180_000, () => upstream.destroy(new Error('Gateway request timed out')))
-  upstream.on('error', () => {
+  upstream.on('error', (error) => {
+    logProxyFailure('frontend_gateway_transport_error', request, traceId, {
+      code: typeof error.code === 'string' ? error.code : 'UNKNOWN',
+    })
     if (response.headersSent) {
       response.destroy()
       return

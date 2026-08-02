@@ -741,3 +741,31 @@ emcc 4.0.13 编译为 standalone WASM（179 KB），§8.1 五个 ReviewSession �
 
 MySQL `3306`、MongoDB `27017` 及各微服务内部监听端口没有发布到宿主，因此不会扩大
 服务器防火墙放行范围。SMTP 和系统代理端口也不再被项目端口策略改写。
+
+## 17. 2026-08-02 文件上传 Bad Gateway 排查与修复
+
+运行态检查确认 Frontend、Gateway、FileService 和 MongoDB 均 healthy，Gateway 容器访问
+FileService readiness 为 HTTP 200。10 MiB multipart 探针可以完整通过 Frontend 和 Gateway，
+仓库内两层代理的请求体限制不是故障点；失败现场也没有 `POST /api/v1/materials` 到达
+FileService，因此界面所见的纯文本/HTML Bad Gateway 来源于仓库外层反向代理。
+
+同时发现浏览器客户端在检查 HTTP 状态前无条件解析 JSON，导致外层代理返回的 HTML/纯文本
+`413/502/504` 被统一改写成客户端 `502 UPSTREAM_CONTRACT_INVALID`。本轮修复后，客户端保留
+真实 HTTP 状态、响应类型和 `X-Correlation-Id`；上传、文字提取、已有图谱读取和构图错误也
+分别标明阶段。Frontend 与 Gateway 代理增加了不记录凭证的结构化错误日志。接口路径、请求、
+成功响应和服务错误信封均未改变。
+
+| 复验项 | 结果 |
+|---|---:|
+| Frontend TypeScript + Vite production build | 通过，110 modules |
+| Gateway TypeScript build | 通过 |
+| Gateway 自动化测试 | 176 / 176 |
+| Nginx 上传反代示例 `nginx -t` | 通过 |
+| 浏览器代理非 JSON 错误保真 | 413 与 502 均保留真实状态和对应提示 |
+| 修复后 Gateway / Frontend 容器 | healthy |
+| 2.38 MiB 真实 PDF 经 Frontend `:5120` 上传 | HTTP 201 |
+| 1.53 MiB PDF 上传、非 OCR 提取与构图 | 7 章、243 点、207 条关系，DAG 合法 |
+| Frontend 入口完整注册至 mastery 闭环 | 通过，3 / 3 掌握度更新 |
+
+部署侧新增 `deploy/nginx/galreview.conf.example`：外层请求体允许 12 MiB，上传读写超时为
+190 秒并关闭请求缓冲。应用仍按契约拒绝超过 10 MiB 的单文件。
