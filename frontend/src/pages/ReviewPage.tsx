@@ -41,6 +41,8 @@ function isFixedMockStory(gamePackage: GamePackage): boolean {
   )
 }
 
+const fixedMockSceneBackgrounds = ['/bg.png', '/bg_1.png', '/bg2.png', '/bg3.png', '/bg4.png']
+
 function runtimeEvent(events: Array<Record<string, unknown>>, type: string) {
   return events.find((event) => event.type === type)
 }
@@ -130,6 +132,14 @@ export default function ReviewPage() {
   const dialogueCompleted = !scene || dialogueIndex >= scene.dialogue.length - 1
 
   useEffect(() => () => adapterRef.current?.dispose(), [])
+
+  useEffect(() => {
+    if (!gamePackage || !isFixedMockStory(gamePackage)) return
+    fixedMockSceneBackgrounds.forEach((source) => {
+      const image = new Image()
+      image.src = source
+    })
+  }, [gamePackage])
 
   useEffect(() => {
     setDialogueIndex(0)
@@ -534,7 +544,13 @@ export default function ReviewPage() {
           </button>
           <article className={`dialogue-panel${dialogueCompleted && !dialogueTyping ? '' : ' dialogue-panel--advance'}`} onClick={advanceDialogue}>
             {scene.title ? <h2>{scene.title}</h2> : null}
-            {currentDialogue ? <div className={`dialogue-line${currentDialogue.speakerId === '旁白' ? ' dialogue-line--narration' : ''}`}>{currentDialogue.speakerId !== '旁白' ? <strong>{currentDialogue.speakerId}</strong> : null}<p>{typedDialogue}</p></div> : null}
+            {currentDialogue ? <div className={`dialogue-line${currentDialogue.speakerId === '旁白' ? ' dialogue-line--narration' : ''}`}>
+              {currentDialogue.speakerId !== '旁白' ? <strong>{currentDialogue.speakerId}</strong> : null}
+              <div className="dialogue-line__text">
+                <p className="dialogue-line__measure" aria-hidden="true">{currentDialogue.text}</p>
+                <p className="dialogue-line__typed">{typedDialogue}</p>
+              </div>
+            </div> : null}
           </article>
           {dialogueCompleted && !dialogueTyping ? (scene.choices.length ? <div className="choice-list">{scene.choices.map((choice) => <button key={choice.choiceId} disabled={busy} type="button" onClick={() => void choose(choice)}>{choice.text}</button>)}</div> : <button className="primary-button" disabled={busy} type="button" onClick={() => void finishCurrentScene()}>前面的区域以后再来探索吧</button>) : null}
         </section>
