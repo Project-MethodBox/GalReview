@@ -1,163 +1,87 @@
-﻿<p align="center">
-  <img src="./design/banner.png" alt="千知万理：GalGame × 多学科智能复习" />
+<p align="center">
+  <img src="./design/banner.png" alt="千知万理 · GalReview" />
 </p>
 
-# 千知万理 · GalReview
+<h1 align="center">千知万理 · GalReview</h1>
 
-> 把自己的复习资料，变成一场会记住学习进度的 GalGame。
+<p align="center">
+  <strong>知识有图谱，复习有剧情。</strong><br />
+  把熟悉的讲义与笔记，变成一场属于你的校园故事。
+</p>
 
-千知万理（GalReview）是一套面向多学科复习的学习应用。用户上传讲义、笔记或题库后，系统将资料解析为结构化文本，构建知识图谱，并围绕选定内容生成可交互的剧情式复习体验。每次选择与作答都会沉淀为学习证据，为之后的复习计划提供依据。
+## 关于项目
 
-## 核心流程
+千知万理（GalReview）是一款将知识整理与 GalGame 互动体验结合起来的复习应用。
 
-```text
-资料上传 → 文本解析 → 知识图谱构建 → 复习计划 → GalGame 游戏包 → 浏览器运行时 → 学习记录
-```
+上传讲义、笔记或题库后，千知万理会梳理其中的章节与知识点，并把选定的复习内容编入校园剧情。你不必面对枯燥的知识清单：一次对话、一道问题、一个选择，都可能成为继续故事的线索。
 
-知识图谱只在幕后负责理解章节、概念及其关系；用户面对的是连贯的剧情、对话、选择与复习反馈，而不是复杂的图结构或算法参数。
+这里的复习不只是“做完一道题”，而是和熟悉的角色一起调查、推理、回顾，在故事推进的过程中发现薄弱点，也记住自己已经走过的学习轨迹。
 
-## 已实现能力
-
-- 注册、登录、令牌刷新、会话校验、找回与重置密码。
-- 管理员登录、邀请码生成与用户管理。
-- 用户资料、学习偏好、密码修改和账户注销。
-- TXT、Markdown、HTML、DOCX、文本型 PDF，以及经 OCR 解析的图片/扫描资料上传。
-- MongoDB GridFS 文件保存、资料状态与解析任务跟踪。
-- 基于 Neo4j 的知识图谱构建、章节/知识点/关系查询与学习计划接口。
-- GalGame 游戏包生成与浏览器端 JS/WASM 运行时资源分发。
-- API Gateway 的鉴权、内部服务身份、限流、追踪 ID、代理与统一错误响应。
-
-## 当前边界
-
-项目仍在持续开发中。目前已经可以把上传资料转成带有剧情、对白和选择的复习内容，并记录玩家
-在游戏中的作答结果；OCR 作为可选能力按需启用，不影响普通文本资料的使用。
-
-## 服务职责
-
-| 服务 | 本地或宿主默认入口 | 职责 |
-| --- | ---: | --- |
-| Gateway | 5000 | 浏览器与服务间调用的统一入口；鉴权、代理、限流与追踪。 |
-| UserService | 5101 | 用户资料、学习偏好与账户生命周期。 |
-| AuthService | 5102 | 注册、登录、密码、令牌、会话、邀请码和管理员账户治理。 |
-| FileService | 5103 | 资料上传、GridFS 存储、文本提取与解析任务。 |
-| KnowledgeService | 5104（Compose 宿主映射） | 知识图谱、知识点、关系与学习计划。 |
-| GalGameService | 5105 | 根据图谱与计划生成游戏包。 |
-| RenderService | 5106 | 提供 JS/WASM 运行时资源，供浏览器加载游戏包。 |
-| OCRService（可选） | 5110 | 图片与扫描件文字识别。 |
-| Frontend（生产） | 5120（Compose 宿主映射） | 对外提供前端静态站点，并同源代理 `/api`。 |
-| Frontend（开发） | 5121 | Vite 开发服务器。 |
-| Frontend（预览） | 5122 | Vite 预览服务器。 |
-
-> 完整的服务边界、接口、容器内外端口映射和安全要求以 [开发契约](./docs/contract.md) 为准。
-
-## 本地开发依赖
-
-- .NET SDK 10。
-- Node.js 22 或更新的 LTS 版本。
-- MySQL 8：本地开发配置，目前使用 `127.0.0.1:3306`。
-- MongoDB：本地开发配置，目前使用 `127.0.0.1:27017`。
-- Neo4j：本机原生端口为 Bolt `7687`、Browser `7474`；Compose 默认向宿主映射为
-  `5255/5254`。
-- 可选：Python 3.13 与 OCRService 所需依赖。
-
-`5000-5300` 只约束 Docker 发布到宿主机、可能需要配置防火墙的端口。MySQL `3306`、
-MongoDB `27017`、Neo4j `7474/7687`、容器 target、服务间 URL、SMTP/代理端口和测试临时
-端口都不属于这一限制。宿主 published 端口可通过 `.env` 中的 `*_HOST_PORT` 调整；完整
-规划见[部署指南](./docs/deploy.md)。数据库不应向公网发布。
-
-## 快速启动
-
-1. 启动 MySQL、MongoDB 与 Neo4j，并确认 Neo4j Bolt 可访问：
-
-   ```powershell
-   # 本机安装的 Neo4j；若使用 Compose 宿主映射则改为实际 NEO4J_BOLT_HOST_PORT（默认 5255）
-   Test-NetConnection 127.0.0.1 -Port 7687
-   ```
-
-2. 在两个终端安装 Node 依赖：
-
-   ```powershell
-   cd gateway
-   npm ci
-
-   cd ..\frontend
-   npm install
-   ```
-
-3. 分别启动后端服务。开发时建议每项使用一个终端：
-
-   ```powershell
-   dotnet run --project backend\UserService\GalGame.UserService.csproj
-   dotnet run --project backend\AuthService\GalGame.AuthService.csproj
-   dotnet run --project backend\FileService\GalGame.FileService.csproj
-   dotnet run --project backend\KnowledgeService\KnowledgeService.API\KnowledgeService.API.csproj -- --urls http://127.0.0.1:5104
-   dotnet run --project backend\GalGameService\GalGame.GalGameService.csproj -- --urls http://127.0.0.1:5105
-   node backend\RenderService\service\dist\server.js  # 先在 service/ 内 npm ci && npm run build
-   ```
-
-4. 启动 Gateway 与前端：
-
-   ```powershell
-   cd gateway
-   npm run dev
-
-   cd ..\frontend
-   npm run dev
-   ```
-
-5. 打开 `http://127.0.0.1:5121`。Gateway 健康检查地址为 `http://127.0.0.1:5000/healthz`。
-
-如果仅做前端或接口联调，可按服务说明使用 `MOONSTONE_MODE=Mock`；Mock 数据不写入真实数据库。
-
-## 常用验证命令
-
-```powershell
-# 只检查 Compose/docker publish 的宿主侧与 *_HOST_PORT 默认值是否位于 5000–5300。
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Test-PortPolicy.ps1
-
-# Gateway
-cd gateway
-npm ci
-npm run build
-npm test
-
-# .NET 服务示例
-dotnet test backend\AuthService\Tests\GalGame.AuthService.Tests.csproj
-dotnet test backend\UserService\Tests\GalGame.UserService.Tests.csproj
-dotnet test backend\GalGameService\Tests\GalGame.GalGameService.Tests.csproj
-dotnet test backend\KnowledgeService\KnowledgeService.Tests\KnowledgeService.Tests.csproj
-```
-
-GitHub Actions 会执行宿主发布端口策略、.NET 构建与测试，以及 Gateway 构建与测试。
-
-## 目录结构
+## 你会经历什么
 
 ```text
-GalReview/
-├── backend/       # Auth、User、File、Knowledge、GalGame、Render、OCR 服务
-├── gateway/       # Node.js API Gateway
-├── frontend/      # React + Vite 前端
-├── docs/          # 开发契约、部署与测试文档
-├── design/        # 品牌和设计资源
-├── scripts/       # 本地校验脚本
-└── .github/       # CI 工作流
+带上自己的资料 → 梳理知识脉络 → 选择本次目标 → 进入互动剧情 → 留下复习记录
 ```
 
-## 文档入口
+- **让资料真正成为主角**：从自己的课程内容出发，每一次复习都与眼前的学习目标有关。
+- **让知识彼此连接**：从章节到概念，逐步看清知识之间的来龙去脉。
+- **让复习拥有故事感**：通过对白、选择与挑战推进剧情，让“再看一遍”变成“继续下一幕”。
+- **让进步有迹可循**：保留每次作答与复习进度，方便回顾掌握情况并规划下一次学习。
 
-- [开发契约与接口规范](./docs/contract.md)
+## 主要角色
+
+三位性格迥异的校园伙伴会陪你走进知识背后的故事。有人善于看穿迷雾，有人总能追到第一手线索，也有人相信一切异常都可以被测量和验证。
+
+<table>
+  <tr>
+    <td align="center" width="33%">
+      <img src="./design/model/林学姐/chr_lin_wantang_uniform_lollipop-offer_gentle-smile_v01.png" alt="林学姐·林晚棠" width="260" />
+    </td>
+    <td align="center" width="33%">
+      <img src="./design/model/苏学姐/chr_su_wanqing_uniform_reporter-ready_curious_v01.png" alt="苏学妹·苏晚晴" width="260" />
+    </td>
+    <td align="center" width="33%">
+      <img src="./design/model/陆学长/chr_lu_chen_uniform_dark-alert_uneasy_v01.png" alt="陆学长·陆沉" width="260" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><strong>林学姐 · 林晚棠</strong></td>
+    <td align="center"><strong>苏学妹 · 苏晚晴</strong></td>
+    <td align="center"><strong>陆学长 · 陆沉</strong></td>
+  </tr>
+  <tr>
+    <td valign="top">
+      神秘学研究社社长。沉静、温柔，似乎总比别人更早察觉藏在日常里的异样。她递来的糖果是鼓励，也可能是一场新调查的邀请。面对混乱的知识，她擅长抓住关键线索，陪你把谜团一点点解开。
+    </td>
+    <td valign="top">
+      新闻社副社长。好奇心旺盛，行动力十足，相机和记事本从不离身。她会把每个新知识都当作值得追踪的独家线索，用接连不断的问题带你重新观察那些容易忽略的细节。
+    </td>
+    <td valign="top">
+      学生会副会长、物理社社长。冷静克制，习惯用记录、测量与推理面对未知。无论问题多复杂，他都会先拆开现象、核对证据，再带你找到最可靠的答案。
+    </td>
+  </tr>
+</table>
+
+## 从一份资料，走进一段剧情
+
+你可以上传课程讲义、课堂笔记或复习题，选择想要巩固的章节与知识点，再决定本次故事的氛围和挑战强度。三位角色会以各自的方式参与其中，让问题不再孤立，让知识随着情节自然展开。
+
+答对时，故事会回应你的判断；遇到不熟悉的内容时，也可以沿着知识脉络回看出处。每一轮结束后，复习记录会成为下一次出发的依据——故事可以告一段落，学习仍会接着向前。
+
+## 项目愿景
+
+我们希望复习不再只是重复阅读和机械作答，而是一段愿意主动继续的体验。
+
+千知万理尝试把属于 GalGame 的陪伴感、选择感和故事感带进日常学习：让角色记得你的进度，让剧情回应你的选择，也让每一个掌握的知识点，都像完成了一段值得纪念的旅程。
+
+> 吹灭读书灯，一身都是月。
+
+## 更多信息
+
+- [开发与接口说明](./docs/contract.md)
 - [部署指南](./docs/deploy.md)
-- [集成测试报告](./docs/test_report.md)
-- [Gateway 说明](./gateway/README.md)
-- [AuthService 说明](./backend/AuthService/README.md)
-- [UserService 说明](./backend/UserService/README.md)
-- [FileService 说明](./backend/FileService/README.md)
-- [KnowledgeService 说明](./backend/KnowledgeService/README.md)
-- [GalGameService 说明](./backend/GalGameService/README.md)
+- [测试报告](./docs/test_report.md)
 
-## 安全与协作约定
+---
 
-- 不提交真实密码、SMTP 授权码、数据库凭据或生产服务密钥；使用环境变量或本地未跟踪配置提供。
-- 浏览器仅调用 Gateway，不直接调用内部服务。
-- 服务间调用必须携带服务身份与关联 ID；敏感日志需要脱敏。
-- 端口、接口字段与错误码变更前，先更新契约并同步相关测试。
+<p align="center">© 2026 千知万理 · GalReview</p>
