@@ -1132,6 +1132,10 @@ input[type="password"]::-webkit-credentials-auto-fill-button { visibility: hidde
 .game-stage .dialogue-line strong { color: #ffd0a0; }
 .game-stage .dialogue-line strong { font-size: 17px; }
 .game-stage .dialogue-line p { max-width: 590px; font-size: clamp(17px, 1.35vw, 20px); line-height: 1.78; }
+.game-stage .dialogue-line__text { display: grid; min-width: 0; }
+.game-stage .dialogue-line__measure, .game-stage .dialogue-line__typed { grid-area: 1 / 1; }
+.game-stage .dialogue-line__measure { visibility: hidden; pointer-events: none; }
+.game-stage .dialogue-line__typed { margin: 0; overflow-wrap: anywhere; }
 .game-stage .dialogue-line--narration { grid-template-columns: 1fr; }
 .game-stage .choice-list button { border-color: rgb(255 207 151 / .4); border-radius: 12px; color: #fff7e9; background: linear-gradient(115deg, rgb(117 65 49 / .76), rgb(78 50 65 / .76)); box-shadow: 0 5px 14px rgb(46 24 19 / .2); backdrop-filter: blur(10px) saturate(118%); -webkit-backdrop-filter: blur(10px) saturate(118%); }
 .game-stage .choice-list button:hover:not(:disabled) { border-color: #ffe0ae; color: #fffaf1; background: linear-gradient(115deg, rgb(157 83 54 / .9), rgb(105 64 83 / .9)); transform: none; }
@@ -1745,5 +1749,27 @@ input[type="password"]::-webkit-credentials-auto-fill-button { visibility: hidde
   }
   .auth-page--forgot .action-button {
     min-height: 52px;
+  }
+}
+
+/* Keep the public login/register slogan clear of the brand on narrow screens. */
+@media (max-width: 800px) {
+  .auth-page--login { grid-template-rows: clamp(228px, 32svh, 286px) minmax(0, 1fr); }
+  .auth-page--register { grid-template-rows: clamp(210px, 29svh, 262px) minmax(0, 1fr); }
+
+  .auth-page--login .auth-entry-story,
+  .auth-page--register .auth-entry-story { padding: 22px 32px 20px; }
+
+  .auth-page--login .auth-entry-copy,
+  .auth-page--register .auth-entry-copy {
+    position: static;
+    margin: 30px 0 0;
+    transform: none;
+  }
+
+  .auth-page--login .auth-page__content {
+    display: flex;
+    align-items: center;
+    padding: 22px 32px max(28px, env(safe-area-inset-bottom));
   }
 }
