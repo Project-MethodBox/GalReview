@@ -28,6 +28,7 @@ const mockConfig: GatewayConfig = {
     generation: { windowMs: 60000, max: 100 },
     general: { windowMs: 60000, max: 1000 },
   },
+  introspectionCache: { ttlMs: 15_000, maxSize: 4_096 },
 };
 
 describe('Gateway App 集成测试', () => {

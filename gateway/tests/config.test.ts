@@ -4,12 +4,17 @@ import { loadConfig } from '../src/config.js';
 describe('loadConfig', () => {
   const originalEnv = { ...process.env };
 
+  beforeEach(() => {
+    // GATEWAY_KEY 现在是必填项，为需要调用 loadConfig() 的测试提供默认值
+    process.env.GATEWAY_KEY = 'test-gateway-key';
+  });
+
   afterEach(() => {
     // 恢复原始 env
     process.env = { ...originalEnv };
   });
 
-  it('应使用默认值当环境变量未设置时', () => {
+  it('应在 GATEWAY_KEY 未设置时抛出错误', () => {
     // 清除所有 Gateway 相关 env 变量
     for (const key of Object.keys(process.env)) {
       if (key.startsWith('GATEWAY_') || key.startsWith('CORS_') || key.startsWith('RL_') ||
@@ -20,9 +25,24 @@ describe('loadConfig', () => {
       }
     }
 
+    expect(() => loadConfig()).toThrow('GATEWAY_KEY must be set');
+  });
+
+  it('应使用默认值当 GATEWAY_KEY 已设置而其它环境变量未设置时', () => {
+    // 清除所有 Gateway 相关 env 变量
+    for (const key of Object.keys(process.env)) {
+      if (key.startsWith('GATEWAY_') || key.startsWith('CORS_') || key.startsWith('RL_') ||
+          key.endsWith('_SERVICE_URL') || key.endsWith('_SERVICE_KEY') ||
+          key === 'DEFAULT_TIMEOUT_MS' || key === 'UPLOAD_TIMEOUT_MS' ||
+          key === 'READINESS_SERVICES') {
+        delete process.env[key];
+      }
+    }
+    process.env.GATEWAY_KEY = 'test-gateway-key';
+
     const cfg = loadConfig();
     expect(cfg.port).toBe(5000);
-    expect(cfg.gatewayKey).toBe('moonstone-local-gateway-key');
+    expect(cfg.gatewayKey).toBe('test-gateway-key');
     expect(cfg.corsOrigins).toEqual([
       'http://localhost:5120',
       'http://localhost:5121',
@@ -47,8 +67,8 @@ describe('loadConfig', () => {
   });
 
   it('应读取环境变量覆盖默认值', () => {
-    process.env.GATEWAY_PORT = '5297';
     process.env.GATEWAY_KEY = 'custom-key';
+    process.env.GATEWAY_PORT = '5297';
     process.env.CORS_ORIGINS = 'http://localhost:5298';
     process.env.DEFAULT_TIMEOUT_MS = '10000';
     process.env.USER_SERVICE_URL = 'http://custom:5261';
@@ -62,6 +82,7 @@ describe('loadConfig', () => {
   });
 
   it('应为每个服务配置独立密钥', () => {
+    process.env.GATEWAY_KEY = 'global-key';
     process.env.USER_SERVICE_KEY = 'user-key';
     process.env.AUTH_SERVICE_KEY = 'auth-key';
 

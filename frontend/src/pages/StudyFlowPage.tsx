@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useNavigate } from 'react-router'
 import AppShell, { PageHeader } from '../components/AppShell'
 import { api, ApiClientError } from '../lib/api'
 import { pollUntil } from '../lib/poll'
@@ -47,6 +47,9 @@ export default function StudyFlowPage() {
   const [previewBusy, setPreviewBusy] = useState(false)
   const [flowStep, setFlowStep] = useState<'materials' | 'scope'>('materials')
   const [flowAnimation, setFlowAnimation] = useState<'idle' | 'exit' | 'enter'>('idle')
+  // 用于在组件卸载时取消进行中的轮询，避免卸载后 setState 与请求泄漏。
+  const pollAbortRef = useRef<AbortController>(new AbortController())
+  useEffect(() => () => pollAbortRef.current?.abort(), [])
 
   useEffect(() => {
     void api.getAllMaterials().then(setMaterials).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : '资料列表读取失败。'))
@@ -74,7 +77,7 @@ export default function StudyFlowPage() {
         stage = '文字提取'
         setProgress(enableOcr ? `正在准备${ocrMode === 'quick' ? '快速' : '标准'} OCR。` : '正在提取资料文字。')
         const accepted = await api.createIngestionJob(source.materialId, { force, enableOcr, ocrMode })
-        const completed = await pollUntil(() => api.getIngestionJob(accepted.jobId), (job) => job.status === 'SUCCEEDED' || job.status === 'FAILED', (job) => setProgress(ingestionText(job)))
+        const completed = await pollUntil(() => api.getIngestionJob(accepted.jobId), (job) => job.status === 'SUCCEEDED' || job.status === 'FAILED', (job) => setProgress(ingestionText(job)), 240_000, pollAbortRef.current?.signal)
         if (completed.status === 'FAILED') throw jobError(completed.error, '资料文字提取失败。')
         readyMaterial = await api.getMaterial(source.materialId)
         setMaterial(readyMaterial)
@@ -97,7 +100,7 @@ export default function StudyFlowPage() {
 
       stage = '知识图谱构建'
       const acceptedBuild = await api.createGraphBuild(readyMaterial.materialId, subjectCode)
-      const completedBuild = await pollUntil(() => api.getGraphBuild(acceptedBuild.buildId), (job) => job.status === 'SUCCEEDED' || job.status === 'FAILED', (job) => setProgress(`正在构建知识图谱 · ${job.progress}%`))
+      const completedBuild = await pollUntil(() => api.getGraphBuild(acceptedBuild.buildId), (job) => job.status === 'SUCCEEDED' || job.status === 'FAILED', (job) => setProgress(`正在构建知识图谱 · ${job.progress}%`), 240_000, pollAbortRef.current?.signal)
       if (completedBuild.status === 'FAILED') throw jobError(completedBuild.error, '知识图谱构建失败。')
       if (!completedBuild.graphId) throw new Error('构图任务完成但没有返回 graphId。')
 
@@ -106,6 +109,8 @@ export default function StudyFlowPage() {
       updateWorkflow({ material: readyMaterial, graph: summary, chapters: chapterList, plan: undefined, gameGeneration: undefined, gameStyle: undefined, gameDifficulty: undefined, gameManifest: undefined, gamePackage: undefined, reviewSession: undefined, visitedSceneIds: undefined, answerResults: undefined, resultIdempotencyKey: undefined })
       setProgress(`图谱完成：${summary.chapterCount} 章，${summary.pointCount} 个知识点。`)
     } catch (reason) {
+      // 组件卸载触发的取消：不再 setState，避免卸载后请求泄漏。
+      if (reason instanceof DOMException && reason.name === 'AbortError') return
       const suffix = reason instanceof ApiClientError && reason.traceId ? `（traceId: ${reason.traceId}）` : ''
       setError(`${stage}失败：${reason instanceof Error ? reason.message : '处理失败。'}${suffix}`)
     } finally { setBusy(false) }

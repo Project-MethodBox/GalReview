@@ -204,6 +204,7 @@ function createConfig(
       generation: { windowMs: 60_000, max: 100 },
       general: { windowMs: 60_000, max: 100 },
     },
+    introspectionCache: { ttlMs: 15_000, maxSize: 4_096 },
   };
 }
 

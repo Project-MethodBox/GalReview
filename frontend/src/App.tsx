@@ -14,7 +14,7 @@ import SettingsPage from './pages/SettingsPage'
 import StudyFlowPage from './pages/StudyFlowPage'
 import { api, ApiClientError } from './lib/api'
 import { clearSession, readSession } from './lib/session'
-import { readAdminSession } from './lib/adminSession'
+import { clearAdminSession, readAdminSession } from './lib/adminSession'
 import { recoverWorkflow } from './lib/workflowRecovery'
 
 const routeDepth: Record<string, number> = {
@@ -76,7 +76,30 @@ function Protected({ children }: { children: ReactNode }) {
 }
 
 function AdminProtected({ children }: { children: ReactNode }) {
-  return readAdminSession() ? children : <Navigate replace to="/admin/login" />
+  const session = readAdminSession()
+  const [ready, setReady] = useState(false)
+  const [valid, setValid] = useState(false)
+
+  useEffect(() => {
+    if (!session) return
+    let active = true
+    // 服务端角色校验：不信任前端 sessionStorage，向服务端确认当前会话确实具有管理员权限。
+    void api.listAdminInvitations().then(() => {
+      if (active) setValid(true)
+    }).catch((reason: unknown) => {
+      if (!active) return
+      if (reason instanceof ApiClientError && (reason.status === 401 || reason.status === 403)) {
+        clearAdminSession()
+        setValid(false)
+      }
+    }).finally(() => { if (active) setReady(true) })
+    return () => { active = false }
+  }, [session?.session.sessionId])
+
+  if (!session) return <Navigate replace to="/admin/login" />
+  if (!ready) return <main className="app-loading" role="status"><span>正在验证管理员权限</span></main>
+  if (!valid) return <Navigate replace to="/admin/login" state={{ message: '管理员权限已失效，请重新登录。' }} />
+  return children
 }
 
 function AnimatedRoutes() {

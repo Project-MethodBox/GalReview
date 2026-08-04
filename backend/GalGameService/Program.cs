@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using GalGameService.Background;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 
@@ -102,6 +103,9 @@ builder.Services.AddSingleton<PlanGraphClient>(sp => new PlanGraphClient(
     sp.GetRequiredService<IConfiguration>(),
     isMockMode));
 builder.Services.AddSingleton<GameGenerator>();
+// 后台生成队列 + worker：替换原 fire-and-forget Task.Run。
+builder.Services.AddSingleton<GameGenerationQueue>();
+builder.Services.AddHostedService<GameGenerationWorker>();
 
 var app = builder.Build();
 
@@ -233,7 +237,7 @@ app.MapGet("/readyz", (HttpContext c, IGameStore store) =>
 //   - 校验通过 → 202 Accepted，后台异步生成
 // ============================================================================
 
-app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, HttpContext c, IGameStore store, PlanGraphClient planClient, NarrativeGenerationService narrativeService) =>
+app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, HttpContext c, IGameStore store, PlanGraphClient planClient, GameGenerationQueue generationQueue) =>
 {
     var userId = GatewayUser(c, gatewayKey);
     if (userId is null) return Failure(c, 401, "AUTH_REQUIRED", "需要网关认证的用户身份。");
@@ -299,53 +303,9 @@ app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, Ht
         return Failure(c, 503, "SERVICE_UNAVAILABLE", "游戏生成任务暂时不可用");
     }
 
-    // 后台异步生成（PlanGraph 已确认可用，不再重复获取）
-    // 使用 _ = 丢弃 Task 但内部有完整异常处理，不会静默吞异常
-    _ = Task.Run(() =>
-    {
-        try
-        {
-            // 原子状态转换：QUEUED → RUNNING
-            if (store.TryTransitionJob(job.GenerationId, JobStatus.QUEUED,
-                j => j with { Status = JobStatus.RUNNING, Progress = 50 }) is null)
-            {
-                logger.LogWarning("Job {GenerationId} was not in QUEUED state, skipping generation", job.GenerationId);
-                return;
-            }
-
-            logger.LogInformation("Job {GenerationId} started generating. Style={Style}, Difficulty={Difficulty}",
-                job.GenerationId, request.Style, request.Difficulty);
-
-            // Mock 固定返回同一套原创演示剧情；仍保留请求的计划与快照字段，
-            // 使包的溯源、任务查询和权限边界继续符合 §7.1 / §7.3.1。
-            // 非 Mock 才执行真实的骨架生成与可选叙事模型重写。
-            var package = isMockMode
-                ? MockStoryPackageFactory.Create(request)
-                : narrativeService.GenerateAsync(graph, request, userId).GetAwaiter().GetResult();
-            var checksum = GamePackageValidator.ComputeChecksum(package);
-            var manifest = new GamePackageManifest(
-                package.PackageId, package.SchemaVersion, package.GeneratorVersion,
-                package.ReviewPlanId, package.SnapshotVersion, package.EntrySceneId,
-                package.Scenes.Length, checksum,
-                $"/api/v1/game-packages/{package.PackageId}/content",
-                userId, DateTimeOffset.UtcNow);
-
-            store.SavePackage(package, manifest, userId);
-
-            // 原子状态转换：RUNNING → SUCCEEDED
-            store.TryTransitionJob(job.GenerationId, JobStatus.RUNNING,
-                j => j with { Status = JobStatus.SUCCEEDED, Progress = 100, PackageId = package.PackageId });
-
-            logger.LogInformation("Job {GenerationId} succeeded. PackageId={PackageId}, Scenes={SceneCount}",
-                job.GenerationId, package.PackageId, package.Scenes.Length);
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Job {GenerationId} failed during generation", job.GenerationId);
-            store.TryTransitionJob(job.GenerationId, JobStatus.RUNNING,
-                j => j with { Status = JobStatus.FAILED, Error = new ApiError("INTERNAL_ERROR", ex.Message, new { }) });
-        }
-    });
+    // 入队后台 worker 处理，替换原 fire-and-forget Task.Run。
+    // PlanGraph 已确认可用，worker 不再重复获取；携带全部上下文避免使用已释放的 HttpContext。
+    await generationQueue.EnqueueAsync(new GameGenerationWorkItem(job.GenerationId, userId, request, graph, traceId), c.RequestAborted);
 
     return Results.Accepted($"/api/v1/game-generations/{job.GenerationId}", ApiSuccess.Create(job, c.TraceIdentifier));
 });
@@ -474,13 +434,13 @@ app.Run();
 static bool IsGateway(HttpContext context, string key)
     => context.Request.Headers.TryGetValue("X-Gateway-Key", out var values)
        && values.Count == 1
-       && string.Equals(values[0], key, StringComparison.Ordinal);
+       && FixedTimeEqualsHeader(values[0], key);
 
 static string? GatewayUser(HttpContext context, string key)
 {
     if (!context.Request.Headers.TryGetValue("X-Gateway-Key", out var gwValues)
         || gwValues.Count != 1
-        || !string.Equals(gwValues[0], key, StringComparison.Ordinal))
+        || !FixedTimeEqualsHeader(gwValues[0], key))
         return null;
 
     if (!context.Request.Headers.TryGetValue("X-User-Id", out var userIdValues)
@@ -489,6 +449,22 @@ static string? GatewayUser(HttpContext context, string key)
         return null;
 
     return userIdValues[0];
+}
+
+/// <summary>
+/// 使用固定时间比较防止时序侧信道攻击。
+/// </summary>
+static bool FixedTimeEqualsHeader(string? headerValue, string expected)
+{
+    if (headerValue is null) return false;
+    var left = System.Text.Encoding.UTF8.GetBytes(headerValue);
+    var right = System.Text.Encoding.UTF8.GetBytes(expected);
+    var length = Math.Max(left.Length, right.Length);
+    var paddedLeft = new byte[length];
+    var paddedRight = new byte[length];
+    left.CopyTo(paddedLeft, 0);
+    right.CopyTo(paddedRight, 0);
+    return System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(paddedLeft, paddedRight) && left.Length == right.Length;
 }
 
 static IResult Failure(HttpContext context, int status, string code, string message)

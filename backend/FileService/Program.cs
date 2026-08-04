@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using FileService.Background;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
@@ -22,6 +24,9 @@ builder.Services.AddHttpClient("ocr", client =>
 }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { UseProxy = false });
 builder.Services.AddSingleton<MongoFileStore>();
 builder.Services.AddSingleton<IFileStore>(serviceProvider => serviceProvider.GetRequiredService<MongoFileStore>());
+// 后台 ingestion 队列 + worker：替换原 fire-and-forget Task.Run。
+builder.Services.AddSingleton<IngestionJobQueue>();
+builder.Services.AddHostedService<IngestionJobWorker>();
 var app = builder.Build();
 await app.Services.GetRequiredService<MongoFileStore>().RecoverIncompleteJobsAsync(CancellationToken.None);
 app.Use(async (context, next) =>
@@ -101,7 +106,7 @@ app.MapDelete("/api/v1/materials/{materialId}", (string materialId, HttpContext 
         ? Failure(c, 404, "RESOURCE_NOT_FOUND", "Material was not found.")
         : Failure(c, 409, "STATE_CONFLICT", "The material state changed before deletion.");
 });
-app.MapPost("/api/v1/materials/{materialId}/ingestion-jobs", (string materialId, CreateIngestionJobRequest request, HttpContext c, IFileStore store) =>
+app.MapPost("/api/v1/materials/{materialId}/ingestion-jobs", async (string materialId, CreateIngestionJobRequest request, HttpContext c, IFileStore store, FileService.Background.IngestionJobQueue queue) =>
 {
     var userId = GatewayUser(c, gatewayKey); var material = store.GetMaterial(materialId);
     if (userId is null) return Failure(c, 401, "AUTH_REQUIRED", "A gateway-authenticated user is required.");
@@ -111,7 +116,8 @@ app.MapPost("/api/v1/materials/{materialId}/ingestion-jobs", (string materialId,
     var ocrMode = string.IsNullOrWhiteSpace(request.OcrMode) ? "standard" : request.OcrMode.Trim().ToLowerInvariant();
     if (ocrMode is not ("quick" or "standard")) return Failure(c, 400, "VALIDATION_ERROR", "OCR mode must be quick or standard.");
     var job = store.CreateJob(materialId, string.IsNullOrWhiteSpace(request.ParserVersion) ? "files-text-v1" : request.ParserVersion, request.EnableOcr, ocrMode);
-    _ = Task.Run(() => store.ProcessJobAsync(job.JobId, CancellationToken.None));
+    // 入队后台 worker 处理，替换原 fire-and-forget Task.Run。
+    await queue.EnqueueAsync(job.JobId, c.RequestAborted);
     return Results.Accepted($"/api/v1/ingestion-jobs/{job.JobId}", ApiSuccess.Create(job, c.TraceIdentifier));
 });
 app.MapGet("/api/v1/ingestion-jobs/{jobId}", async (string jobId, HttpContext c, IFileStore store, IHttpClientFactory httpClientFactory) =>
@@ -151,7 +157,19 @@ app.MapGet("/internal/v1/materials/{materialId}/extracted-text", (string materia
 });
 app.Run();
 
-static string? GatewayUser(HttpContext context, string key) => context.Request.Headers["X-Gateway-Key"] == key && Guid.TryParse(context.Request.Headers["X-User-Id"], out _) ? context.Request.Headers["X-User-Id"].ToString() : null;
+static string? GatewayUser(HttpContext context, string key) => FixedTimeEqualsHeader(context.Request.Headers["X-Gateway-Key"], key) && Guid.TryParse(context.Request.Headers["X-User-Id"], out _) ? context.Request.Headers["X-User-Id"].ToString() : null;
+static bool FixedTimeEqualsHeader(string? headerValue, string expected)
+{
+    if (string.IsNullOrEmpty(headerValue)) return false;
+    var left = System.Text.Encoding.UTF8.GetBytes(headerValue);
+    var right = System.Text.Encoding.UTF8.GetBytes(expected);
+    var length = Math.Max(left.Length, right.Length);
+    var paddedLeft = new byte[length];
+    var paddedRight = new byte[length];
+    left.CopyTo(paddedLeft, 0);
+    right.CopyTo(paddedRight, 0);
+    return CryptographicOperations.FixedTimeEquals(paddedLeft, paddedRight) && left.Length == right.Length;
+}
 static string? NormalizeSubjectCode(string? value)
 {
     if (value is null) return null;

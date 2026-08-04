@@ -1,4 +1,4 @@
-﻿import 'dotenv/config';
+import 'dotenv/config';
 
 export interface ServiceTarget {
   name: string;
@@ -23,10 +23,25 @@ export interface GatewayConfig {
     generation: { windowMs: number; max: number };
     general: { windowMs: number; max: number };
   };
+  /** Token 内省短 TTL 缓存，减少 AuthService 压力；仅缓存 active=true 结果 */
+  introspectionCache: {
+    ttlMs: number;
+    maxSize: number;
+  };
 }
 
 function env(key: string, fallback: string): string {
   return process.env[key] ?? fallback;
+}
+
+function envRequired(key: string): string {
+  const value = process.env[key];
+  if (!value || value.trim().length === 0) {
+    throw new Error(
+      `Environment variable ${key} must be set. Refusing to start with a default service key.`,
+    );
+  }
+  return value;
 }
 
 function envInt(key: string, fallback: number): number {
@@ -37,7 +52,9 @@ function envInt(key: string, fallback: number): number {
 }
 
 export function loadConfig(): GatewayConfig {
-  const gatewayKey = env('GATEWAY_KEY', 'moonstone-local-gateway-key');
+  // GATEWAY_KEY 必须显式设置，不允许回退到默认值。
+  // 使用默认密钥会让任何知道默认值的攻击者绕过 Gateway 鉴权。
+  const gatewayKey = envRequired('GATEWAY_KEY');
 
   /** 读取每服务独立密钥，回退到全局密钥 */
   const svcKey = (envName: string) => env(envName, gatewayKey);
@@ -120,6 +137,12 @@ export function loadConfig(): GatewayConfig {
         windowMs: envInt('RL_GENERAL_WINDOW_MS', 60_000),
         max: envInt('RL_GENERAL_MAX', 120),
       },
+    },
+    introspectionCache: {
+      // 短 TTL：默认 15 秒。仅缓存 active=true 结果，令牌撤销最长延迟 = TTL。
+      ttlMs: envInt('INTROSPECTION_CACHE_TTL_MS', 15_000),
+      // 上限：默认 4096 条。LRU 淘汰最旧条目，防止内存膨胀。
+      maxSize: envInt('INTROSPECTION_CACHE_MAX_SIZE', 4_096),
     },
   };
 }
