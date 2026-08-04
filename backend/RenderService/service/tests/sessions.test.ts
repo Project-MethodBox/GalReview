@@ -13,6 +13,7 @@ import { test } from 'vitest'
 import type { GamePackage, ReviewEvidenceSubmission } from '../src/contract.js'
 import type { GatewayClient, ReadPackageResult, SubmitEvidenceResult, ValidatePackageResult } from '../src/gateway-client.js'
 import { createSessionService } from '../src/sessions.js'
+import { InMemorySessionStore } from '../src/sessionStore.js'
 import { listenOnTestPort, spawnServerOnTestPort } from './support/testPorts.js'
 
 const USER = '7bc4918a-9079-4ea2-9e8e-369ad79a9f20'
@@ -146,7 +147,7 @@ function fakeGateway(overrides: FakeGatewayOverrides = {}): FakeGateway {
 }
 
 async function createStarted(gateway: GatewayClient) {
-  const service = createSessionService({ gateway })
+  const service = createSessionService({ gateway, store: new InMemorySessionStore() })
   const created = await service.create({
     userId: USER,
     body: { packageId: goldenPackage.packageId, clientRuntimeVersion: 'cpp-wasm-0.2.0' },
@@ -179,6 +180,7 @@ test('create freezes plan identity from the authoritative package', async () => 
 test('create maps upstream failures to contract codes', async () => {
   const notFound = createSessionService({
     gateway: fakeGateway({ read: () => ({ ok: false, kind: 'not_found', status: 404, code: 'RESOURCE_NOT_FOUND', message: 'x' }) }),
+    store: new InMemorySessionStore(),
   })
   let result = await notFound.create({ userId: USER, body: { packageId: goldenPackage.packageId, clientRuntimeVersion: 'x' } })
   expectFailure(result)
@@ -187,18 +189,21 @@ test('create maps upstream failures to contract codes', async () => {
 
   const broken = createSessionService({
     gateway: fakeGateway({ read: () => ({ ok: false, kind: 'contract', status: 200, code: 'UPSTREAM_CONTRACT_INVALID', message: 'x' }) }),
+    store: new InMemorySessionStore(),
   })
   result = await broken.create({ userId: USER, body: { packageId: goldenPackage.packageId, clientRuntimeVersion: 'x' } })
   assert.equal(result.status, 502)
 
   const down = createSessionService({
     gateway: fakeGateway({ read: () => ({ ok: false, kind: 'unavailable', status: 0, code: 'SERVICE_UNAVAILABLE', message: 'x' }) }),
+    store: new InMemorySessionStore(),
   })
   result = await down.create({ userId: USER, body: { packageId: goldenPackage.packageId, clientRuntimeVersion: 'x' } })
   assert.equal(result.status, 503)
 
   const invalidPackage = createSessionService({
     gateway: fakeGateway({ validate: () => ({ ok: true, valid: false, errors: [{ path: '$', code: 'X', message: 'x' }] }) }),
+    store: new InMemorySessionStore(),
   })
   result = await invalidPackage.create({ userId: USER, body: { packageId: goldenPackage.packageId, clientRuntimeVersion: 'x' } })
   expectFailure(result)
@@ -208,8 +213,8 @@ test('create maps upstream failures to contract codes', async () => {
 
 test('get hides sessions of other users as 404', async () => {
   const { service, session } = await createStarted(fakeGateway())
-  assert.equal(service.get({ userId: USER, sessionId: session.sessionId }).status, 200)
-  assert.equal(service.get({ userId: OTHER_USER, sessionId: session.sessionId }).status, 404)
+  assert.equal((await service.get({ userId: USER, sessionId: session.sessionId })).status, 200)
+  assert.equal((await service.get({ userId: OTHER_USER, sessionId: session.sessionId })).status, 404)
 })
 
 test('progress uses optimistic concurrency with idempotent replay', async () => {
@@ -220,17 +225,17 @@ test('progress uses optimistic concurrency with idempotent replay', async () => 
     visitedSceneIds: ['scene-001'],
     runtimeState: { schemaVersion: 'render-runtime-state-1' },
   }
-  const saved = service.saveProgress({ userId: USER, sessionId: session.sessionId, body: input })
+  const saved = await service.saveProgress({ userId: USER, sessionId: session.sessionId, body: input })
   assert.equal(saved.status, 200)
   if (!saved.ok) throw new Error('unreachable')
   assert.equal(saved.body.version, 1)
 
-  const replay = service.saveProgress({ userId: USER, sessionId: session.sessionId, body: input })
+  const replay = await service.saveProgress({ userId: USER, sessionId: session.sessionId, body: input })
   assert.equal(replay.status, 200)
   if (!replay.ok) throw new Error('unreachable')
   assert.equal(replay.body.version, 1, 'identical retry returns the stored snapshot')
 
-  const conflict = service.saveProgress({
+  const conflict = await service.saveProgress({
     userId: USER,
     sessionId: session.sessionId,
     body: { ...input, runtimeState: { changed: true } },
@@ -239,7 +244,7 @@ test('progress uses optimistic concurrency with idempotent replay', async () => 
   assert.equal(conflict.status, 409)
   assert.equal(conflict.code, 'VERSION_CONFLICT')
 
-  const ghost = service.saveProgress({
+  const ghost = await service.saveProgress({
     userId: USER,
     sessionId: session.sessionId,
     body: { ...input, expectedVersion: 1, currentSceneId: 'scene-ghost' },
@@ -248,7 +253,7 @@ test('progress uses optimistic concurrency with idempotent replay', async () => 
   assert.equal(ghost.status, 422)
   assert.equal(ghost.code, 'PROGRESS_SCENE_UNKNOWN')
 
-  const after = service.get({ userId: USER, sessionId: session.sessionId })
+  const after = await service.get({ userId: USER, sessionId: session.sessionId })
   if (!after.ok) throw new Error('unreachable')
   assert.equal(after.body.status, 'RUNNING')
   assert.ok(after.body.startedAt)
@@ -262,14 +267,14 @@ test('events deduplicate by clientEventId', async () => {
     occurredAt: '2026-08-02T09:00:00Z',
     payload: { sceneId: 'scene-001', choiceId: 'c1' },
   }
-  const first = service.appendEvents({ userId: USER, sessionId: session.sessionId, body: { events: [event] } })
+  const first = await service.appendEvents({ userId: USER, sessionId: session.sessionId, body: { events: [event] } })
   assert.equal(first.status, 202)
   if (!first.ok) throw new Error('unreachable')
   assert.deepEqual(first.body, { accepted: 1, duplicates: 0 })
-  const second = service.appendEvents({ userId: USER, sessionId: session.sessionId, body: { events: [event] } })
+  const second = await service.appendEvents({ userId: USER, sessionId: session.sessionId, body: { events: [event] } })
   if (!second.ok) throw new Error('unreachable')
   assert.deepEqual(second.body, { accepted: 0, duplicates: 1 })
-  const invalid = service.appendEvents({ userId: USER, sessionId: session.sessionId, body: { events: [{ ...event, type: 'HACK' }] } })
+  const invalid = await service.appendEvents({ userId: USER, sessionId: session.sessionId, body: { events: [{ ...event, type: 'HACK' }] } })
   assert.equal(invalid.status, 400)
 })
 
@@ -295,7 +300,7 @@ test('result submits evidence with frozen identity and stays idempotent', async 
   assert.ok(!('scoreDelta' in submission.answerResults[0]!), 'scoreDelta never reaches KnowledgeService')
   assert.ok(!('choiceId' in submission.answerResults[0]!), 'choiceId stays local to Render')
 
-  const completed = service.get({ userId: USER, sessionId: session.sessionId })
+  const completed = await service.get({ userId: USER, sessionId: session.sessionId })
   if (!completed.ok) throw new Error('unreachable')
   assert.equal(completed.body.status, 'COMPLETED')
   assert.ok(completed.body.completedAt)
@@ -357,7 +362,7 @@ test('knowledge outage keeps the session open and the resultId stable', async ()
 
   const outage = await service.submitResult({ userId: USER, sessionId: session.sessionId, body: makeResultBody() })
   assert.equal(outage.status, 503)
-  const during = service.get({ userId: USER, sessionId: session.sessionId })
+  const during = await service.get({ userId: USER, sessionId: session.sessionId })
   if (!during.ok) throw new Error('unreachable')
   assert.equal(during.body.status, 'CREATED')
 
@@ -384,7 +389,7 @@ test('knowledge conflicts pass through their stable codes', async () => {
 
 test('explanation-only packages complete without touching mastery', async () => {
   const gateway = fakeGateway({ read: () => ({ ok: true, package: explanationPackage }) })
-  const service = createSessionService({ gateway })
+  const service = createSessionService({ gateway, store: new InMemorySessionStore() })
   const created = await service.create({
     userId: USER, body: { packageId: explanationPackage.packageId, clientRuntimeVersion: 'x' },
   })
@@ -404,7 +409,7 @@ test('explanation-only packages complete without touching mastery', async () => 
   if (!empty.ok) throw new Error('unreachable')
   assert.equal(empty.body.status, 'ACCEPTED')
   assert.equal(gateway.calls.evidence.length, 0, 'no evidence call for explanation-only packages')
-  const final = service.get({ userId: USER, sessionId: created.body.sessionId })
+  const final = await service.get({ userId: USER, sessionId: created.body.sessionId })
   if (!final.ok) throw new Error('unreachable')
   assert.equal(final.body.status, 'COMPLETED')
 })

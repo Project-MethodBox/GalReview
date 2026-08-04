@@ -1,9 +1,8 @@
 // ReviewSession domain logic (contract.md §8.1/§8.2/§8.2.1).
 //
-// Storage is ephemeral-memory by explicit v1 decision (same baseline as
-// GalGameService): sessions, progress and result receipts live in process
-// memory and are lost on restart. /readyz reports storage=ephemeral-memory;
-// production persistence is a later, documented milestone.
+// Storage is pluggable via SessionStore: an in-memory store for development
+// and a MongoDB store for production. When MongoDB is configured (via
+// RENDER_SESSION_MONGODB_URI), sessions survive process restarts.
 //
 // Every method returns { ok: true, status, body } for success or
 // { ok: false, status, code, message, details } for failures; the HTTP
@@ -22,6 +21,7 @@ import type {
 } from './contract.js'
 import { isNonEmptyString, isRecord, isUuidV4 } from './contract.js'
 import type { GatewayClient, UpstreamFailure } from './gateway-client.js'
+import type { SessionStore, SerializedSessionRecord } from './sessionStore.js'
 
 export const SESSION_LIMITS = Object.freeze({
   maxAnswerResults: 100,
@@ -99,6 +99,7 @@ interface ValidatedAnswer {
 
 export interface SessionServiceOptions {
   gateway: GatewayClient
+  store: SessionStore
   now?: () => Date
   newId?: () => string
 }
@@ -172,28 +173,109 @@ function sessionView(record: SessionRecord): ReviewSession {
   }
 }
 
+// Serialize SessionRecord for persistent storage (Set → array, Map → record).
+function toSerialized(record: SessionRecord): SerializedSessionRecord {
+  return {
+    sessionId: record.sessionId,
+    userId: record.userId,
+    packageId: record.packageId,
+    reviewPlanId: record.reviewPlanId,
+    snapshotVersion: record.snapshotVersion,
+    clientRuntimeVersion: record.clientRuntimeVersion,
+    status: record.status,
+    currentSceneId: record.currentSceneId,
+    progressVersion: record.progressVersion,
+    startedAt: record.startedAt,
+    completedAt: record.completedAt,
+    createdAt: record.createdAt,
+    digest: {
+      entrySceneId: record.digest.entrySceneId,
+      sceneIds: Array.from(record.digest.sceneIds),
+      questions: Array.from(record.digest.questions.entries()).map(([qid, q]) => ({
+        questionId: qid,
+        knowledgePointId: q.knowledgePointId,
+        sceneId: q.sceneId,
+        choices: Array.from(q.choices.entries()),
+      })),
+      hasQuestions: record.digest.hasQuestions,
+    },
+    snapshot: record.snapshot,
+    snapshotChecksum: record.snapshotChecksum,
+    eventIds: Array.from(record.eventIds),
+    result: record.result,
+    pendingResult: record.pendingResult,
+  }
+}
+
+// Deserialize from persistent storage back to SessionRecord (array → Set, record → Map).
+function fromSerialized(s: SerializedSessionRecord): SessionRecord {
+  const digestRaw = s.digest as {
+    entrySceneId: string
+    sceneIds: string[]
+    questions: Array<{
+      questionId: string
+      knowledgePointId: string
+      sceneId: string
+      choices: Array<[string, boolean]>
+    }>
+    hasQuestions: boolean
+  }
+  const questions = new Map<string, QuestionDigest>()
+  for (const q of digestRaw.questions) {
+    questions.set(q.questionId, {
+      knowledgePointId: q.knowledgePointId,
+      sceneId: q.sceneId,
+      choices: new Map(q.choices),
+    })
+  }
+  return {
+    sessionId: s.sessionId,
+    userId: s.userId,
+    packageId: s.packageId,
+    reviewPlanId: s.reviewPlanId,
+    snapshotVersion: s.snapshotVersion,
+    clientRuntimeVersion: s.clientRuntimeVersion,
+    status: s.status as ReviewSessionStatus,
+    currentSceneId: s.currentSceneId,
+    progressVersion: s.progressVersion,
+    startedAt: s.startedAt,
+    completedAt: s.completedAt,
+    createdAt: s.createdAt,
+    digest: {
+      entrySceneId: digestRaw.entrySceneId,
+      sceneIds: new Set(digestRaw.sceneIds),
+      questions,
+      hasQuestions: digestRaw.hasQuestions,
+    },
+    snapshot: s.snapshot as ProgressSnapshot | null,
+    snapshotChecksum: s.snapshotChecksum,
+    eventIds: new Set(s.eventIds),
+    result: s.result as StoredResult | null,
+    pendingResult: s.pendingResult as { idempotencyKey: string; checksum: string; resultId: string } | null,
+  }
+}
+
 export interface SessionService {
   create(input: { userId: string; body: unknown; correlationId?: string }): Promise<DomainResult<ReviewSession>>
-  get(input: { userId: string; sessionId: string }): DomainResult<ReviewSession>
-  saveProgress(input: { userId: string; sessionId: string; body: unknown }): DomainResult<ProgressSnapshot>
-  appendEvents(input: { userId: string; sessionId: string; body: unknown }): DomainResult<EventReceipt>
+  get(input: { userId: string; sessionId: string }): Promise<DomainResult<ReviewSession>>
+  saveProgress(input: { userId: string; sessionId: string; body: unknown }): Promise<DomainResult<ProgressSnapshot>>
+  appendEvents(input: { userId: string; sessionId: string; body: unknown }): Promise<DomainResult<EventReceipt>>
   submitResult(input: {
     userId: string; sessionId: string; body: unknown; correlationId?: string
   }): Promise<DomainResult<ReviewResult>>
-  stats(): { sessions: number; storage: 'ephemeral-memory' }
+  stats(): Promise<{ sessions: number; storage: string }>
 }
 
 export function createSessionService(options: SessionServiceOptions): SessionService {
-  const { gateway } = options
+  const { gateway, store } = options
   const now = options.now ?? (() => new Date())
   const newId = options.newId ?? randomUUID
-  const sessions = new Map<string, SessionRecord>()
 
-  function findOwned(sessionId: string, userId: string): SessionRecord | null {
-    const record = sessions.get(sessionId)
+  async function findOwned(sessionId: string, userId: string): Promise<SessionRecord | null> {
+    const serialized = await store.get(sessionId)
     // Missing and not-owned are indistinguishable to the caller (§5.1 style).
-    if (!record || record.userId !== userId) return null
-    return record
+    if (!serialized || serialized.userId !== userId) return null
+    return fromSerialized(serialized)
   }
 
   function markRunning(record: SessionRecord): void {
@@ -258,18 +340,18 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
         result: null,
         pendingResult: null,
       }
-      sessions.set(record.sessionId, record)
+      await store.set(toSerialized(record))
       return { ok: true, status: 201, body: sessionView(record) }
     },
 
-    get({ userId, sessionId }) {
+    async get({ userId, sessionId }) {
       if (!isUuidV4(sessionId)) return validationError('sessionId 必须是小写 UUID v4')
-      const record = findOwned(sessionId, userId)
+      const record = await findOwned(sessionId, userId)
       if (!record) return failure(404, 'RESOURCE_NOT_FOUND', '复习会话不存在')
       return { ok: true, status: 200, body: sessionView(record) }
     },
 
-    saveProgress({ userId, sessionId, body }) {
+    async saveProgress({ userId, sessionId, body }) {
       if (!isUuidV4(sessionId)) return validationError('sessionId 必须是小写 UUID v4')
       if (!isRecord(body)) return validationError('请求体必须是 JSON 对象')
       if (!isInt(body.expectedVersion) || body.expectedVersion < 0) {
@@ -283,7 +365,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
       const visitedSceneIds = body.visitedSceneIds as string[]
       if (!isRecord(body.runtimeState)) return validationError('runtimeState 必须是 JSON 对象')
 
-      const record = findOwned(sessionId, userId)
+      const record = await findOwned(sessionId, userId)
       if (!record) return failure(404, 'RESOURCE_NOT_FOUND', '复习会话不存在')
 
       if (visitedSceneIds.length > SESSION_LIMITS.maxVisitedScenes) {
@@ -338,10 +420,11 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
         savedAt: now().toISOString(),
       }
       record.snapshotChecksum = inputChecksum
+      await store.set(toSerialized(record))
       return { ok: true, status: 200, body: record.snapshot }
     },
 
-    appendEvents({ userId, sessionId, body }) {
+    async appendEvents({ userId, sessionId, body }) {
       if (!isUuidV4(sessionId)) return validationError('sessionId 必须是小写 UUID v4')
       if (!isRecord(body) || !Array.isArray(body.events) || body.events.length === 0) {
         return validationError('events 必须是非空数组')
@@ -367,7 +450,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
         clientEventIds.push(event.clientEventId)
       }
 
-      const record = findOwned(sessionId, userId)
+      const record = await findOwned(sessionId, userId)
       if (!record) return failure(404, 'RESOURCE_NOT_FOUND', '复习会话不存在')
       if (record.status === 'COMPLETED' || record.status === 'ABANDONED') {
         return failure(409, 'STATE_CONFLICT', '会话已结束，无法追加事件')
@@ -387,6 +470,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
         }
       }
       if (accepted > 0) markRunning(record)
+      await store.set(toSerialized(record))
       return { ok: true, status: 202, body: { accepted, duplicates } }
     },
 
@@ -442,7 +526,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
         })
       }
 
-      const record = findOwned(sessionId, userId)
+      const record = await findOwned(sessionId, userId)
       if (!record) return failure(404, 'RESOURCE_NOT_FOUND', '复习会话不存在')
 
       // Range and consistency checks (422).
@@ -593,6 +677,10 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
           })),
         }, correlationId)
         if (!evidence.ok) {
+          // Persist pendingResult so retries reuse the same resultId (§8.2.1).
+          // Previously the in-memory Map retained mutations automatically; the
+          // pluggable store requires an explicit write.
+          await store.set(toSerialized(record))
           // The session stays open and pendingResult keeps the resultId, so
           // a retry reuses the same identity instead of minting a new one.
           switch (evidence.kind) {
@@ -627,6 +715,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
         submittedAt,
       }
       record.pendingResult = null
+      await store.set(toSerialized(record))
 
       return {
         ok: true,
@@ -636,8 +725,8 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
     },
 
     // Diagnostics for /readyz and tests.
-    stats() {
-      return { sessions: sessions.size, storage: 'ephemeral-memory' }
+    async stats() {
+      return { sessions: await store.size(), storage: store.kind }
     },
   }
 }

@@ -5,26 +5,18 @@ internal static class AuthEndpoints
 {
     public static WebApplication MapAuthEndpoints(this WebApplication app, string gatewayKey, string adminUsername, string adminPassword)
     {
-        app.MapPost("/api/v1/auth/registrations", async (RegistrationRequest request, HttpContext c, IAuthRepository repository, IPasswordHasher<Credential> hasher, IHttpClientFactory clients) =>
+        app.MapPost("/api/v1/auth/registrations", async (RegistrationRequest request, HttpContext c, RegistrationSagaCoordinator sagaCoordinator) =>
         {
             var invitationCode = AuthHelpers.NormalizeInvitationCode(request.InvitationCode);
             if (!AuthHelpers.ValidEmail(request.Email) || !AuthHelpers.ValidName(request.DisplayName) || !AuthHelpers.ValidPassword(request.Password) || invitationCode is null) return AuthHelpers.Failure(c, 400, "VALIDATION_ERROR", "邮箱、显示名、密码或邀请码格式不正确");
-            var credential = Credential.New(request.Email.Trim().ToLowerInvariant());
-            credential = credential with { PasswordHash = hasher.HashPassword(credential, request.Password) };
-            var registration = repository.TryCreateCredentialWithInvitation(credential, invitationCode);
-            if (registration == RegistrationOutcome.EmailAlreadyRegistered) return AuthHelpers.Failure(c, 409, "STATE_CONFLICT", "该邮箱已注册");
-            if (registration == RegistrationOutcome.InvitationUnavailable) return AuthHelpers.Failure(c, 422, "BUSINESS_RULE_VIOLATION", "邀请码无效、已过期或使用次数已达上限");
-            var profileCreated = await AuthHelpers.CreateProfileAsync(clients.CreateClient("gateway"), gatewayKey, c.TraceIdentifier, credential.UserId, request.DisplayName.Trim(), c.RequestAborted);
-            if (!profileCreated) { repository.RollbackRegistration(credential.UserId, invitationCode); return AuthHelpers.Failure(c, 503, "SERVICE_UNAVAILABLE", "用户资料服务暂时不可用"); }
-            StoredSession session;
-            try { session = repository.CreateSession(credential.UserId, request.DeviceName); }
-            catch
+            try
             {
-                await AuthHelpers.DeleteUserProfileAsync(clients.CreateClient("gateway"), gatewayKey, c.TraceIdentifier, credential.UserId, c.RequestAborted);
-                repository.RollbackRegistration(credential.UserId, invitationCode);
-                throw;
+                var session = await sagaCoordinator.ExecuteAsync(request.Email, request.Password, request.DisplayName, invitationCode, request.DeviceName, c.TraceIdentifier, c.RequestAborted);
+                return Results.Created($"/api/v1/auth/sessions/{session.SessionId}", ApiSuccess.Create(session.ToResponse(), c.TraceIdentifier));
             }
-            return Results.Created($"/api/v1/auth/sessions/{session.SessionId}", ApiSuccess.Create(session.ToResponse(), c.TraceIdentifier));
+            catch (RegistrationConflictException) { return AuthHelpers.Failure(c, 409, "STATE_CONFLICT", "该邮箱已注册"); }
+            catch (RegistrationBusinessException) { return AuthHelpers.Failure(c, 422, "BUSINESS_RULE_VIOLATION", "邀请码无效、已过期或使用次数已达上限"); }
+            catch (RegistrationDependencyException) { return AuthHelpers.Failure(c, 503, "SERVICE_UNAVAILABLE", "用户资料服务暂时不可用"); }
         });
 
         app.MapPost("/api/v1/auth/sessions", (LoginRequest request, HttpContext c, IAuthRepository repository, IPasswordHasher<Credential> hasher) =>

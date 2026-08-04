@@ -1,6 +1,7 @@
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Identity;
+using MySqlConnector;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders();
@@ -11,6 +12,17 @@ var isMockMode = string.Equals(Environment.GetEnvironmentVariable("MOONSTONE_MOD
 var connectionString = builder.Configuration.GetConnectionString("AuthDatabase");
 if (!isMockMode && string.IsNullOrWhiteSpace(connectionString))
     throw new InvalidOperationException("ConnectionStrings:AuthDatabase must be configured.");
+// 安全门：MySQL 连接必须启用 SSL（SslMode=Required/VerifyCA/VerifyFull），
+// 禁止 AllowPublicKeyRetrieval（明文传输密码的降级攻击面）。
+// Mock 模式无需 MySQL，跳过校验。
+if (!isMockMode)
+{
+    var csBuilder = new MySqlConnectionStringBuilder(connectionString!);
+    if (csBuilder.AllowPublicKeyRetrieval)
+        throw new InvalidOperationException("ConnectionStrings:AuthDatabase 禁止启用 AllowPublicKeyRetrieval（明文密码风险）。");
+    if (csBuilder.SslMode is not (MySqlSslMode.Required or MySqlSslMode.VerifyCA or MySqlSslMode.VerifyFull))
+        throw new InvalidOperationException("ConnectionStrings:AuthDatabase 必须启用 SSL（SslMode=Required 或更高）。");
+}
 var gatewayKey = builder.Configuration["Gateway:ServiceKey"] ?? throw new InvalidOperationException("Gateway:ServiceKey must be configured.");
 var gatewayBaseUrl = builder.Configuration["Gateway:BaseUrl"] ?? "http://localhost:5000";
 var gatewayUri = new Uri(gatewayBaseUrl, UriKind.Absolute);
@@ -26,6 +38,7 @@ if (isMockMode)
     builder.Services.AddSingleton<IAuthRepository, InMemoryAuthRepository>();
     builder.Services.AddSingleton<IAdminRepository, InMemoryAdminRepository>();
     builder.Services.AddSingleton<IAdminAuditRepository, InMemoryAdminAuditRepository>();
+    builder.Services.AddSingleton<IRegistrationSagaStore, InMemoryRegistrationSagaStore>();
 }
 else
 {
@@ -33,7 +46,10 @@ else
     builder.Services.AddSingleton<IAuthRepository, MySqlAuthRepository>();
     builder.Services.AddSingleton<IAdminRepository, MySqlAdminRepository>();
     builder.Services.AddSingleton<IAdminAuditRepository, MySqlAdminAuditRepository>();
+    builder.Services.AddSingleton<IRegistrationSagaStore, MySqlRegistrationSagaStore>();
 }
+builder.Services.AddSingleton<RegistrationSagaCoordinator>();
+builder.Services.AddHostedService<RegistrationReconciliationService>();
 builder.Services.AddHttpClient("gateway", client => client.BaseAddress = gatewayUri);
 builder.Services.AddRateLimiter(options =>
 {

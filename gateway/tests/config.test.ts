@@ -165,4 +165,16 @@ describe('loadConfig', () => {
     expect(cfg.services.galGameService.name).toBe('GalGameService');
     expect(cfg.services.renderService.name).toBe('RenderService');
   });
+
+  it('rateLimitRedisUrl 默认未设置', () => {
+    delete process.env.RATELIMIT_REDIS_URL;
+    const cfg = loadConfig();
+    expect(cfg.rateLimitRedisUrl).toBeUndefined();
+  });
+
+  it('应读取 RATELIMIT_REDIS_URL 配置', () => {
+    process.env.RATELIMIT_REDIS_URL = 'redis://localhost:6379';
+    const cfg = loadConfig();
+    expect(cfg.rateLimitRedisUrl).toBe('redis://localhost:6379');
+  });
 });

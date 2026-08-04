@@ -12,6 +12,17 @@ var isMockMode = string.Equals(Environment.GetEnvironmentVariable("MOONSTONE_MOD
 var connectionString = builder.Configuration.GetConnectionString("UserDatabase");
 if (!isMockMode && string.IsNullOrWhiteSpace(connectionString))
     throw new InvalidOperationException("ConnectionStrings:UserDatabase must be configured.");
+// 安全门：MySQL 连接必须启用 SSL（SslMode=Required/VerifyCA/VerifyFull），
+// 禁止 AllowPublicKeyRetrieval（明文传输密码的降级攻击面）。
+// Mock 模式无需 MySQL，跳过校验。
+if (!isMockMode)
+{
+    var csBuilder = new MySqlConnectionStringBuilder(connectionString!);
+    if (csBuilder.AllowPublicKeyRetrieval)
+        throw new InvalidOperationException("ConnectionStrings:UserDatabase 禁止启用 AllowPublicKeyRetrieval（明文密码风险）。");
+    if (csBuilder.SslMode is not (MySqlSslMode.Required or MySqlSslMode.VerifyCA or MySqlSslMode.VerifyFull))
+        throw new InvalidOperationException("ConnectionStrings:UserDatabase 必须启用 SSL（SslMode=Required 或更高）。");
+}
 var gatewayKey = builder.Configuration["Gateway:ServiceKey"]
     ?? throw new InvalidOperationException("Gateway:ServiceKey must be configured.");
 var storageName = isMockMode ? "memory" : "mysql";
