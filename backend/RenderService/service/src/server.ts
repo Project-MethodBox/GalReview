@@ -17,6 +17,7 @@ import { createServer } from 'node:http'
 import { createGatewayClient } from './gateway-client.js'
 import type { SessionService } from './sessions.js'
 import { createSessionService } from './sessions.js'
+import { createSessionStore } from './sessionStore.js'
 import { UUID_V4 } from './contract.js'
 
 const portText = process.env.PORT || '5106'
@@ -96,6 +97,12 @@ async function probeWasmArtifact(bytes: Buffer): Promise<ArtifactProbe> {
 const artifact = await probeWasmArtifact(wasm)
 const runtimeMode = sessionsEnabled && artifact.wasmAbiComplete ? 'FULL' : 'SHELL'
 
+// Session store is pluggable: MongoDB (RENDER_SESSION_MONGODB_URI) for
+// production, in-memory for development. Resolves before the service binds
+// so a MongoDB connection failure stops the process at boot rather than
+// dropping sessions silently.
+const sessionStore = await createSessionStore()
+
 const sessionService: SessionService | null = sessionsEnabled
   ? createSessionService({
       gateway: createGatewayClient({
@@ -104,6 +111,7 @@ const sessionService: SessionService | null = sessionsEnabled
         serviceKey: gatewayServiceKey,
         timeoutMs: internalTimeoutMs,
       }),
+      store: sessionStore,
     })
   : null
 
@@ -254,7 +262,7 @@ async function handleReviewSessions(
   }
   if (rest.length === 1 && request.method === 'GET') {
     respondDomain(response,
-      sessionService.get({ userId, sessionId: rest[0]! }), correlationId)
+      await sessionService.get({ userId, sessionId: rest[0]! }), correlationId)
     return
   }
   if (rest.length === 2 && rest[1] === 'progress' && request.method === 'PUT') {
@@ -264,7 +272,7 @@ async function handleReviewSessions(
       return
     }
     respondDomain(response,
-      sessionService.saveProgress({ userId, sessionId: rest[0]!, body: body.value }), correlationId)
+      await sessionService.saveProgress({ userId, sessionId: rest[0]!, body: body.value }), correlationId)
     return
   }
   if (rest.length === 2 && rest[1] === 'events' && request.method === 'POST') {
@@ -274,7 +282,7 @@ async function handleReviewSessions(
       return
     }
     respondDomain(response,
-      sessionService.appendEvents({ userId, sessionId: rest[0]!, body: body.value }), correlationId)
+      await sessionService.appendEvents({ userId, sessionId: rest[0]!, body: body.value }), correlationId)
     return
   }
   if (rest.length === 2 && rest[1] === 'result' && request.method === 'PUT') {
@@ -301,14 +309,15 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     return
   }
   if (request.method === 'GET' && pathname === '/readyz') {
+    const stats = sessionService ? await sessionService.stats() : { sessions: 0, storage: sessionStore.kind }
     writeJson(response, 200, success({
       status: 'ready',
       runtimeMode,
       executionEngine: artifact.executionEngine,
       wasmAbiComplete: artifact.wasmAbiComplete,
       reviewSessionsAvailable: sessionsEnabled,
-      storage: 'ephemeral-memory',
-      activeSessions: sessionService ? sessionService.stats().sessions : 0,
+      storage: stats.storage,
+      activeSessions: stats.sessions,
     }, correlationId), correlationId)
     return
   }

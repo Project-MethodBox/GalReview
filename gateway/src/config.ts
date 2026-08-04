@@ -23,6 +23,11 @@ export interface GatewayConfig {
     generation: { windowMs: number; max: number };
     general: { windowMs: number; max: number };
   };
+  /**
+   * 限流存储 Redis URL。设置后所有限流器共享 Redis 存储，支持多实例部署；
+   * 未设置时回退到进程内存存储（仅单实例可用）。
+   */
+  rateLimitRedisUrl?: string;
   /** Token 内省短 TTL 缓存，减少 AuthService 压力；仅缓存 active=true 结果 */
   introspectionCache: {
     ttlMs: number;
@@ -138,6 +143,8 @@ export function loadConfig(): GatewayConfig {
         max: envInt('RL_GENERAL_MAX', 120),
       },
     },
+    // 设置 RATELIMIT_REDIS_URL 后，限流计数共享 Redis，多实例部署一致。
+    rateLimitRedisUrl: process.env.RATELIMIT_REDIS_URL || undefined,
     introspectionCache: {
       // 短 TTL：默认 15 秒。仅缓存 active=true 结果，令牌撤销最长延迟 = TTL。
       ttlMs: envInt('INTROSPECTION_CACHE_TTL_MS', 15_000),

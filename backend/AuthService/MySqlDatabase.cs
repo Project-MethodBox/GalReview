@@ -42,6 +42,25 @@ public sealed class AuthDatabase(string connectionString)
               INDEX idx_admin_audit_created (created_at),
               INDEX idx_admin_audit_target_user (target_user_id)
             );
+            CREATE TABLE IF NOT EXISTS registration_sagas (
+              saga_id CHAR(36) PRIMARY KEY,
+              user_id CHAR(36) NOT NULL,
+              email VARCHAR(320) NOT NULL,
+              display_name VARCHAR(64) NOT NULL,
+              invitation_code VARCHAR(32) NOT NULL,
+              device_name VARCHAR(128) NULL,
+              status VARCHAR(16) NOT NULL,
+              credential_created BOOLEAN NOT NULL DEFAULT FALSE,
+              profile_created BOOLEAN NOT NULL DEFAULT FALSE,
+              session_created BOOLEAN NOT NULL DEFAULT FALSE,
+              created_at DATETIME(6) NOT NULL,
+              updated_at DATETIME(6) NOT NULL,
+              compensated_at DATETIME(6) NULL,
+              last_error TEXT NULL,
+              INDEX idx_registration_sagas_status (status),
+              INDEX idx_registration_sagas_user (user_id),
+              INDEX idx_registration_sagas_created (created_at)
+            );
             """;
         command.ExecuteNonQuery();
     }

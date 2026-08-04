@@ -257,3 +257,83 @@ public sealed class InMemoryAdminAuditRepository(MockAuthStore store) : IAdminAu
         lock (store.Sync) store.AuditRecords.Add(record);
     }
 }
+
+public sealed class InMemoryRegistrationSagaStore : IRegistrationSagaStore
+{
+    private readonly object _sync = new();
+    private readonly Dictionary<string, RegistrationSagaRecord> _sagasById = new(StringComparer.Ordinal);
+
+    public void Create(RegistrationSagaRecord record)
+    {
+        lock (_sync) _sagasById[record.SagaId] = record;
+    }
+
+    public bool TryUpdate(string sagaId, RegistrationSagaStatus status, bool credentialCreated, bool profileCreated, bool sessionCreated, string? lastError)
+    {
+        lock (_sync)
+        {
+            if (!_sagasById.TryGetValue(sagaId, out var existing) || existing.Status != RegistrationSagaStatus.Pending) return false;
+            _sagasById[sagaId] = existing with
+            {
+                Status = status,
+                CredentialCreated = credentialCreated,
+                ProfileCreated = profileCreated,
+                SessionCreated = sessionCreated,
+                UpdatedAt = DateTimeOffset.UtcNow,
+                LastError = lastError,
+            };
+            return true;
+        }
+    }
+
+    public bool TryMarkCompensated(string sagaId)
+    {
+        lock (_sync)
+        {
+            if (!_sagasById.TryGetValue(sagaId, out var existing) || existing.Status != RegistrationSagaStatus.Compensating) return false;
+            var now = DateTimeOffset.UtcNow;
+            _sagasById[sagaId] = existing with { Status = RegistrationSagaStatus.Failed, CompensatedAt = now, UpdatedAt = now };
+            return true;
+        }
+    }
+
+    public IReadOnlyList<RegistrationSagaRecord> FindStale(TimeSpan age, int limit)
+    {
+        var threshold = DateTimeOffset.UtcNow - age;
+        lock (_sync)
+        {
+            return _sagasById.Values
+                .Where(saga => saga.Status == RegistrationSagaStatus.Pending && saga.CreatedAt < threshold)
+                .OrderBy(saga => saga.CreatedAt)
+                .Take(limit)
+                .ToList();
+        }
+    }
+
+    public RegistrationSagaRecord? Find(string sagaId)
+    {
+        lock (_sync) return _sagasById.GetValueOrDefault(sagaId);
+    }
+
+    public RegistrationSagaRecord? FindByUserId(string userId)
+    {
+        lock (_sync)
+        {
+            return _sagasById.Values
+                .Where(saga => saga.UserId == userId)
+                .OrderByDescending(saga => saga.CreatedAt)
+                .FirstOrDefault();
+        }
+    }
+
+    public RegistrationSagaRecord? FindLatestByEmail(string email)
+    {
+        lock (_sync)
+        {
+            return _sagasById.Values
+                .Where(saga => string.Equals(saga.Email, email, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(saga => saga.CreatedAt)
+                .FirstOrDefault();
+        }
+    }
+}

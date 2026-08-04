@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import type { Store } from 'express-rate-limit';
 import type { GatewayConfig } from './config.js';
 import { traceContextMiddleware } from './middleware/traceContext.js';
 import { createBodyDrain } from './middleware/bodyDrain.js';
@@ -25,8 +26,16 @@ export const MAX_UPLOAD_REQUEST_BYTES =
 
 /**
  * 创建 Gateway Express 应用
+ *
+ * @param config 网关配置
+ * @param rateLimitStoreFactory 可选的限流存储工厂。提供时（通常为 Redis 工厂）每个
+ *   分类限流器获得独立的命名空间 store，所有 store 共享同一 Redis 连接，支持多实例部署；
+ *   省略时使用进程内存存储。
  */
-export function createApp(config: GatewayConfig): express.Express {
+export function createApp(
+  config: GatewayConfig,
+  rateLimitStoreFactory?: (namespace: string) => Store,
+): express.Express {
   const app = express();
 
   // 信任代理（用于正确获取客户端 IP）
@@ -86,7 +95,7 @@ export function createApp(config: GatewayConfig): express.Express {
   // ===== 按路由表注册代理 =====
   const authMiddleware = createAuthenticationMiddleware(config);
   const serviceMiddleware = createServiceIdentityMiddleware(config);
-  const rateLimiters = createRateLimiters(config);
+  const rateLimiters = createRateLimiters(config, rateLimitStoreFactory);
 
   for (const route of ROUTE_TABLE) {
     const middlewares: express.RequestHandler[] = [];
