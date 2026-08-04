@@ -25,7 +25,7 @@ function parseSubjects(value: string) {
 export default function SettingsPage() {
   const navigate = useNavigate()
   const stored = readProfile()
-  const [profile, setProfile] = useState<UserProfile | null>(stored)
+  const [, setProfile] = useState<UserProfile | null>(stored)
   const [displayName, setDisplayName] = useState(stored?.displayName || '')
   const [subjectText, setSubjectText] = useState(stored?.preferredSubjectCodes.join(', ') || '')
   const [preferences, setPreferences] = useState<UserPreferencesInput>(defaults)

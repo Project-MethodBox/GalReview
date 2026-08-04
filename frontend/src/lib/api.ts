@@ -45,6 +45,33 @@ const API_BASE_URL = configuredBase.replace(/\/$/, '')
 const DEFAULT_TIMEOUT_MS = 30_000
 const UPLOAD_TIMEOUT_MS = 120_000
 
+/**
+ * 令牌发送域名白名单：只有同源或显式允许的域名才会携带 Authorization 头。
+ * 防止 token 通过被篡改的 API base URL 泄露到不可信域名。
+ */
+const TOKEN_ALLOWED_ORIGINS: ReadonlySet<string> = new Set(
+  (import.meta.env.VITE_TOKEN_ALLOWED_ORIGINS?.trim() || '')
+    .split(',')
+    .map((s: string) => s.trim())
+    .filter(Boolean),
+)
+
+/**
+ * 判断目标 URL 是否允许携带令牌。
+ * 同源请求始终允许；跨源请求必须在 VITE_TOKEN_ALLOWED_ORIGINS 白名单中。
+ */
+function isTokenSafeOrigin(url: string): boolean {
+  if (!/^https?:\/\//i.test(url)) return true // 相对路径，同源
+  try {
+    const target = new URL(url)
+    const currentOrigin = window.location.origin
+    if (target.origin === currentOrigin) return true
+    return TOKEN_ALLOWED_ORIGINS.has(target.origin)
+  } catch {
+    return false
+  }
+}
+
 export class ApiClientError extends Error {
   readonly code: string
   readonly status: number
@@ -218,8 +245,9 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   headers.set('Accept', 'application/json')
   headers.set('X-Correlation-Id', createUuidV4())
   if (init.body && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json')
+  const resolvedUrl = resolveUrl(path)
   const token = readSession()?.tokens.accessToken
-  if (authenticated && token) headers.set('Authorization', `Bearer ${token}`)
+  if (authenticated && token && isTokenSafeOrigin(resolvedUrl)) headers.set('Authorization', `Bearer ${token}`)
 
   try {
     const response = await fetch(resolveUrl(path), { ...init, headers, signal: controller.signal })
@@ -257,12 +285,13 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 async function requestRawJson<T>(path: string): Promise<T> {
   const controller = new AbortController()
   const timeout = window.setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS)
+  const resolvedUrl = resolveUrl(path)
   const headers = new Headers({
     Accept: 'application/json',
     'X-Correlation-Id': createUuidV4(),
   })
   const token = readSession()?.tokens.accessToken
-  if (token) headers.set('Authorization', `Bearer ${token}`)
+  if (token && isTokenSafeOrigin(resolvedUrl)) headers.set('Authorization', `Bearer ${token}`)
   try {
     const response = await fetch(resolveUrl(path), { headers, signal: controller.signal })
     const bodyText = response.status === 204 ? '' : await response.text()
@@ -307,12 +336,14 @@ function adminHeaders(): HeadersInit {
 }
 
 async function adminRequest<T>(path: string, options: RequestOptions = {}, retry = true): Promise<T> {
+  const resolvedUrl = resolveUrl(path)
+  const safeAdminHeaders = isTokenSafeOrigin(resolvedUrl) ? adminHeaders() : {}
   try {
     return await request<T>(path, {
       ...options,
       authenticated: false,
       retryAfterRefresh: false,
-      headers: { ...adminHeaders(), ...options.headers },
+      headers: { ...safeAdminHeaders, ...options.headers },
     })
   } catch (reason) {
     const refreshToken = readAdminSession()?.tokens.refreshToken

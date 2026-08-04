@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Primitives;
 
@@ -22,7 +23,7 @@ public static class InternalServiceAccessPolicy
         string gatewayKey,
         IReadOnlySet<string>? allowedServices = null)
     {
-        if (!HasSingleExactValue(headers, "X-Gateway-Key", gatewayKey, StringComparison.Ordinal))
+        if (!HasSingleFixedTimeValue(headers, "X-Gateway-Key", gatewayKey))
         {
             return false;
         }
@@ -41,15 +42,27 @@ public static class InternalServiceAccessPolicy
         return allowedServices is null || allowedServices.Contains(serviceName);
     }
 
-    private static bool HasSingleExactValue(
+    /// <summary>
+    /// 使用固定时间比较防止时序侧信道攻击。仅当 header 恰好一个值且与期望值在
+    /// 恒定时间内相等时返回 true。
+    /// </summary>
+    private static bool HasSingleFixedTimeValue(
         IHeaderDictionary headers,
         string headerName,
-        string expected,
-        StringComparison comparison)
+        string expected)
     {
-        return headers.TryGetValue(headerName, out StringValues values)
-            && values.Count == 1
-            && string.Equals(values[0], expected, comparison);
+        if (!headers.TryGetValue(headerName, out StringValues values) || values.Count != 1)
+            return false;
+        var actual = values[0];
+        if (actual is null) return false;
+        var left = System.Text.Encoding.UTF8.GetBytes(actual);
+        var right = System.Text.Encoding.UTF8.GetBytes(expected);
+        var length = Math.Max(left.Length, right.Length);
+        var paddedLeft = new byte[length];
+        var paddedRight = new byte[length];
+        left.CopyTo(paddedLeft, 0);
+        right.CopyTo(paddedRight, 0);
+        return CryptographicOperations.FixedTimeEquals(paddedLeft, paddedRight) && left.Length == right.Length;
     }
 
     private static IEnumerable<string?> SplitScalar(string? value)

@@ -22,6 +22,7 @@ const mockConfig: GatewayConfig = {
     generation: { windowMs: 60000, max: 5 },
     general: { windowMs: 60000, max: 120 },
   },
+  introspectionCache: { ttlMs: 15_000, maxSize: 4_096 },
 };
 
 describe('createRateLimiters', () => {

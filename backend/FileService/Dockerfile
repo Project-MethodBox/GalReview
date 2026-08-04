@@ -14,6 +14,7 @@ WORKDIR /app
 COPY --from=build /app/publish .
 ENV ASPNETCORE_URLS=http://+:5103
 EXPOSE 5103
+USER $APP_UID
 HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=6 \
   CMD curl --fail --silent http://127.0.0.1:5103/readyz > /dev/null || exit 1
 ENTRYPOINT ["dotnet", "GalGame.FileService.dll"]

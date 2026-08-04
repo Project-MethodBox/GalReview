@@ -18,6 +18,8 @@ public sealed class MongoFileStore : IFileStore
     private readonly IMongoDatabase _database;
     private readonly ILogger<MongoFileStore> _logger;
     private readonly IHttpClientFactory _httpClientFactory;
+    // OCR 是重 ML 推理：用 SemaphoreSlim 限制并发，防止下游 OCRService 被压垮。
+    private readonly SemaphoreSlim _ocrConcurrencyGate;
 
     public MongoFileStore(IConfiguration configuration, ILogger<MongoFileStore> logger, IHttpClientFactory httpClientFactory)
     {
@@ -32,6 +34,9 @@ public sealed class MongoFileStore : IFileStore
         _materials.Indexes.CreateOne(new CreateIndexModel<MaterialDocument>(Builders<MaterialDocument>.IndexKeys.Ascending(x => x.Material.OwnerUserId).Descending(x => x.Material.CreatedAt)));
         _materials.Indexes.CreateOne(new CreateIndexModel<MaterialDocument>(Builders<MaterialDocument>.IndexKeys.Ascending(x => x.Material.OwnerUserId).Ascending(x => x.SubjectCode).Descending(x => x.Material.CreatedAt)));
         _jobs.Indexes.CreateOne(new CreateIndexModel<IngestionJob>(Builders<IngestionJob>.IndexKeys.Ascending(x => x.MaterialId).Descending(x => x.CreatedAt)));
+        var maxOcrConcurrency = configuration.GetValue<int?>("Ocr:MaxConcurrency") ?? 2;
+        if (maxOcrConcurrency < 1) maxOcrConcurrency = 1;
+        _ocrConcurrencyGate = new SemaphoreSlim(maxOcrConcurrency, maxOcrConcurrency);
     }
 
     public bool IsReady()
@@ -111,10 +116,36 @@ public sealed class MongoFileStore : IFileStore
         var filter = Builders<MaterialDocument>.Filter.Eq(x => x.Material.OwnerUserId, ownerUserId) & Builders<MaterialDocument>.Filter.Ne(x => x.Material.Status, "DELETED");
         if (!string.IsNullOrWhiteSpace(status)) filter &= Builders<MaterialDocument>.Filter.Eq(x => x.Material.Status, status);
         if (!string.IsNullOrWhiteSpace(subjectCode)) filter &= Builders<MaterialDocument>.Filter.Eq(x => x.SubjectCode, subjectCode);
-        var records = _materials.Find(filter).SortByDescending(x => x.Material.CreatedAt).ThenByDescending(x => x.Material.MaterialId).ToList();
-        var start = string.IsNullOrWhiteSpace(cursor) ? 0 : records.FindIndex(x => x.Material.MaterialId == cursor) + 1;
-        if (!string.IsNullOrWhiteSpace(cursor) && start == 0) start = records.Count;
-        var items = records.Skip(start).Take(limit).Select(x => x.Material).ToArray(); nextCursor = start + items.Length < records.Count ? items[^1].MaterialId : null; return items;
+
+        // 数据库层 keyset 分页：通过游标文档的排序键定位起始位置，避免全量加载。
+        if (!string.IsNullOrWhiteSpace(cursor))
+        {
+            var cursorDoc = FindMaterial(cursor);
+            if (cursorDoc is not null)
+            {
+                // 排序为 CreatedAt DESC, MaterialId DESC，"之后"意味着更旧的文档。
+                var keysetFilter = Builders<MaterialDocument>.Filter.Or(
+                    Builders<MaterialDocument>.Filter.Lt(x => x.Material.CreatedAt, cursorDoc.Material.CreatedAt),
+                    Builders<MaterialDocument>.Filter.And(
+                        Builders<MaterialDocument>.Filter.Eq(x => x.Material.CreatedAt, cursorDoc.Material.CreatedAt),
+                        Builders<MaterialDocument>.Filter.Lt(x => x.Material.MaterialId, cursorDoc.Material.MaterialId)));
+                filter &= keysetFilter;
+            }
+        }
+
+        // 多取 1 条用于判断是否还有下一页。
+        var records = _materials.Find(filter)
+            .SortByDescending(x => x.Material.CreatedAt)
+            .ThenByDescending(x => x.Material.MaterialId)
+            .Limit(limit + 1)
+            .ToList();
+
+        var hasMore = records.Count > limit;
+        var items = hasMore
+            ? records.Take(limit).Select(x => x.Material).ToArray()
+            : records.Select(x => x.Material).ToArray();
+        nextCursor = hasMore ? items[^1].MaterialId : null;
+        return items;
     }
     public bool TryDelete(string materialId, string ownerUserId, out Material? material)
     {
@@ -267,7 +298,7 @@ public sealed class MongoFileStore : IFileStore
         ".png" when string.IsNullOrWhiteSpace(submittedType) || submittedType.Equals("application/octet-stream", StringComparison.OrdinalIgnoreCase) => "image/png",
         _ => string.IsNullOrWhiteSpace(submittedType) ? "application/octet-stream" : submittedType
     };
-    private static async Task<ExtractionResult> ExtractAsync(Material material, Stream content, HttpClient ocrClient, bool enableOcr, string ocrMode, string ocrJobId, CancellationToken cancellationToken)
+    private async Task<ExtractionResult> ExtractAsync(Material material, Stream content, HttpClient ocrClient, bool enableOcr, string ocrMode, string ocrJobId, CancellationToken cancellationToken)
     {
         content.Position = 0;
         var parserKind = ParserInputPolicy.ResolveParserKind(
@@ -293,19 +324,29 @@ public sealed class MongoFileStore : IFileStore
             _ => await ExtractTextAsync(content, cancellationToken)
         };
     }
-    private static async Task<ExtractionResult> ExtractOcrAsync(Material material, Stream content, HttpClient ocrClient, string ocrMode, string ocrJobId, CancellationToken cancellationToken)
+    private async Task<ExtractionResult> ExtractOcrAsync(Material material, Stream content, HttpClient ocrClient, string ocrMode, string ocrJobId, CancellationToken cancellationToken)
     {
-        content.Position = 0;
-        using var request = new HttpRequestMessage(HttpMethod.Post, "v1/ocr"); request.Headers.Add("X-Ocr-Job-Id", ocrJobId); request.Headers.Add("X-Ocr-Mode", ocrMode);
-        using var form = new MultipartFormDataContent();
-        using var file = new StreamContent(content);
-        file.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(material.MediaType);
-        form.Add(file, "file", material.OriginalFileName); request.Content = form;
-        using var response = await ocrClient.SendAsync(request, cancellationToken);
-        var body = await response.Content.ReadAsStringAsync(cancellationToken);
-        if (!response.IsSuccessStatusCode) throw new InvalidOperationException($"OCR service failed ({(int)response.StatusCode}): {body}");
-        var result = JsonSerializer.Deserialize<OcrResponse>(body, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? throw new InvalidOperationException("OCR service returned an invalid response.");
-        return BuildStructuredText(result.Pages.SelectMany(page => page.Lines.Select((line, lineIndex) => new StructuredSegment(line, "PARAGRAPH", null, page.PageNumber, lineIndex, $"OCR page {page.PageNumber}")))) with { OcrUsed = true };
+        // OCR 是重 ML 推理：用 SemaphoreSlim 限制并发，防止下游 OCRService 被压垮。
+        // 等待期间若任务被取消，立即释放并向上抛 OperationCanceledException。
+        await _ocrConcurrencyGate.WaitAsync(cancellationToken);
+        try
+        {
+            content.Position = 0;
+            using var request = new HttpRequestMessage(HttpMethod.Post, "v1/ocr"); request.Headers.Add("X-Ocr-Job-Id", ocrJobId); request.Headers.Add("X-Ocr-Mode", ocrMode);
+            using var form = new MultipartFormDataContent();
+            using var file = new StreamContent(content);
+            file.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(material.MediaType);
+            form.Add(file, "file", material.OriginalFileName); request.Content = form;
+            using var response = await ocrClient.SendAsync(request, cancellationToken);
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (!response.IsSuccessStatusCode) throw new InvalidOperationException($"OCR service failed ({(int)response.StatusCode}): {body}");
+            var result = JsonSerializer.Deserialize<OcrResponse>(body, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? throw new InvalidOperationException("OCR service returned an invalid response.");
+            return BuildStructuredText(result.Pages.SelectMany(page => page.Lines.Select((line, lineIndex) => new StructuredSegment(line, "PARAGRAPH", null, page.PageNumber, lineIndex, $"OCR page {page.PageNumber}")))) with { OcrUsed = true };
+        }
+        finally
+        {
+            _ocrConcurrencyGate.Release();
+        }
     }
     private static async Task<ExtractionResult> ExtractTextAsync(Stream content, CancellationToken cancellationToken)
     {

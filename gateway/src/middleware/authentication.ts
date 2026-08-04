@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from 'express';
 import type { GatewayConfig } from '../config.js';
 import type { TokenIntrospection } from '../types.js';
 import { buildApiFailure, getTraceId } from '../types.js';
+import { TtlLruCache } from './introspectionCache.js';
 
 /** 内省请求超时（毫秒），AuthService 挂起时不会拖死 Gateway */
 export const INTROSPECTION_TIMEOUT_MS = 5_000;
@@ -163,11 +164,18 @@ async function introspectToken(
  * - 调用 AuthService 内省接口验证
  * - 验证通过后注入 X-User-Id 到 req.gatewayUserId
  * - 验证失败返回 401
+ *
+ * 缓存策略：仅缓存 active=true 的内省结果，TTL 由 config.introspectionCache.ttlMs 控制。
+ * 令牌撤销最长延迟 = TTL；invalid / unreachable 不缓存，保证撤销与故障不会被掩盖。
  */
 export function createAuthenticationMiddleware(config: GatewayConfig) {
   const authServiceUrl = config.services.authService.url;
   // 使用 AuthService 的独立密钥（如有），回退到全局 gatewayKey
   const gatewayKey = config.services.authService.serviceKey ?? config.gatewayKey;
+  const cache = new TtlLruCache<string, ActiveTokenIntrospection>({
+    ttlMs: config.introspectionCache.ttlMs,
+    maxSize: config.introspectionCache.maxSize,
+  });
 
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     const traceId = getTraceId(req);
@@ -189,6 +197,14 @@ export function createAuthenticationMiddleware(config: GatewayConfig) {
       return;
     }
 
+    // 先查缓存：命中且未过期，直接注入用户身份，跳过对 AuthService 的调用。
+    const cached = cache.get(token);
+    if (cached !== undefined) {
+      req.gatewayUserId = cached.userId;
+      next();
+      return;
+    }
+
     const result = await introspectToken(
       authServiceUrl,
       gatewayKey,
@@ -204,6 +220,15 @@ export function createAuthenticationMiddleware(config: GatewayConfig) {
     if (result.status === 'invalid') {
       res.status(401).json(buildApiFailure('TOKEN_EXPIRED', '访问令牌无效或已过期', traceId));
       return;
+    }
+
+    // 仅缓存 active=true 结果；令牌撤销最长延迟 = TTL。
+    // 若令牌自身已临近过期（expiresAt 已过），则不缓存，避免缓存已失效的身份。
+    const stillValid = result.data.expiresAt
+      ? Date.parse(result.data.expiresAt) > Date.now()
+      : true;
+    if (stillValid) {
+      cache.set(token, result.data);
     }
 
     req.gatewayUserId = result.data.userId;

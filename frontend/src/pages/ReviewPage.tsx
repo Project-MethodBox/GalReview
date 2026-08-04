@@ -13,7 +13,6 @@ import type {
   GameChoice,
   GameGenerationJob,
   GamePackage,
-  GameScene,
   GameStyle,
   ReviewResult,
   ReviewSession,
@@ -73,6 +72,9 @@ export default function ReviewPage() {
   const resultKeyRef = useRef(initial.resultIdempotencyKey || createUuidV4())
   const startedAtRef = useRef(Date.now())
   const sceneStartedAtRef = useRef(Date.now())
+  // 用于在组件卸载时取消进行中的轮询，避免卸载后 setState 与请求泄漏。
+  const pollAbortRef = useRef<AbortController>(new AbortController())
+  useEffect(() => () => pollAbortRef.current?.abort(), [])
   const [style, setStyle] = useState<GameStyle>(initial.gameStyle || 'CAMPUS')
   const [difficulty, setDifficulty] = useState<Difficulty>(initial.gameDifficulty || 'STANDARD')
   const [generation, setGeneration] = useState<GameGenerationJob | undefined>(initial.gameGeneration)
@@ -208,6 +210,8 @@ export default function ReviewPage() {
           updateWorkflow({ gameGeneration: job })
           setProgress(`GalGame 正在生成… ${job.progress}%`)
         },
+        240_000,
+        pollAbortRef.current?.signal,
       )
     setGeneration(completed)
     updateWorkflow({ gameGeneration: completed })
@@ -253,6 +257,8 @@ export default function ReviewPage() {
       updateWorkflow({ gameGeneration: accepted, gameStyle: style, gameDifficulty: difficulty, gameManifest: undefined, gamePackage: undefined, reviewSession: undefined, answerResults: [], resultIdempotencyKey: undefined })
       await completeGeneration(accepted, workflow.plan)
     } catch (reason) {
+      // 组件卸载触发的取消：不再 setState，避免卸载后请求泄漏。
+      if (reason instanceof DOMException && reason.name === 'AbortError') return
       setError(reason instanceof Error ? reason.message : '游戏准备失败。')
     } finally {
       setBusy(false)
@@ -269,6 +275,7 @@ export default function ReviewPage() {
       const current = await api.getGameGeneration(workflow.gameGeneration.generationId)
       await completeGeneration(current, workflow.plan)
     } catch (reason) {
+      if (reason instanceof DOMException && reason.name === 'AbortError') return
       setError(reason instanceof Error ? reason.message : '生成任务恢复失败。')
     } finally {
       setBusy(false)

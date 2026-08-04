@@ -84,7 +84,7 @@ services:
       ASPNETCORE_URLS: http://+:5101
       MOONSTONE_MODE: ${USER_SERVICE_MODE:-Mock}
       Gateway__ServiceKey: ${USER_SERVICE_KEY:-moonstone-local-gateway-key}
-      ConnectionStrings__UserDatabase: "Server=user-mysql;Port=3306;Database=galreview_user;User ID=galreview_user;Password=${USER_MYSQL_PASSWORD:-user-dev-password};SslMode=Disabled;AllowPublicKeyRetrieval=True"
+      ConnectionStrings__UserDatabase: "Server=user-mysql;Port=3306;Database=galreview_user;User ID=galreview_user;Password=${USER_MYSQL_PASSWORD:-user-dev-password};SslMode=Required"
     depends_on:
       user-mysql:
         condition: service_healthy
@@ -109,7 +109,7 @@ services:
       Email__FromAddress: ${SMTP_FROM_ADDRESS:-}
       Email__FromName: ${SMTP_FROM_NAME:-GalReview}
       AccountFrontend__BaseUrl: ${ACCOUNT_FRONTEND_BASE_URL:-http://localhost:5120}
-      ConnectionStrings__AuthDatabase: "Server=auth-mysql;Port=3306;Database=galreview_auth;User ID=galreview_auth;Password=${AUTH_MYSQL_PASSWORD:-auth-dev-password};SslMode=Disabled;AllowPublicKeyRetrieval=True"
+      ConnectionStrings__AuthDatabase: "Server=auth-mysql;Port=3306;Database=galreview_auth;User ID=galreview_auth;Password=${AUTH_MYSQL_PASSWORD:-auth-dev-password};SslMode=Required"
     depends_on:
       auth-mysql:
         condition: service_healthy
