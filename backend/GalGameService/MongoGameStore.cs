@@ -38,6 +38,10 @@ internal static class MongoGameStoreMappings
     {
         if (Interlocked.Exchange(ref _registered, 1) == 1) return;
 
+        BsonSerializer.RegisterSerializer(
+            typeof(Guid),
+            new GuidSerializer(GuidRepresentation.Standard));
+
         // --- GameGenerationJob ---
         BsonClassMap.RegisterClassMap<GameGenerationJob>(cm =>
         {
