@@ -146,6 +146,8 @@ input[type="password"]::-webkit-credentials-auto-fill-button { visibility: hidde
 .settings-language strong { color: var(--ink); font-size: 13px; }
 .form-section input:not([type="checkbox"]), .form-section select, .filter-panel input, .filter-panel select, .side-section input, .side-section select, .review-setup select, .material-library input, .graph-board input { width: 100%; min-height: 44px; padding: 9px 11px; border: 1px solid var(--rule); border-radius: var(--radius-control); color: var(--ink); background: var(--field); }
 .form-section label small { color: var(--muted); }
+.upload-panel__form input[type="file"]::file-selector-button { margin-right: 12px; padding: 8px 16px; border: 1px solid var(--rule); border-radius: 999px; color: var(--ink); background: var(--surface); cursor: pointer; transition: border-color 140ms ease, background-color 140ms ease; }
+.upload-panel__form input[type="file"]::file-selector-button:hover { border-color: var(--muted); background: var(--surface-soft); }
 .form-section > .button, .upload-panel__form > .button { margin-top: 7px; }
 .option-row { display: grid; grid-template-columns: 1.2fr .8fr; gap: 12px; align-items: stretch; }
 .inline-select-field { display: grid; min-height: 58px; grid-template-columns: auto minmax(0, 1fr); gap: 12px; align-items: center; padding: 9px 10px 9px 13px; border: 1px solid var(--rule); border-radius: var(--radius-control); color: var(--ink); background: var(--field); cursor: default; }
