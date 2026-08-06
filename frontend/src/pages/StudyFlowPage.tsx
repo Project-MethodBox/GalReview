@@ -1,6 +1,7 @@
 ﻿import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router'
 import AppShell, { PageHeader } from '../components/AppShell'
+import LoadingIndicator from '../components/LoadingIndicator'
 import { api, ApiClientError } from '../lib/api'
 import { pollUntil } from '../lib/poll'
 import { readWorkflow, resetWorkflow, updateWorkflow } from '../lib/workflow'
@@ -208,8 +209,8 @@ export default function StudyFlowPage() {
 
         <div className={`process-layout process-layout--${flowStep} process-layout--${flowAnimation}`}>
           <section className="process-primary">
-            <details className="form-section upload-panel" open>
-              <summary><span><h2>上传资料</h2><p>文件上限为 10 MiB。图片和扫描件需要开启 OCR 才能识别文字。</p></span><i aria-hidden="true" /></summary>
+            <section className="form-section upload-panel">
+              <header className="upload-panel__header"><div><h2>上传资料</h2><p>文件上限为 10 MiB。图片和扫描件需要开启 OCR 才能识别文字。</p></div></header>
               <form className="upload-panel__form" onSubmit={upload}>
               <label>文件<input type="file" accept=".pdf,.docx,.md,.markdown,.html,.htm,.txt,.png,.jpg,.jpeg" onChange={(event) => setFile(event.target.files?.[0] || null)} /></label>
               <label>资料名称<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder={file?.name || '选填'} /></label>
@@ -221,7 +222,7 @@ export default function StudyFlowPage() {
               <label className="toggle-field compact-toggle"><span><strong>重新提取</strong><small>再次处理已完成的资料并更新提取结果。</small></span><input type="checkbox" role="switch" aria-label="重新提取" checked={force} onChange={(event) => setForce(event.target.checked)} /></label>
               <button className="button button--primary" disabled={busy} type="submit">{busy ? '正在处理' : '上传并构建图谱'}</button>
               </form>
-            </details>
+            </section>
 
             <section className="material-library">
               <header><div><h2>资料库</h2><p>{materials.filter((item) => item.status !== 'DELETED').length} 份资料</p></div><input aria-label="搜索资料" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索资料" /></header>
@@ -229,8 +230,8 @@ export default function StudyFlowPage() {
                 {visibleMaterials.map((item) => <article className={material?.materialId === item.materialId ? 'selected' : ''} key={item.materialId}><button className="material-open" type="button" disabled={busy} onClick={() => void processMaterial(item)}><span><strong>{item.displayName}</strong><small>{item.originalFileName}</small>{item.ocrUsed ? <em className="material-ocr-badge">OCR</em> : null}</span><em className={`material-status material-status--${item.status.toLowerCase()}`}>{item.status}</em></button><div className="material-actions">{item.status === 'READY' ? <button type="button" disabled={previewBusy} onClick={() => void openTextPreview(item)}>文本</button> : null}<button className="material-delete" type="button" disabled={busy && item.status !== 'PROCESSING'} onClick={() => void deleteMaterial(item)}>删除</button></div></article>)}
                 {!visibleMaterials.length ? <p className="empty-row">没有匹配的资料。</p> : null}
               </div>
+              {graph && flowStep === 'materials' ? <button className="button button--primary flow-next-button" type="button" disabled={busy} onClick={() => moveToStep('scope')}>选择复习范围 →</button> : null}
             </section>
-            {graph && flowStep === 'materials' ? <button className="button button--primary flow-next-button" type="button" disabled={busy} onClick={() => moveToStep('scope')}>选择复习范围 →</button> : null}
           </section>
 
           {graph && flowStep === 'scope' ? <aside className="plan-panel">
@@ -260,7 +261,9 @@ export default function StudyFlowPage() {
             </>
           </aside> : null}
         </div>
-        {error || progress ? <p className={error ? 'status-line status-line--error' : 'status-line'} role="status">{error || progress}</p> : null}
+        {busy && !error
+          ? <LoadingIndicator className="page-loading-transition" label={progress || '正在处理…'} compact />
+          : error || progress ? <p className={error ? 'status-line status-line--error' : 'status-line'} role="status">{error || progress}</p> : null}
         {preview ? <div className="preview-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreview(undefined) }}>
           <section className="text-preview" role="dialog" aria-modal="true" aria-labelledby="text-preview-title">
             <header><div><span>提取文本</span><h2 id="text-preview-title">{previewName}</h2><p>{preview.textLength.toLocaleString('zh-CN')} 字符 · {preview.parserVersion}</p></div><button type="button" aria-label="关闭文本预览" onClick={() => setPreview(undefined)}>关闭</button></header>

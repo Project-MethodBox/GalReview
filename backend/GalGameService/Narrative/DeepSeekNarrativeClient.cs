@@ -28,6 +28,29 @@ public sealed class DeepSeekNarrativeClient : INarrativeModelClient
         if (!IsEnabled)
             throw new InvalidOperationException("叙事模型未启用或配置不完整");
 
+        var maxAttempts = Math.Clamp(_options.MaxProviderAttempts, 1, 4);
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await SendOnceAsync(prompt, cancellationToken);
+            }
+            catch (Exception exception) when (
+                attempt < maxAttempts
+                && IsRetryable(exception, cancellationToken))
+            {
+                var baseDelay = Math.Clamp(_options.RetryBaseDelayMilliseconds, 0, 5_000);
+                var delayMilliseconds = Math.Min(baseDelay * (1 << (attempt - 1)), 5_000);
+                if (delayMilliseconds > 0)
+                    await Task.Delay(delayMilliseconds, cancellationToken);
+            }
+        }
+    }
+
+    private async Task<string> SendOnceAsync(
+        NarrativePrompt prompt,
+        CancellationToken cancellationToken)
+    {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(_options.TimeoutSeconds, 10, 300)));
 
@@ -95,6 +118,21 @@ public sealed class DeepSeekNarrativeClient : INarrativeModelClient
             throw new InvalidDataException("Narrative provider returned empty content.");
 
         return content;
+    }
+
+    private static bool IsRetryable(Exception exception, CancellationToken callerToken)
+    {
+        if (callerToken.IsCancellationRequested)
+            return false;
+
+        if (exception is OperationCanceledException or JsonException or InvalidDataException)
+            return true;
+
+        return exception is HttpRequestException http
+            && (http.StatusCode is null
+                || http.StatusCode is System.Net.HttpStatusCode.RequestTimeout
+                || (int)http.StatusCode == 429
+                || (int)http.StatusCode >= 500);
     }
 
     /// <summary>

@@ -115,6 +115,7 @@ public sealed class MongoGameStore : IGameStore
     private readonly IMongoCollection<BsonDocument> _packages;
     private readonly IMongoCollection<GamePackageManifest> _manifests;
     private readonly IMongoCollection<PackageOwnerDocument> _owners;
+    private readonly IMongoCollection<BsonDocument> _audio;
     private readonly IMongoDatabase _database;
     private readonly ILogger<MongoGameStore>? _logger;
 
@@ -143,6 +144,7 @@ public sealed class MongoGameStore : IGameStore
         _packages = _database.GetCollection<BsonDocument>("game_packages");
         _manifests = _database.GetCollection<GamePackageManifest>("game_manifests");
         _owners = _database.GetCollection<PackageOwnerDocument>("game_owners");
+        _audio = _database.GetCollection<BsonDocument>("game_audio");
 
         // 索引创建和黄金包预置在 MongoDB 不可用时优雅降级
         // IsReady() 会返回 false，/readyz 端点将返回 503
@@ -428,6 +430,43 @@ public sealed class MongoGameStore : IGameStore
         return _owners.Find(o => o.PackageId == packageId)
             .FirstOrDefault()?.OwnerUserId;
     }
+
+    public void SaveAudio(GameAudioAsset audio)
+    {
+        var id = AudioDocumentId(audio.PackageId, audio.AssetId);
+        var document = new BsonDocument
+        {
+            ["_id"] = id,
+            ["packageId"] = new BsonBinaryData(audio.PackageId, GuidRepresentation.Standard),
+            ["assetId"] = audio.AssetId,
+            ["contentType"] = audio.ContentType,
+            ["data"] = new BsonBinaryData(audio.Data),
+            ["createdAt"] = audio.CreatedAt.UtcDateTime,
+        };
+        _audio.ReplaceOne(
+            new BsonDocument("_id", id),
+            document,
+            new ReplaceOptions { IsUpsert = true });
+    }
+
+    public GameAudioAsset? GetAudio(Guid packageId, string assetId)
+    {
+        var document = _audio.Find(
+            new BsonDocument("_id", AudioDocumentId(packageId, assetId)))
+            .FirstOrDefault();
+        if (document is null)
+            return null;
+
+        return new GameAudioAsset(
+            packageId,
+            document["assetId"].AsString,
+            document["contentType"].AsString,
+            document["data"].AsByteArray,
+            new DateTimeOffset(document["createdAt"].ToUniversalTime()));
+    }
+
+    private static string AudioDocumentId(Guid packageId, string assetId) =>
+        $"{packageId:N}:{assetId}";
 
     // --- 健康检查 ---
 

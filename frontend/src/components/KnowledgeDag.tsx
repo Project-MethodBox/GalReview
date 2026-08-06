@@ -1,32 +1,26 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react'
-import type { KnowledgePoint, KnowledgeRelation } from '../types/api'
+import { Graph, GraphEvent, NodeEvent, type EdgeData, type GraphData, type IElementEvent, type NodeData } from '@antv/g6'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { Chapter, KnowledgePoint, KnowledgeRelation } from '../types/api'
 
-const NODE_WIDTH = 128
-const NODE_HEIGHT = 46
-const COLUMN_GAP = 128
-const ROW_GAP = 34
-const CANVAS_PADDING = 46
 const MASTERY_COMPLETE_SCORE = 60
-const DEFAULT_SCALE = .96
+const ROOT_ID = '__knowledge-root__'
+const CHAPTER_PREFIX = '__chapter__:'
 
-interface PositionedPoint {
-  point: KnowledgePoint
-  x: number
-  y: number
+type GraphMode = 'overview' | 'all' | 'detail'
+type NodeKind = 'root' | 'chapter' | 'point'
+
+interface NodeMeta extends Record<string, unknown> {
+  kind: NodeKind
+  title: string
+  subtitle?: string
+  pointId?: string
+  chapterId?: string
+  mastery?: number
 }
 
-interface DagLayout {
-  width: number
-  height: number
-  nodes: PositionedPoint[]
-  nodeById: Map<string, PositionedPoint>
-  edges: KnowledgeRelation[]
-}
-
-interface ViewTransform {
-  x: number
-  y: number
-  scale: number
+interface EdgeMeta extends Record<string, unknown> {
+  structural: boolean
+  relationId?: string
 }
 
 interface HighlightState {
@@ -38,103 +32,94 @@ interface HighlightState {
 
 function FullscreenIcon({ active }: { active: boolean }) {
   return active ? (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M9 3v6H3M15 3v6h6M9 21v-6H3M15 21v-6h6" />
-    </svg>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3v6H3M15 3v6h6M9 21v-6H3M15 21v-6h6" /></svg>
   ) : (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" />
-    </svg>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" /></svg>
   )
 }
 
-function clamp(value: number, minimum: number, maximum: number) {
-  return Math.min(maximum, Math.max(minimum, value))
+function nodeMeta(node: NodeData): NodeMeta {
+  return (node.data || {}) as NodeMeta
 }
 
-function buildLayout(points: KnowledgePoint[], relations: KnowledgeRelation[], viewportWidth = 0, viewportHeight = 0): DagLayout {
-  const ids = new Set(points.map((point) => point.pointId))
-  const edges = relations.filter((relation) => relation.type === 'PREREQUISITE' && ids.has(relation.fromPointId) && ids.has(relation.toPointId))
-  const outgoing = new Map<string, string[]>()
-  const incoming = new Map<string, string[]>()
-  const indegree = new Map(points.map((point) => [point.pointId, 0]))
-  const depth = new Map(points.map((point) => [point.pointId, 0]))
+function edgeMeta(edge: EdgeData): EdgeMeta {
+  return (edge.data || {}) as EdgeMeta
+}
 
-  for (const edge of edges) {
-    outgoing.set(edge.fromPointId, [...(outgoing.get(edge.fromPointId) || []), edge.toPointId])
-    incoming.set(edge.toPointId, [...(incoming.get(edge.toPointId) || []), edge.fromPointId])
-    indegree.set(edge.toPointId, (indegree.get(edge.toPointId) || 0) + 1)
-  }
+function prerequisiteRelations(points: KnowledgePoint[], relations: KnowledgeRelation[]) {
+  const pointIds = new Set(points.map((point) => point.pointId))
+  return relations.filter((relation) => relation.type === 'PREREQUISITE'
+    && pointIds.has(relation.fromPointId)
+    && pointIds.has(relation.toPointId)
+    && relation.fromPointId !== relation.toPointId)
+}
 
-  const queue = points.filter((point) => indegree.get(point.pointId) === 0).sort((a, b) => a.title.localeCompare(b.title, 'zh-CN')).map((point) => point.pointId)
-  let cursor = 0
-  while (cursor < queue.length) {
-    const pointId = queue[cursor++]
-    for (const targetId of outgoing.get(pointId) || []) {
-      depth.set(targetId, Math.max(depth.get(targetId) || 0, (depth.get(pointId) || 0) + 1))
-      const nextIndegree = (indegree.get(targetId) || 0) - 1
-      indegree.set(targetId, nextIndegree)
-      if (nextIndegree === 0) queue.push(targetId)
-    }
-  }
-
+function buildGraphModel(points: KnowledgePoint[], relations: KnowledgeRelation[], chapters: Chapter[], mode: GraphMode) {
+  const prerequisiteEdges = prerequisiteRelations(points, relations)
+  const linkedIds = new Set(prerequisiteEdges.flatMap((relation) => [relation.fromPointId, relation.toPointId]))
   const pointById = new Map(points.map((point) => [point.pointId, point]))
-  const primaryParent = new Map<string, string>()
-  for (const point of points) {
-    const pointDepth = depth.get(point.pointId) || 0
-    const candidates = (incoming.get(point.pointId) || [])
-      .filter((parentId) => (depth.get(parentId) || 0) < pointDepth)
-      .sort((left, right) => (depth.get(right) || 0) - (depth.get(left) || 0)
-        || (pointById.get(left)?.title || '').localeCompare(pointById.get(right)?.title || '', 'zh-CN'))
-    if (candidates[0]) primaryParent.set(point.pointId, candidates[0])
-  }
-
-  const treeChildren = new Map<string, string[]>()
-  for (const [childId, parentId] of primaryParent) treeChildren.set(parentId, [...(treeChildren.get(parentId) || []), childId])
-  for (const children of treeChildren.values()) children.sort((left, right) => (pointById.get(left)?.title || '').localeCompare(pointById.get(right)?.title || '', 'zh-CN'))
-  const roots = points
-    .filter((point) => !primaryParent.has(point.pointId))
+  const unlinkedPoints = points
+    .filter((point) => !linkedIds.has(point.pointId))
     .sort((left, right) => left.title.localeCompare(right.title, 'zh-CN'))
 
-  function countLeaves(pointId: string): number {
-    const children = treeChildren.get(pointId) || []
-    return children.length ? children.reduce((total, childId) => total + countLeaves(childId), 0) : 1
-  }
-
-  const leafCount = Math.max(1, roots.reduce((total, root) => total + countLeaves(root.pointId), 0))
-  const maximumDepth = Math.max(0, ...depth.values())
-  const naturalWidth = CANVAS_PADDING * 2 + (maximumDepth + 1) * NODE_WIDTH + maximumDepth * COLUMN_GAP
-  const naturalHeight = Math.max(420, CANVAS_PADDING * 2 + leafCount * NODE_HEIGHT + Math.max(0, leafCount - 1) * ROW_GAP)
-  const width = Math.max(naturalWidth, viewportWidth > 0 ? viewportWidth - 32 : 0)
-  const height = Math.max(naturalHeight, viewportHeight > 0 ? viewportHeight - 32 : 0)
-  const columnStep = maximumDepth > 0 ? (width - CANVAS_PADDING * 2 - NODE_WIDTH) / maximumDepth : 0
-  const treeHeight = height
-  const leafStep = leafCount > 1 ? Math.max(NODE_HEIGHT + ROW_GAP, (treeHeight - CANVAS_PADDING * 2 - NODE_HEIGHT) / (leafCount - 1)) : 0
-  const nodes: PositionedPoint[] = []
-  let leafCursor = 0
-
-  function placeTree(pointId: string): number {
-    const children = treeChildren.get(pointId) || []
-    let centerY: number
-    if (children.length) {
-      const childCenters = children.map(placeTree)
-      centerY = (childCenters[0] + childCenters[childCenters.length - 1]) / 2
-    } else {
-      centerY = leafCount > 1 ? CANVAS_PADDING + NODE_HEIGHT / 2 + leafCursor * leafStep : treeHeight / 2
-      leafCursor += 1
-    }
-    const point = pointById.get(pointId)
-    if (point) nodes.push({
-      point,
-      x: maximumDepth > 0 ? CANVAS_PADDING + (depth.get(pointId) || 0) * columnStep : (width - NODE_WIDTH) / 2,
-      y: centerY - NODE_HEIGHT / 2,
+  if (mode === 'overview') {
+    const chapterById = new Map(chapters.map((chapter) => [chapter.chapterId, chapter]))
+    const pointsByChapter = new Map<string, KnowledgePoint[]>()
+    for (const point of points) pointsByChapter.set(point.chapterId, [...(pointsByChapter.get(point.chapterId) || []), point])
+    const orderedChapterIds = [...pointsByChapter.keys()].sort((left, right) => {
+      const leftChapter = chapterById.get(left)
+      const rightChapter = chapterById.get(right)
+      if (!leftChapter || !rightChapter) return leftChapter ? -1 : rightChapter ? 1 : left.localeCompare(right)
+      return leftChapter.ordinal - rightChapter.ordinal || leftChapter.title.localeCompare(rightChapter.title, 'zh-CN')
     })
-    return centerY
+    const nodes: NodeData[] = [{
+      id: ROOT_ID,
+      data: { kind: 'root', title: '知识结构', subtitle: `${points.length} 个知识点 · ${chapters.length} 个章节` } satisfies NodeMeta,
+    }]
+    const edges: EdgeData[] = []
+    for (const chapterId of orderedChapterIds) {
+      const chapterPoints = pointsByChapter.get(chapterId) || []
+      const chapterUnlinked = chapterPoints.filter((point) => !linkedIds.has(point.pointId)).length
+      const chapter = chapterById.get(chapterId)
+      const nodeId = `${CHAPTER_PREFIX}${chapterId}`
+      nodes.push({
+        id: nodeId,
+        depth: 1,
+        data: {
+          kind: 'chapter',
+          chapterId,
+          title: chapter?.title || '其他知识点',
+          subtitle: `${chapterPoints.length} 个知识点 · ${chapterUnlinked} 个未连接`,
+        } satisfies NodeMeta,
+      })
+      edges.push({ id: `overview:${chapterId}`, source: ROOT_ID, target: nodeId, data: { structural: true } satisfies EdgeMeta })
+    }
+    nodes[0].children = nodes.slice(1).map((node) => node.id)
+    nodes[0].depth = 0
+    return { data: { nodes, edges } satisfies GraphData, unlinkedPoints: [] as KnowledgePoint[] }
   }
 
-  roots.forEach((root) => placeTree(root.pointId))
-
-  return { width, height, nodes, nodeById: new Map(nodes.map((node) => [node.point.pointId, node])), edges }
+  const nodes: NodeData[] = [...linkedIds].flatMap((pointId) => {
+    const point = pointById.get(pointId)
+    if (!point) return []
+    return [{
+      id: pointId,
+      data: {
+        kind: 'point',
+        pointId,
+        title: point.title,
+        subtitle: `掌握度 ${Math.round(point.mastery.score)}`,
+        mastery: Math.round(point.mastery.score),
+      } satisfies NodeMeta,
+    }]
+  })
+  const edges: EdgeData[] = prerequisiteEdges.map((relation) => ({
+    id: relation.relationId,
+    source: relation.fromPointId,
+    target: relation.toPointId,
+    data: { structural: false, relationId: relation.relationId } satisfies EdgeMeta,
+  }))
+  return { data: { nodes, edges } satisfies GraphData, unlinkedPoints }
 }
 
 function buildHighlights(selectedPointId: string | undefined, points: KnowledgePoint[], relations: KnowledgeRelation[]): HighlightState {
@@ -145,14 +130,13 @@ function buildHighlights(selectedPointId: string | undefined, points: KnowledgeP
   if (!selected) return empty
   if (selected.mastery.score >= MASTERY_COMPLETE_SCORE) return { ...empty, selectedComplete: true }
 
-  const prerequisiteEdges = relations.filter((relation) => relation.type === 'PREREQUISITE' && pointById.has(relation.fromPointId) && pointById.has(relation.toPointId))
+  const prerequisiteEdges = prerequisiteRelations(points, relations)
   const incoming = new Map<string, KnowledgeRelation[]>()
   const outgoing = new Map<string, KnowledgeRelation[]>()
   for (const edge of prerequisiteEdges) {
     incoming.set(edge.toPointId, [...(incoming.get(edge.toPointId) || []), edge])
     outgoing.set(edge.fromPointId, [...(outgoing.get(edge.fromPointId) || []), edge])
   }
-
   const ancestorIds = new Set<string>()
   const pending = [selectedPointId]
   while (pending.length) {
@@ -163,13 +147,11 @@ function buildHighlights(selectedPointId: string | undefined, points: KnowledgeP
       pending.push(edge.fromPointId)
     }
   }
-
   const availableIds = new Set([...ancestorIds].filter((pointId) => {
     const point = pointById.get(pointId)
     if (!point || point.mastery.score >= MASTERY_COMPLETE_SCORE) return false
     return (incoming.get(pointId) || []).every((edge) => (pointById.get(edge.fromPointId)?.mastery.score || 0) >= MASTERY_COMPLETE_SCORE)
   }))
-
   const pathIds = new Set<string>()
   const pathEdgeIds = new Set<string>()
   const pathQueue = [...availableIds]
@@ -186,82 +168,268 @@ function buildHighlights(selectedPointId: string | undefined, points: KnowledgeP
       }
     }
   }
-
   return { availableIds, pathIds, pathEdgeIds, selectedComplete: false }
 }
 
-export default function KnowledgeDag({ points, relations, selectedPointId, onSelect }: {
+export default function KnowledgeDag({ points, relations, chapters, mode, selectedPointId, onSelect, onSelectChapter }: {
   points: KnowledgePoint[]
   relations: KnowledgeRelation[]
+  chapters: Chapter[]
+  mode: GraphMode
   selectedPointId?: string
   onSelect: (pointId: string) => void
+  onSelectChapter: (chapterId: string) => void
 }) {
   const shellRef = useRef<HTMLDivElement>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
-  const dragRef = useRef<{ pointerId: number; clientX: number; clientY: number; originX: number; originY: number } | undefined>(undefined)
-  const [transform, setTransform] = useState<ViewTransform>({ x: 24, y: 24, scale: DEFAULT_SCALE })
+  const graphRef = useRef<Graph | null>(null)
+  const readyGraphRef = useRef<Graph | null>(null)
+  const onSelectRef = useRef(onSelect)
+  const onSelectChapterRef = useRef(onSelectChapter)
+  const applyStatesRef = useRef<(graph: Graph) => Promise<void>>(async () => undefined)
+  const fitSelectedPathRef = useRef<(graph: Graph, animate: boolean) => Promise<void>>(async () => undefined)
   const [fullscreen, setFullscreen] = useState(false)
-  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 })
-  const layout = useMemo(() => buildLayout(points, relations, viewportSize.width, viewportSize.height), [points, relations, viewportSize.height, viewportSize.width])
+  const [zoom, setZoom] = useState(1)
+  const [showUnlinked, setShowUnlinked] = useState(false)
+  const [darkMode, setDarkMode] = useState(() => document.documentElement.dataset.theme === 'dark')
+  const [renderError, setRenderError] = useState('')
+  const model = useMemo(() => buildGraphModel(points, relations, chapters, mode), [chapters, mode, points, relations])
+  const graphData = model.data
+  const unlinkedPoints = model.unlinkedPoints
   const highlights = useMemo(() => buildHighlights(selectedPointId, points, relations), [points, relations, selectedPointId])
+  const metaById = useMemo(() => new Map((graphData.nodes || []).map((node) => [String(node.id), nodeMeta(node)])), [graphData.nodes])
+  const selectedPathIds = useMemo(() => {
+    if (mode !== 'detail' || !selectedPointId) return []
+    const ids = new Set<string>([selectedPointId, ...highlights.availableIds, ...highlights.pathIds])
+    return [...ids].filter((id) => metaById.has(id))
+  }, [highlights.availableIds, highlights.pathIds, metaById, mode, selectedPointId])
 
-  const fitGraph = useCallback(() => {
-    const viewport = viewportRef.current
-    if (!viewport || !points.length) return
-    const bounds = viewport.getBoundingClientRect()
-    const isFullscreen = document.fullscreenElement === shellRef.current
-    const padding = isFullscreen ? 32 : 48
-    const scale = clamp(
-      Math.min((bounds.width - padding) / layout.width, (bounds.height - padding) / layout.height),
-      .02,
-      isFullscreen ? 2.5 : 1,
-    )
-    setTransform({ x: (bounds.width - layout.width * scale) / 2, y: (bounds.height - layout.height * scale) / 2, scale })
-  }, [layout.height, layout.width, points.length])
-
-  const showAtDefaultScale = useCallback(() => {
-    const viewport = viewportRef.current
-    if (!viewport || !points.length) return
-    const bounds = viewport.getBoundingClientRect()
-    setTransform({
-      x: (bounds.width - layout.width * DEFAULT_SCALE) / 2,
-      y: (bounds.height - layout.height * DEFAULT_SCALE) / 2,
-      scale: DEFAULT_SCALE,
-    })
-  }, [layout.height, layout.width, points.length])
-
+  useEffect(() => { onSelectRef.current = onSelect }, [onSelect])
+  useEffect(() => { onSelectChapterRef.current = onSelectChapter }, [onSelectChapter])
   useEffect(() => {
-    const frame = window.requestAnimationFrame(showAtDefaultScale)
-    return () => window.cancelAnimationFrame(frame)
-  }, [showAtDefaultScale])
-
+    setShowUnlinked(mode !== 'overview' && !(graphData.nodes || []).length && unlinkedPoints.length > 0)
+  }, [graphData.nodes, mode, unlinkedPoints.length])
   useEffect(() => {
-    const viewport = viewportRef.current
-    if (!viewport) return
-    let frame = 0
-    const observer = new ResizeObserver(() => {
-      window.cancelAnimationFrame(frame)
-      frame = window.requestAnimationFrame(() => {
-        const bounds = viewport.getBoundingClientRect()
-        const nextSize = { width: Math.round(bounds.width), height: Math.round(bounds.height) }
-        setViewportSize((current) => current.width === nextSize.width && current.height === nextSize.height ? current : nextSize)
-      })
-    })
-    observer.observe(viewport)
-    return () => {
-      window.cancelAnimationFrame(frame)
-      observer.disconnect()
-    }
+    const observer = new MutationObserver(() => setDarkMode(document.documentElement.dataset.theme === 'dark'))
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+    return () => observer.disconnect()
   }, [])
 
+  const applyStates = useCallback(async (graph: Graph) => {
+    const states: Record<string, string[]> = {}
+    for (const node of graphData.nodes || []) {
+      const meta = nodeMeta(node)
+      if (meta.kind !== 'point' || !meta.pointId) continue
+      const nodeStates: string[] = []
+      if (meta.pointId === selectedPointId) nodeStates.push(highlights.selectedComplete ? 'available' : 'selected')
+      else if (highlights.availableIds.has(meta.pointId)) nodeStates.push('available')
+      else if (highlights.pathIds.has(meta.pointId)) nodeStates.push('path')
+      else if (selectedPointId) nodeStates.push('inactive')
+      states[String(node.id)] = nodeStates
+    }
+    for (const edge of graphData.edges || []) {
+      const meta = edgeMeta(edge)
+      if (meta.structural) continue
+      states[String(edge.id)] = meta.relationId && highlights.pathEdgeIds.has(meta.relationId)
+        ? ['highlight']
+        : selectedPointId ? ['inactive'] : []
+    }
+    await graph.setElementState(states, false)
+  }, [graphData.edges, graphData.nodes, highlights, selectedPointId])
+
+  const fitSelectedPath = useCallback(async (graph: Graph, animate: boolean) => {
+    if (mode !== 'detail') return
+    if (!selectedPathIds.length) {
+      await graph.fitView({ when: 'always', direction: 'both' }, animate ? { duration: 240, easing: 'ease-in-out' } : false)
+      setZoom(graph.getZoom())
+      return
+    }
+
+    let minX = Number.POSITIVE_INFINITY
+    let minY = Number.POSITIVE_INFINITY
+    let maxX = Number.NEGATIVE_INFINITY
+    let maxY = Number.NEGATIVE_INFINITY
+    for (const id of selectedPathIds) {
+      const bounds = graph.getElementRenderBounds(id)
+      minX = Math.min(minX, bounds.min[0])
+      minY = Math.min(minY, bounds.min[1])
+      maxX = Math.max(maxX, bounds.max[0])
+      maxY = Math.max(maxY, bounds.max[1])
+    }
+
+    const viewport = viewportRef.current
+    if (!viewport || !Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+      await graph.focusElement(selectedPathIds, animate ? { duration: 240, easing: 'ease-in-out' } : false)
+      setZoom(graph.getZoom())
+      return
+    }
+
+    const horizontalPadding = viewport.clientWidth <= 640 ? 44 : 96
+    const verticalPadding = viewport.clientHeight <= 520 ? 40 : 84
+    const contentWidth = Math.max(164, maxX - minX)
+    const contentHeight = Math.max(50, maxY - minY)
+    const availableWidth = Math.max(120, viewport.clientWidth - horizontalPadding)
+    const availableHeight = Math.max(120, viewport.clientHeight - verticalPadding)
+    const maximumZoom = selectedPathIds.length === 1 ? 1 : 1.08
+    const targetZoom = Math.min(maximumZoom, Math.max(0.16, Math.min(
+      availableWidth / contentWidth,
+      availableHeight / contentHeight,
+    )))
+    const animation = animate ? { duration: 240, easing: 'ease-in-out' } : false
+
+    await graph.zoomTo(targetZoom, animation)
+    await graph.focusElement(selectedPathIds, animation)
+    setZoom(graph.getZoom())
+  }, [mode, selectedPathIds])
+
+  useEffect(() => { applyStatesRef.current = applyStates }, [applyStates])
+  useEffect(() => { fitSelectedPathRef.current = fitSelectedPath }, [fitSelectedPath])
+
   useEffect(() => {
-    function handleFullscreenChange() {
-      setFullscreen(document.fullscreenElement === shellRef.current)
-      window.requestAnimationFrame(() => window.requestAnimationFrame(showAtDefaultScale))
+    const container = viewportRef.current
+    if (!container || !(graphData.nodes || []).length) return
+    let active = true
+    let createdGraph: Graph | null = null
+    const frame = window.requestAnimationFrame(() => {
+      if (!active) return
+      setRenderError('')
+      const colors = darkMode ? {
+      text: '#f2f3f5', muted: '#a9afb8', surface: '#303238', chapter: '#242f3a', root: '#21364a', line: '#718093', structural: '#596675',
+      } : {
+      text: '#24272b', muted: '#66717d', surface: '#ffffff', chapter: '#eef5fb', root: '#dfefff', line: '#8997a5', structural: '#aab8c5',
+      }
+      const graph = new Graph({
+      container,
+      data: graphData,
+      autoResize: true,
+      autoFit: mode === 'detail' ? 'center' : { type: 'view', options: { when: 'always', direction: 'both' } },
+      padding: [48, 54, 48, 54],
+      zoom: mode === 'detail' ? .72 : 1,
+      zoomRange: [0.12, 2.5],
+      animation: false,
+      layout: mode === 'overview' ? {
+        type: 'compact-box',
+        direction: 'H',
+        getWidth: (datum: NodeData) => nodeMeta(datum).kind === 'root' ? 174 : 210,
+        getHeight: (datum: NodeData) => nodeMeta(datum).kind === 'root' ? 52 : 68,
+        getHGap: () => 80,
+        getVGap: () => 26,
+        getSubTreeSep: () => 24,
+      } : {
+        type: 'antv-dagre',
+        rankdir: 'LR',
+        ranker: 'network-simplex',
+        nodesep: 20,
+        ranksep: 82,
+        controlPoints: true,
+        edgeLabelSpace: false,
+      },
+      behaviors: ['drag-canvas', { type: 'zoom-canvas', sensitivity: 1.15, preventDefault: true }],
+      node: {
+        type: 'rect',
+        style: (datum) => {
+          const meta = nodeMeta(datum)
+          const point = meta.kind === 'point'
+          const root = meta.kind === 'root'
+          return {
+            size: point ? [164, 50] : root ? [174, 52] : [210, 68],
+            radius: point ? 10 : 12,
+            fill: point ? colors.surface : root ? colors.root : colors.chapter,
+            stroke: root ? '#4c8fca' : point ? colors.line : '#8fb2d1',
+            lineWidth: root ? 2 : 1.3,
+            // G6 incrementally merges styles when an element leaves a state.
+            // Keep the neutral shadow explicit so a previous red selection glow
+            // cannot remain on nodes that are no longer selected.
+            shadowColor: 'transparent',
+            shadowBlur: 0,
+            cursor: point || meta.kind === 'chapter' ? 'pointer' : 'default',
+            labelText: meta.kind === 'chapter' ? meta.title.replace(/\s+/, '\n') : meta.title,
+            labelPlacement: 'center',
+            labelOffsetY: 0,
+            labelFill: colors.text,
+            labelFontSize: point ? 12 : 13,
+            labelFontWeight: root || meta.kind === 'chapter' ? 600 : 500,
+            labelLineHeight: 18,
+            labelWordWrap: true,
+            labelMaxWidth: point ? 144 : root ? 154 : 184,
+          }
+        },
+        state: {
+          selected: { fill: darkMode ? '#512d32' : '#fff0f0', stroke: '#f56c6c', lineWidth: 3, shadowColor: '#f56c6c', shadowBlur: 12 },
+          available: { fill: darkMode ? '#253d2b' : '#f0f9eb', stroke: '#67c23a', lineWidth: 2.5 },
+          path: { fill: darkMode ? '#443823' : '#fdf6ec', stroke: '#e6a23c', lineWidth: 2 },
+          inactive: { opacity: 0.86 },
+        },
+      },
+      edge: {
+        type: 'polyline',
+        style: (datum) => {
+          const structural = edgeMeta(datum).structural
+          return {
+            stroke: structural ? colors.structural : colors.line,
+            lineWidth: structural ? 1.2 : 1.6,
+            opacity: structural ? 0.58 : 0.76,
+            radius: 10,
+            endArrow: !structural,
+          }
+        },
+        state: {
+          highlight: { stroke: '#e6a23c', lineWidth: 3, opacity: 1 },
+          inactive: { opacity: 0.42 },
+        },
+      },
+      })
+      createdGraph = graph
+      graphRef.current = graph
+      graph.on(NodeEvent.CLICK, (event: IElementEvent) => {
+      const meta = metaById.get(String(event.target.id))
+      if (meta?.pointId) onSelectRef.current(meta.pointId)
+      else if (meta?.chapterId) onSelectChapterRef.current(meta.chapterId)
+      })
+      graph.on(GraphEvent.AFTER_TRANSFORM, () => {
+        if (active && readyGraphRef.current === graph) setZoom(graph.getZoom())
+      })
+      void graph.render().then(async () => {
+      if (!active) return
+      readyGraphRef.current = graph
+      await applyStatesRef.current(graph)
+      if (mode === 'detail') await fitSelectedPathRef.current(graph, false)
+      setZoom(graph.getZoom())
+      }).catch((reason: unknown) => {
+      if (active) setRenderError(reason instanceof Error ? reason.message : '知识图谱绘制失败')
+      })
+    })
+    return () => {
+      active = false
+      window.cancelAnimationFrame(frame)
+      const graph = createdGraph
+      if (!graph) return
+      if (readyGraphRef.current === graph) readyGraphRef.current = null
+      if (graphRef.current === graph) graphRef.current = null
+      graph.destroy()
+    }
+  }, [darkMode, graphData, metaById, mode])
+
+  useEffect(() => {
+    const graph = readyGraphRef.current
+    if (graph) void applyStates(graph).then(() => mode === 'detail' ? fitSelectedPath(graph, true) : undefined)
+  }, [applyStates, fitSelectedPath, mode])
+
+  useEffect(() => {
+    const shell = shellRef.current
+    const handleFullscreenChange = () => {
+      const active = document.fullscreenElement === shell
+      setFullscreen(active)
+      window.setTimeout(() => {
+        const graph = graphRef.current
+        if (!graph) return
+        if (mode === 'detail') void fitSelectedPathRef.current(graph, false)
+        else void graph.fitView({ when: 'always', direction: 'both' })
+      }, 0)
     }
     document.addEventListener('fullscreenchange', handleFullscreenChange)
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange)
-  }, [showAtDefaultScale])
+  }, [mode])
 
   async function toggleFullscreen() {
     const shell = shellRef.current
@@ -270,98 +438,45 @@ export default function KnowledgeDag({ points, relations, selectedPointId, onSel
     else await shell.requestFullscreen()
   }
 
-  function zoomAt(nextScale: number, clientX?: number, clientY?: number) {
-    const viewport = viewportRef.current
-    if (!viewport) return
-    const bounds = viewport.getBoundingClientRect()
-    const anchorX = clientX === undefined ? bounds.width / 2 : clientX - bounds.left
-    const anchorY = clientY === undefined ? bounds.height / 2 : clientY - bounds.top
-    setTransform((current) => {
-      const scale = clamp(nextScale, .02, 2.5)
-      const worldX = (anchorX - current.x) / current.scale
-      const worldY = (anchorY - current.y) / current.scale
-      return { x: anchorX - worldX * scale, y: anchorY - worldY * scale, scale }
-    })
+  async function changeZoom(factor: number) {
+    const graph = graphRef.current
+    if (!graph) return
+    await graph.zoomTo(Math.min(2.5, Math.max(0.12, graph.getZoom() * factor)), { duration: 180 })
+    setZoom(graph.getZoom())
   }
 
-  function handleWheel(event: ReactWheelEvent<HTMLDivElement>) {
-    event.preventDefault()
-    zoomAt(transform.scale * (event.deltaY > 0 ? .9 : 1.1), event.clientX, event.clientY)
-  }
+  const resetGraphView = useCallback(() => {
+    const graph = graphRef.current
+    if (!graph) return
+    void graph.fitView({ when: 'always', direction: 'both' }, { duration: 240 }).then(() => setZoom(graph.getZoom()))
+  }, [])
 
-  function startDrag(event: ReactPointerEvent<HTMLDivElement>) {
-    if ((event.target as HTMLElement).closest('button')) return
-    event.currentTarget.setPointerCapture(event.pointerId)
-    dragRef.current = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY, originX: transform.x, originY: transform.y }
-    event.currentTarget.classList.add('dragging')
-  }
-
-  function moveDrag(event: ReactPointerEvent<HTMLDivElement>) {
-    const drag = dragRef.current
-    if (!drag || drag.pointerId !== event.pointerId) return
-    setTransform((current) => ({ ...current, x: drag.originX + event.clientX - drag.clientX, y: drag.originY + event.clientY - drag.clientY }))
-  }
-
-  function endDrag(event: ReactPointerEvent<HTMLDivElement>) {
-    if (dragRef.current?.pointerId !== event.pointerId) return
-    dragRef.current = undefined
-    event.currentTarget.classList.remove('dragging')
-    event.currentTarget.releasePointerCapture(event.pointerId)
-  }
-
+  const hasGraphNodes = Boolean((graphData.nodes || []).length)
   return (
-    <div className={`dag-shell${selectedPointId ? ' has-selection' : ''}`} ref={shellRef}>
+    <div className="dag-shell dag-shell--g6" ref={shellRef}>
       <div className="dag-toolbar" aria-label="图谱操作">
-        <div className="dag-legend" aria-label="节点颜色说明"><span className="available">可学习</span><span className="path">学习路径</span><span className="target">当前目标</span></div>
-        <div className="dag-zoom-controls"><button type="button" aria-label="缩小图谱" onClick={() => zoomAt(transform.scale / 1.18)}>−</button><span>{Math.round(transform.scale * 100)}%</span><button type="button" aria-label="放大图谱" onClick={() => zoomAt(transform.scale * 1.18)}>＋</button><button className="dag-fullscreen-button" type="button" aria-label={fullscreen ? '退出全屏' : '全屏显示知识图谱'} title={fullscreen ? '退出全屏' : '全屏'} aria-pressed={fullscreen} onClick={() => void toggleFullscreen()}><FullscreenIcon active={fullscreen} /></button><button type="button" onClick={fitGraph}>适应画布</button></div>
-      </div>
-      <div
-        className="dag-viewport"
-        ref={viewportRef}
-        onDoubleClick={fitGraph}
-        onPointerDown={startDrag}
-        onPointerMove={moveDrag}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
-        onWheel={handleWheel}
-      >
-        <div className="dag-canvas" style={{ width: layout.width, height: layout.height, transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})` }}>
-          <svg width={layout.width} height={layout.height} aria-hidden="true">
-            <defs>
-              <marker id="dag-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 8 4 0 8Z" /></marker>
-              <marker id="dag-arrow-highlighted" className="highlighted" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 8 4 0 8Z" /></marker>
-            </defs>
-            {layout.edges.map((edge) => {
-              const source = layout.nodeById.get(edge.fromPointId)
-              const target = layout.nodeById.get(edge.toPointId)
-              if (!source || !target) return null
-              const startX = source.x + NODE_WIDTH
-              const startY = source.y + NODE_HEIGHT / 2
-              const endX = target.x
-              const endY = target.y + NODE_HEIGHT / 2
-              const bend = Math.max(48, (endX - startX) * .48)
-              const highlighted = highlights.pathEdgeIds.has(edge.relationId)
-              return <path className={highlighted ? 'highlighted' : ''} key={edge.relationId} d={`M${startX} ${startY} C${startX + bend} ${startY},${endX - bend} ${endY},${endX} ${endY}`} markerEnd={`url(#${highlighted ? 'dag-arrow-highlighted' : 'dag-arrow'})`} />
-            })}
-          </svg>
-          {layout.nodes.map(({ point, x, y }) => {
-            const selected = point.pointId === selectedPointId
-            const completeTarget = selected && highlights.selectedComplete
-            const state = completeTarget || highlights.availableIds.has(point.pointId) ? 'available' : selected ? 'target' : highlights.pathIds.has(point.pointId) ? 'path' : 'default'
-            return <button
-              className={`dag-node dag-node--${state}${selected ? ' selected' : ''}`}
-              style={{ left: x, top: y, width: NODE_WIDTH, height: NODE_HEIGHT }}
-              type="button"
-              key={point.pointId}
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={() => onSelect(point.pointId)}
-              aria-pressed={selected}
-              aria-label={`${point.title}，掌握度 ${Math.round(point.mastery.score)}`}
-              title={`${point.title} · 掌握度 ${Math.round(point.mastery.score)}`}
-            ><span>{point.title}</span><small>掌握度 {Math.round(point.mastery.score)}</small></button>
-          })}
+        <div className="dag-legend" aria-label="节点颜色说明">
+          {mode === 'overview' ? <span className="chapter">点击章节查看路径</span> : <><span className="available">需学习</span><span className="path">学习路径</span><span className="target">当前目标</span></>}
         </div>
-        {!points.length ? <p className="dag-empty">没有匹配的知识节点。</p> : null}
+        <div className="dag-zoom-controls">
+          {mode !== 'overview' && unlinkedPoints.length ? <button className={`dag-unlinked-toggle${showUnlinked ? ' is-active' : ''}`} type="button" aria-expanded={showUnlinked} onClick={() => setShowUnlinked((current) => !current)}>未连接 {unlinkedPoints.length}</button> : null}
+          <button type="button" aria-label="缩小图谱" disabled={!hasGraphNodes} onClick={() => void changeZoom(1 / 1.18)}>−</button>
+          <span>{Math.round(zoom * 100)}%</span>
+          <button type="button" aria-label="放大图谱" disabled={!hasGraphNodes} onClick={() => void changeZoom(1.18)}>＋</button>
+          <button className="dag-fullscreen-button" type="button" aria-label={fullscreen ? '退出全屏' : '全屏显示知识图谱'} title={fullscreen ? '退出全屏' : '全屏'} aria-pressed={fullscreen} onClick={() => void toggleFullscreen()}><FullscreenIcon active={fullscreen} /></button>
+          <button type="button" disabled={!hasGraphNodes} onClick={resetGraphView}>{mode === 'detail' ? '重置视图' : '适应画布'}</button>
+        </div>
+      </div>
+      <div className="dag-stage">
+        <div className="dag-viewport dag-viewport--g6" ref={viewportRef} onDoubleClick={resetGraphView}>
+          {!points.length ? <p className="dag-empty">没有匹配的知识节点。</p> : null}
+          {points.length && !hasGraphNodes ? <p className="dag-empty">当前范围没有先修关系，请从“未连接”面板选择知识点。</p> : null}
+          {renderError ? <p className="dag-empty dag-empty--error" role="alert">{renderError}</p> : null}
+        </div>
+        {showUnlinked ? <aside className="dag-unlinked-panel" aria-label="未连接知识点">
+          <header><div><strong>未连接知识点</strong><small>暂未参与先修路径</small></div><button type="button" aria-label="关闭未连接知识点" onClick={() => setShowUnlinked(false)}>×</button></header>
+          <div className="dag-unlinked-grid">{unlinkedPoints.map((point) => <button className={point.pointId === selectedPointId ? 'selected' : ''} type="button" key={point.pointId} title={point.title} aria-label={`${point.title}，掌握度 ${Math.round(point.mastery.score)}`} onClick={() => onSelect(point.pointId)}><span>{point.title}</span><small>掌握度 {Math.round(point.mastery.score)}</small></button>)}</div>
+        </aside> : null}
       </div>
     </div>
   )

@@ -166,4 +166,24 @@ public class InMemoryGameStoreTests
         Assert.NotNull(store.GetManifest(pkgId));
         Assert.Equal("user-1", store.GetPackageOwner(pkgId));
     }
+
+    [Fact]
+    public void SaveAudio_AndRetrieveByPackageAndAssetId()
+    {
+        var store = new InMemoryGameStore();
+        var packageId = Guid.NewGuid();
+        var audio = new GameAudioAsset(
+            packageId,
+            "voice-000-001",
+            "audio/wav",
+            [82, 73, 70, 70],
+            DateTimeOffset.UtcNow);
+
+        store.SaveAudio(audio);
+
+        var stored = store.GetAudio(packageId, "voice-000-001");
+        Assert.NotNull(stored);
+        Assert.Equal(audio.Data, stored!.Data);
+        Assert.Null(store.GetAudio(packageId, "voice-999-999"));
+    }
 }

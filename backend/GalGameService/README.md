@@ -12,6 +12,7 @@
 - 剧情模板生成（CAMPUS / FANTASY / SCIENCE）
 - 难度适配（BASIC / STANDARD / ADVANCED）
 - 经 Gateway 读取 KnowledgeService 的不可变 PlanGraph（§7.3.1 URGENT）
+- 使用 MiMo v2.5 TTS 为非玩家角色生成逐句语音，并随游戏包持久化
 
 ## 端点
 
@@ -21,6 +22,7 @@
 | `GET` | `/api/v1/game-generations/{generationId}` | 查询生成任务 | `200/400/401/404` |
 | `GET` | `/api/v1/game-packages/{packageId}` | 读取游戏包清单 | `200/400/401/404` |
 | `GET` | `/api/v1/game-packages/{packageId}/content` | 下载完整 JSON | `200/304/400/401/404` |
+| `GET` | `/api/v1/game-packages/{packageId}/audio/{assetId}` | 读取游戏包内的角色语音（支持 Range） | `200/206/400/401/404/416` |
 | `GET` | `/internal/v1/game-packages/{packageId}` | 读取权威游戏包（服务间） | `200/400/403/404` |
 | `POST` | `/internal/v1/game-package-validations` | 校验游戏包（服务间） | `200/400/403/422` |
 | `GET` | `/healthz` | 存活探针 | `200` |
@@ -43,6 +45,11 @@ GalGameService/
 │   ├── NarrativePromptBuilder.cs        # Prompt 构建 + 修复引导
 │   ├── NarrativeDraftValidator.cs       # 草稿校验 + 字段合并
 │   └── NarrativeGenerationOptions.cs    # 配置选项
+├── Voice/                      # 角色语音合成
+│   ├── MiMoTtsClient.cs                 # MiMo v2.5 TTS HTTP 客户端
+│   ├── PackageVoiceService.cs           # 逐句合成、资源编号与失败降级
+│   └── VoiceSynthesisOptions.cs         # TTS 配置选项
+├── character-voice-config.json # 剧情角色、声线、情绪与说话风格配置
 ├── GalGame.GalGameService.csproj
 ├── Dockerfile
 ├── appsettings.json
@@ -73,6 +80,8 @@ GalGameService/
     ├── GalGameServiceIntegrationTests.cs # WebApplicationFactory 集成测试
     ├── InMemoryGameStoreTests.cs         # 内存存储测试
     ├── MongoGameStoreTests.cs            # MongoDB 存储测试
+    ├── MiMoTtsClientTests.cs             # MiMo 请求、响应、重试与边界测试
+    ├── PackageVoiceServiceTests.cs       # 角色过滤、资源编号与部分失败测试
     ├── InvalidPackageTests.cs            # 错误包负向测试（精确错误码断言）
     └── GamePackageSchemaTests.cs         # JSON Schema 契约测试
 ```
@@ -145,6 +154,104 @@ GalGameService/
 - QUESTION 绑定的 questionId 必填 + 孤儿检测
 - assetId 唯一性
 
+### 4. MiMo v2.5 TTS 角色语音
+
+非 Mock 模式下，游戏包完成叙事生成后会进入 `PackageVoiceService`。服务按场景、对白顺序为符合条件的台词调用
+`mimo-v2.5-tts`，输出 WAV 音频并写入当前 `IGameStore`：Memory Provider 保存在进程内存中，MongoDB Provider
+保存在 `game_audio` 集合中。音频字节不会内嵌到游戏包 JSON，包内只保存资源引用。
+
+语音生成流程：
+
+1. 遍历 `scenes[].dialogue[]`，忽略空台词和 `excludedSpeakers` 中的说话人。
+2. 从 `character-voice-config.json` 解析角色的 MiMo 预设声线与提示词，并叠加当前对白的 `emotion` 指令。
+3. 调用 MiMo 的 OpenAI 兼容端点，读取 `choices[0].message.audio.data` 中的 Base64 WAV。
+4. 使用确定性编号 `voice-{sceneIndex:000}-{lineIndex:000}` 保存音频，并向 `assets[]` 追加 `AUDIO` 引用。
+5. 前端按同一编号找到当前对白的音频资源，经 Gateway 携带 Bearer Token 下载，并使用 Blob URL 播放。
+
+游戏包中的资源示例：
+
+```json
+{
+  "assetId": "voice-001-003",
+  "type": "AUDIO",
+  "uri": "/api/v1/game-packages/4c8f72f8-0ddd-4f65-81e3-a245488ecdee/audio/voice-001-003"
+}
+```
+
+语音资源沿用游戏包的用户归属校验：未认证返回 `401`，无权访问与资源不存在统一返回 `404`，避免泄露包是否存在。
+响应为 `audio/wav`，支持字节范围请求，并使用 `private, max-age=31536000, immutable` 缓存策略。
+
+单句合成失败不会让整个游戏包生成失败。网络错误、超时、`429`、服务端错误、无效 JSON/Base64 或音频超限会按配置重试；
+最终仍失败时记录 Warning 并跳过该句，因此一个成功的游戏包可能只有部分语音或完全没有语音。调用方必须把语音视为可选增强，
+没有匹配的 `AUDIO` 资源时继续显示文字。
+
+#### 角色声音设置
+
+所有角色声音与说话风格统一维护在 `character-voice-config.json`：
+
+- `styles`：每种剧情风格允许出现的角色、引导角色和玩家对白约束。
+- `excludedSpeakers`：不合成语音的说话人，当前包括玩家“你”、旁白和 `narrator`。
+- `characters.<角色名>.voice`：传给 MiMo 的预设声线，例如 `茉莉`、`苏打`、`冰糖`、`白桃`。
+- `characters.<角色名>.direction`：仅用于 TTS 的音色、年龄、语速和气质描述。
+- `characters.<角色名>.narrativeDirection`：用于剧情模型保持角色说话风格，不直接作为语音文本朗读。
+- `emotionDirections`：将对白中的情绪标记转换成语速、语气和节奏提示。
+- `fallbackVoice`：遇到未配置角色时使用的默认声线；角色名仅参与提示，不会被朗读。
+
+配置文件在启动时严格校验，并由项目文件复制到构建与发布目录。`styles` 中所有需要语音的角色都必须同时存在有效的
+`voice` 和 `narrativeDirection`，否则服务会在启动阶段失败，避免生成过程中静默使用错误角色设定。
+
+## 配置
+
+### MiMo TTS
+
+`VoiceSynthesis` 支持写入 `appsettings.json`、`appsettings.Development.json`，也支持标准 .NET 环境变量。
+当 `VoiceSynthesis:ApiKey` 为空时，程序还会回退读取 `MIMO_API_KEY`。共享仓库与生产环境建议使用环境变量或 Secret，
+不要提交真实密钥。
+
+```json
+{
+  "VoiceSynthesis": {
+    "Enabled": true,
+    "Endpoint": "https://api.xiaomimimo.com/v1/chat/completions",
+    "Model": "mimo-v2.5-tts",
+    "ApiKey": "<mimo-api-key>",
+    "TimeoutSeconds": 90,
+    "MaxConcurrency": 2,
+    "MaxAttempts": 3,
+    "RetryBaseDelayMilliseconds": 500,
+    "MaxTextCharacters": 2000,
+    "MaxAudioBytes": 8388608
+  }
+}
+```
+
+| 配置项 | 默认值 | 说明 |
+|---|---:|---|
+| `Enabled` | `true` | 是否请求外部 TTS；Mock 模式会强制关闭 |
+| `Endpoint` | MiMo Chat Completions 地址 | 必须是 HTTPS |
+| `Model` | `mimo-v2.5-tts` | 当前实现只启用该模型名 |
+| `ApiKey` | 空 | 可直接配置；为空时读取 `MIMO_API_KEY` |
+| `TimeoutSeconds` | `90` | 单次请求超时，运行时限制在 10–300 秒 |
+| `MaxConcurrency` | `2` | 同一游戏包的并发合成数，运行时限制在 1–6 |
+| `MaxAttempts` | `3` | 每句最大尝试次数，运行时限制在 1–4 |
+| `RetryBaseDelayMilliseconds` | `500` | 指数退避基础延迟，最大单次延迟 5 秒 |
+| `MaxTextCharacters` | `2000` | 单句文本长度上限，运行时最大 10000 |
+| `MaxAudioBytes` | `8388608` | 单句解码后音频大小上限，运行时最大 12 MiB |
+
+TTS 只有在 `Enabled=true`、密钥非空、模型名为 `mimo-v2.5-tts` 且 Endpoint 为 HTTPS 时才会启用。
+启动日志会输出最终启用状态和并发数；配置不完整时服务仍可启动，但游戏包不会包含语音。
+
+Compose 使用以下环境变量映射上述配置：
+
+| 环境变量 | 对应配置 |
+|---|---|
+| `GALGAME_VOICE_ENABLED` | `VoiceSynthesis:Enabled` |
+| `MIMO_API_KEY` | `VoiceSynthesis:ApiKey` |
+| `MIMO_TTS_ENDPOINT` | `VoiceSynthesis:Endpoint` |
+| `MIMO_TTS_MAX_CONCURRENCY` | `VoiceSynthesis:MaxConcurrency` |
+
+也可以直接使用标准 .NET 双下划线形式，例如 `VoiceSynthesis__ApiKey`、`VoiceSynthesis__TimeoutSeconds`。
+
 ## 本地运行
 
 ### 开发模式
@@ -157,6 +264,17 @@ export Gateway__ServiceKey=moonstone-local-gateway-key
 # 运行
 dotnet run --project backend/GalGameService/GalGame.GalGameService.csproj
 ```
+
+上面的 Mock 模式会强制关闭外部叙事模型和 MiMo TTS。需要验证真实语音链路时，应启动完整的非 Mock 服务依赖，并提供密钥：
+
+```powershell
+$env:Gateway__ServiceKey = "moonstone-local-gateway-key"
+$env:MIMO_API_KEY = "<mimo-api-key>"
+$env:VoiceSynthesis__Enabled = "true"
+dotnet run --project backend/GalGameService/GalGame.GalGameService.csproj
+```
+
+也可以将 `ApiKey` 写入本机的 `appsettings.Development.json`。如果使用共享配置文件，请确认不会把真实密钥提交到版本库。
 
 ### Docker
 
@@ -184,6 +302,7 @@ dotnet test backend/GalGameService/Tests/GalGame.GalGameService.Tests.csproj
 - 默认 Mock 保持下表冻结的 `reviewPlanId`、`snapshotVersion` 与 `ownerUserId` 校验。用于全链路页面联调时，可显式设置 `GalGameMock:UseFixedStory=true`：服务仍校验请求字段和可信用户身份，但以当前请求的计划、快照和用户归属封装内置图谱，忽略上传资料、`style`、`difficulty`、`locale` 与 `seed` 对叙事文本的影响，始终生成同一套原创演示剧情《雾岚町的夏祭前夜》。
 - 演示包固定为四个场景：夏祭前夜 → 温室讲解 → 风铃谜题 → 夏祭灯火。每次生成仍创建新的 `packageId`，任务、包所有者与权限校验不会被 Mock 绕过。
 - Mock 不调用外部叙事模型，也不读取或依赖前端上传文件、FileService 或 KnowledgeService。
+- Mock 强制关闭 MiMo TTS，不生成或保存角色语音资源；验证语音必须使用非 Mock 模式。
 
 ### Mock 测试数据
 
@@ -220,6 +339,14 @@ curl -s -X POST "$GATEWAY_BASE_URL/api/v1/game-generations" \
     "locale": "zh-CN",
     "seed": 42
   }'
+
+# 下载游戏包中 assets[] 引用的一条角色语音
+export PACKAGE_ID='<package-id>'
+export AUDIO_ASSET_ID='voice-001-003'
+curl -s \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  "$GATEWAY_BASE_URL/api/v1/game-packages/$PACKAGE_ID/audio/$AUDIO_ASSET_ID" \
+  --output dialogue.wav
 
 # 校验游戏包（服务间）
 curl -s -X POST "$GATEWAY_BASE_URL/internal/v1/game-package-validations" \

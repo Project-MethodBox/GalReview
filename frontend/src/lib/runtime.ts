@@ -96,6 +96,9 @@ export async function loadRuntime(
   gamePackage: GamePackage,
   session: ReviewSession,
 ): Promise<WasmAdapter> {
+  if (session.status !== 'CREATED' && session.status !== 'RUNNING') {
+    throw new Error('上一次复习会话已经结束，不能继续恢复，请重新生成故事。')
+  }
   if (!manifest.supportedSchemaVersions.includes(gamePackage.schemaVersion)) {
     throw new Error(`渲染器不支持游戏包 schema ${gamePackage.schemaVersion}。`)
   }

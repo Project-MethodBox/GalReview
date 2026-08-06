@@ -30,6 +30,8 @@ public interface IGameStore
     GamePackage? GetPackage(Guid packageId);
     GamePackageManifest? GetManifest(Guid packageId);
     string? GetPackageOwner(Guid packageId);
+    void SaveAudio(GameAudioAsset audio);
+    GameAudioAsset? GetAudio(Guid packageId, string assetId);
 
     /// <summary>
     /// 启动恢复：将卡在 RUNNING/QUEUED 的任务标记为 FAILED。
@@ -44,6 +46,7 @@ public sealed class InMemoryGameStore : IGameStore
     private readonly ConcurrentDictionary<Guid, GamePackage> _packages = new();
     private readonly ConcurrentDictionary<Guid, GamePackageManifest> _manifests = new();
     private readonly ConcurrentDictionary<Guid, string> _packageOwners = new();
+    private readonly ConcurrentDictionary<(Guid PackageId, string AssetId), GameAudioAsset> _audio = new();
 
     // per-job 锁：防止同一 job 的并发 read-modify-write 导致 lost-update
     private readonly ConcurrentDictionary<Guid, object> _jobLocks = new();
@@ -199,6 +202,12 @@ public sealed class InMemoryGameStore : IGameStore
 
     public string? GetPackageOwner(Guid packageId)
         => _packageOwners.TryGetValue(packageId, out var owner) ? owner : null;
+
+    public void SaveAudio(GameAudioAsset audio)
+        => _audio[(audio.PackageId, audio.AssetId)] = audio;
+
+    public GameAudioAsset? GetAudio(Guid packageId, string assetId)
+        => _audio.TryGetValue((packageId, assetId), out var audio) ? audio : null;
 
     /// <summary>清除最旧的已完成（SUCCEEDED/FAILED）job，释放内存</summary>
     private void EvictOldestCompletedJobs()

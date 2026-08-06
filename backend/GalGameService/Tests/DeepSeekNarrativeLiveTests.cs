@@ -22,7 +22,7 @@ public sealed class DeepSeekNarrativeLiveTests
                 ?? "https://api.deepseek.com/chat/completions",
             Model = Environment.GetEnvironmentVariable("GALGAME_NARRATIVE_MODEL")
                 ?? "deepseek-v4-pro",
-            PromptVersion = "galgame-narrative-v2",
+            PromptVersion = NarrativeTestData.PromptVersion,
             TimeoutSeconds = 180,
             MaxOutputTokens = 16_000,
         };

@@ -18,6 +18,7 @@ describe('当前服务接口路由适配', () => {
     ['GET', '/api/v1/game-generations/0957574f', 'galGameService', 'user'],
     ['GET', '/api/v1/game-packages/3a7f', 'galGameService', 'user'],
     ['GET', '/api/v1/game-packages/3a7f/content', 'galGameService', 'user'],
+    ['GET', '/api/v1/game-packages/3a7f/audio/voice-000-002', 'galGameService', 'user'],
     ['GET', '/api/v1/render-runtime/manifest', 'renderService', 'public'],
     ['GET', '/api/v1/render-runtime/runtime.wasm', 'renderService', 'public'],
     ['GET', '/api/v1/render-runtime/adapter.js', 'renderService', 'public'],

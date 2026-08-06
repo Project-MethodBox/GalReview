@@ -9,6 +9,7 @@ internal static class NarrativeTestData
     internal static readonly Guid PrerequisiteId = Guid.Parse("84f7d873-e573-4689-b18d-6f82c745d1bf");
     internal static readonly Guid TargetId = Guid.Parse("d1adc45a-52db-4de2-9cf7-02e1ac0d53cb");
     internal const string SnapshotVersion = "plan-graph-1.0:3da5f48f37ac57c91b49ee747c11e45f1a9e9e73d8e892fcd1bd1f9f3f50c620";
+    internal const string PromptVersion = "galgame-narrative-v3";
 
     internal static PlanGraph CreatePlan(string? prerequisiteSummary = null) => new(
         SchemaVersion: "1.0",
@@ -83,7 +84,7 @@ internal static class NarrativeTestData
 
     internal static string CreateValidDraftJson(
         GamePackage skeleton,
-        string promptVersion = "galgame-narrative-v2")
+        string promptVersion = PromptVersion)
     {
         var scenes = skeleton.Scenes.Select((scene, sceneIndex) => new
         {

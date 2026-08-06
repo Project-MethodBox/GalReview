@@ -46,6 +46,22 @@ export function updateWorkflow(patch: Partial<StudyWorkflow>): StudyWorkflow {
   return next
 }
 
+/**
+ * 结束一轮复习后只保留创建新计划仍需使用的资料与知识图谱上下文。
+ * 旧计划、游戏包、会话和作答不能再被 /review 或首页恢复。
+ */
+export function clearCompletedReview(): StudyWorkflow {
+  const current = readWorkflow()
+  const next: StudyWorkflow = {
+    material: current.material,
+    graph: current.graph,
+    chapters: current.chapters,
+  }
+  localStorage.setItem(WORKFLOW_KEY, JSON.stringify(next))
+  window.dispatchEvent(new Event('galreview:workflow'))
+  return next
+}
+
 export function resetWorkflow(): void {
   localStorage.removeItem(WORKFLOW_KEY)
   window.dispatchEvent(new Event('galreview:workflow'))

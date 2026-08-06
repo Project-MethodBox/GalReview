@@ -1401,7 +1401,7 @@ interface GameGenerationRequest {
 interface GameGenerationJob {
   generationId: Uuid;
   status: JobStatus;
-  progress: number; // int32, 0-100
+  progress: number; // int32, 0-100；按骨架、模型调用/修复、校验、封装和持久化实际阶段单调推进
   packageId: Uuid | null;
   generatorVersion: string;
   error: ApiError | null;
@@ -1518,7 +1518,7 @@ GalGameService 在接受 `GameGenerationRequest` 后必须经 Gateway 调用
 
 本小节是 GalGameService 的 **URGENT（跨服务阻塞项）**；这里只冻结调用与数据义务，不由 KnowledgeService 实现 GalGameService。
 
-### 7.3.2 叙事生成与提示词契约（`galgame-narrative-v2`）
+### 7.3.2 叙事生成与提示词契约（`galgame-narrative-v3`）
 
 本次调整不新增或修改 Gateway 路由、`GameGenerationRequest`、`GameGenerationJob`、
 `GamePackage schema 1.0` 或 RenderService 调用方式。模型不直接生成最终游戏包；生成过程固定为：
@@ -1527,8 +1527,9 @@ GalGameService 在接受 `GameGenerationRequest` 后必须经 Gateway 调用
    场景拓扑、`knowledgeBindings`、`correct`、`scoreDelta`、assets、计划与快照字段；
 2. `NarrativeGenerationService` 使用整个游戏包的一次上下文生成内部 `NarrativeDraft`，模型只能
    重写 scene title、dialogue 和 choice 显示文本，不能覆盖任何锁定字段；
-3. 草稿必须通过 `NarrativeDraftValidator` 和 `GamePackageValidator`。第一次草稿不合法时只允许
-   一次有界修复；仍不合法、超时、限流或供应商不可用时，丢弃整个草稿并使用确定性骨架，
+3. 草稿必须通过 `NarrativeDraftValidator` 和 `GamePackageValidator`。草稿不合法时最多执行
+   两次有界修复；JSON Output 空内容、超时、限流和供应商 5xx 最多重试三次。仍不可用时
+   丢弃整个草稿并使用确定性骨架，
    不保存半成品，也不把供应商响应或异常详情写入公开 job error；
 4. `groundingQuotes` 和 `knowledgeUse` 只存在于内部草稿，用于核对知识依据和“知识如何改变
    当前局面”，装配后必须删除，不能加入 `GamePackage schema 1.0`。
@@ -1550,7 +1551,8 @@ confidence、服务密钥或其他无关数据。上传资料中的 title、summ
 “知识点讲解”“系统已生成评估问题”“来看看这道题”“本轮复习结束”等模板报幕。
 
 内部草稿必须原样、完整且唯一地返回全部 sceneId/choiceId；speakerId 只能来自所选风格的允许
-集合；EXPLAIN/QUESTION 必须提供可逐字回溯到绑定节点 title/summary 的依据，并在对白中出现
+集合：校园为 `你/林澈/周岚`，幻想为 `你/艾黎/洛恩`，科幻为 `你/NEXUS/姚真`。确定性骨架
+与模型草稿共用这份人物目录。EXPLAIN/QUESTION 必须提供可逐字回溯到绑定节点 title/summary 的依据，并在对白中出现
 对应概念锚点。ASSESSMENT 在选择前不得逐字泄露正确结论。最终包的 ID、拓扑、绑定、正确性、
 计分和快照必须与骨架逐字段相同。
 
@@ -1562,7 +1564,7 @@ confidence、服务密钥或其他无关数据。上传资料中的 title、summ
 | API 密钥 | `DSAPI` | 无 | 只注入 GalGameService，不写入响应、日志或仓库 |
 | Endpoint | `GALGAME_NARRATIVE_ENDPOINT` | `https://api.deepseek.com/chat/completions` | 必须为 HTTPS |
 | Model | `GALGAME_NARRATIVE_MODEL` | `deepseek-v4-pro` | 可按供应商兼容模型覆盖 |
-| Prompt | `NarrativeGeneration__PromptVersion` | `galgame-narrative-v2` | 当前提示词与草稿合同版本 |
+| Prompt | `NarrativeGeneration__PromptVersion` | `galgame-narrative-v3` | 当前提示词与草稿合同版本 |
 
 启用外部模型意味着上述最小知识字段会发送给所配置供应商；部署者必须依据资料敏感级别、供应商
 条款和本地合规要求决定是否启用。关闭或缺少 `DSAPI` 时服务仍可生成契约有效的确定性包。
@@ -1620,7 +1622,7 @@ confidence、服务密钥或其他无关数据。上传资料中的 title、summ
   `packageId=null` 并在任务中返回 `error`；
 - [x] 当前 `generatorVersion="gala-0.1.0"`。显式 seed 会稳定 questionId、场景顺序与
   选项顺序；`packageId` 和 manifest 时间仍在每次生成时新建，因此首版不承诺整个包或
-  checksum 字节级相同。`galgame-narrative-v2` 的模型文本同样不承诺逐字确定；seed 省略时
+  checksum 字节级相同。`galgame-narrative-v3` 的模型文本同样不承诺逐字确定；seed 省略时
   使用随机值；
 - [x] 生产游戏包持久化、跨副本一致性、保留期和清理任务。
 
