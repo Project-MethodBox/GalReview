@@ -42,8 +42,8 @@ function isFixedMockStory(gamePackage: GamePackage): boolean {
 }
 
 const fixedMockSceneBackgrounds = ['/bg.png', '/bg_1.png', '/bg2.png', '/bg3.png', '/bg4.png']
-// 后端最多执行两次、每次 120 秒的叙事模型请求；为校验与持久化预留余量。
-const gameGenerationPollTimeoutMs = 360_000
+// 后端最多执行两次、每次 120 秒的叙事模型请求；为排队、校验与持久化预留充足余量。
+const gameGenerationPollTimeoutMs = 600_000
 
 function preloadBackground(source: string): Promise<void> {
   return new Promise((resolve) => {
@@ -483,6 +483,11 @@ useEffect(() => {
     }
   }
 
+  async function finishReviewEarly() {
+    if (!session || !gamePackage) return
+    await finish(attempt.answers, session)
+  }
+
   function resetGame() {
     adapterRef.current?.dispose()
     adapterRef.current = null
@@ -562,9 +567,12 @@ useEffect(() => {
         <section className={`game-stage game-stage--${scene.sceneId}${backgroundsReady ? '' : ' game-stage--backgrounds-loading'}`} ref={gameStageRef}>
           {!backgroundsReady ? <div className="game-stage__background-loading" role="status">场景加载中…</div> : null}
           <div className="game-stage__meta"><span>{runtimeManifest?.wasmVersion} · {adapterRef.current?.engine === 'wasm' ? 'WASM' : '兼容模式'}</span><span>{visitedSceneIds.length} 个场景已访问</span></div>
-          <button className="game-stage__fullscreen" type="button" onClick={() => void toggleGameFullscreen()} aria-label="切换全屏" title="切换全屏">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V5h4M20 9V5h-4M4 15v4h4M20 15v4h-4" /></svg>
-          </button>
+          <div className="game-stage__actions">
+            <button className="game-stage__end" type="button" disabled={busy} onClick={() => void finishReviewEarly()}>结束复习</button>
+            <button className="game-stage__fullscreen" type="button" onClick={() => void toggleGameFullscreen()} aria-label="切换全屏" title="切换全屏">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V5h4M20 9V5h-4M4 15v4h4M20 15v4h-4" /></svg>
+            </button>
+          </div>
           <article className={`dialogue-panel${dialogueCompleted && !dialogueTyping ? '' : ' dialogue-panel--advance'}`} onClick={advanceDialogue}>
             {scene.title ? <h2>{scene.title}</h2> : null}
             {currentDialogue ? <div className={`dialogue-line${currentDialogue.speakerId === '旁白' ? ' dialogue-line--narration' : ''}`}>
