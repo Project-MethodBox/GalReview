@@ -1,4 +1,4 @@
-:root {
+﻿:root {
   font-family: "Microsoft YaHei", "Microsoft YaHei UI", sans-serif;
   color: #303236;
   background: #f3f4f5;
@@ -1104,6 +1104,23 @@ input[type="password"]::-webkit-credentials-auto-fill-button { visibility: hidde
   animation: review-background-breeze 18s ease-in-out infinite alternate;
 }
 .game-stage::before { background: linear-gradient(180deg, rgb(9 22 38 / .06), rgb(9 22 38 / .22)); }
+.game-stage--backgrounds-loading {
+  background-color: #dfeaf0;
+}
+.game-stage--backgrounds-loading > :not(.game-stage__background-loading) {
+  opacity: 0;
+}
+.game-stage__background-loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  z-index: 3;
+  color: #436276;
+  font-size: 14px;
+  letter-spacing: .08em;
+  background: rgb(223 234 240 / .9);
+}
 .game-stage--scene-001 { --scene-background: url('/bg.png'); }
 .game-stage--scene-002, .game-stage--scene-004 { --scene-background: url('/bg_1.png'); }
 .game-stage--scene-003, .game-stage--scene-007 { --scene-background: url('/bg2.png'); }

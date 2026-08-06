@@ -1,4 +1,4 @@
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
 using Microsoft.AspNetCore.Identity;
 
 public sealed class MockAuthStore
@@ -146,8 +146,20 @@ public sealed class InMemoryAuthRepository(MockAuthStore store) : IAuthRepositor
         lock (store.Sync)
         {
             if (!store.SessionIdsByRefreshToken.TryGetValue(refreshToken, out var sessionId) || !store.SessionsById.TryGetValue(sessionId, out var session) || session.Status != "ACTIVE") return null;
-            store.SessionsById[sessionId] = session with { RevokedAt = DateTimeOffset.UtcNow };
-            return CreateSession(session.UserId, null);
+            var now = DateTimeOffset.UtcNow;
+            store.SessionIdsByAccessToken.Remove(session.AccessToken);
+            store.SessionIdsByRefreshToken.Remove(session.RefreshToken);
+            var rotated = session with
+            {
+                AccessToken = Token(),
+                RefreshToken = Token(),
+                AccessExpiresAt = now.AddMinutes(15),
+                RefreshExpiresAt = now.AddDays(7),
+            };
+            store.SessionsById[sessionId] = rotated;
+            store.SessionIdsByAccessToken[rotated.AccessToken] = sessionId;
+            store.SessionIdsByRefreshToken[rotated.RefreshToken] = sessionId;
+            return rotated;
         }
     }
 

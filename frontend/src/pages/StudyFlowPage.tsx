@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+﻿import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router'
 import AppShell, { PageHeader } from '../components/AppShell'
 import { api, ApiClientError } from '../lib/api'
@@ -70,11 +70,34 @@ export default function StudyFlowPage() {
     let stage = '资料处理'
     try {
       let readyMaterial = source
+      let ingestionJobId = source.status === 'PROCESSING' && !force
+        ? source.latestIngestionJobId
+        : null
+
       if (source.status !== 'READY' || force) {
         stage = '文字提取'
-        setProgress(enableOcr ? `正在准备${ocrMode === 'quick' ? '快速' : '标准'} OCR。` : '正在提取资料文字。')
-        const accepted = await api.createIngestionJob(source.materialId, { force, enableOcr, ocrMode })
-        const completed = await pollUntil(() => api.getIngestionJob(accepted.jobId), (job) => job.status === 'SUCCEEDED' || job.status === 'FAILED', (job) => setProgress(ingestionText(job)))
+        if (ingestionJobId) {
+          setProgress('正在恢复进行中的文字提取任务。')
+        } else {
+          setProgress(enableOcr ? `正在准备${ocrMode === 'quick' ? '快速' : '标准'} OCR。` : '正在提取资料文字。')
+          const accepted = await api.createIngestionJob(source.materialId, { force, enableOcr, ocrMode })
+          ingestionJobId = accepted.jobId
+          const processingMaterial: Material = {
+            ...source,
+            status: 'PROCESSING',
+            latestIngestionJobId: accepted.jobId,
+            updatedAt: new Date().toISOString(),
+          }
+          setMaterial(processingMaterial)
+          setMaterials((current) => current.map((item) => item.materialId === source.materialId ? processingMaterial : item))
+        }
+
+        const completed = await pollUntil(
+          () => api.getIngestionJob(ingestionJobId!),
+          (job) => job.status === 'SUCCEEDED' || job.status === 'FAILED',
+          (job) => setProgress(ingestionText(job)),
+          900_000,
+        )
         if (completed.status === 'FAILED') throw jobError(completed.error, '资料文字提取失败。')
         readyMaterial = await api.getMaterial(source.materialId)
         setMaterial(readyMaterial)
@@ -203,7 +226,7 @@ export default function StudyFlowPage() {
             <section className="material-library">
               <header><div><h2>资料库</h2><p>{materials.filter((item) => item.status !== 'DELETED').length} 份资料</p></div><input aria-label="搜索资料" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索资料" /></header>
               <div className="material-table">
-                {visibleMaterials.map((item) => <article className={material?.materialId === item.materialId ? 'selected' : ''} key={item.materialId}><button className="material-open" type="button" disabled={busy} onClick={() => void processMaterial(item)}><span><strong>{item.displayName}</strong><small>{item.originalFileName}</small></span><em className={`material-status material-status--${item.status.toLowerCase()}`}>{item.status}</em></button><div className="material-actions">{item.status === 'READY' ? <button type="button" disabled={previewBusy} onClick={() => void openTextPreview(item)}>文本</button> : null}<button className="material-delete" type="button" disabled={busy || item.status === 'PROCESSING'} onClick={() => void deleteMaterial(item)}>删除</button></div></article>)}
+                {visibleMaterials.map((item) => <article className={material?.materialId === item.materialId ? 'selected' : ''} key={item.materialId}><button className="material-open" type="button" disabled={busy} onClick={() => void processMaterial(item)}><span><strong>{item.displayName}</strong><small>{item.originalFileName}</small>{item.ocrUsed ? <em className="material-ocr-badge">OCR</em> : null}</span><em className={`material-status material-status--${item.status.toLowerCase()}`}>{item.status}</em></button><div className="material-actions">{item.status === 'READY' ? <button type="button" disabled={previewBusy} onClick={() => void openTextPreview(item)}>文本</button> : null}<button className="material-delete" type="button" disabled={busy && item.status !== 'PROCESSING'} onClick={() => void deleteMaterial(item)}>删除</button></div></article>)}
                 {!visibleMaterials.length ? <p className="empty-row">没有匹配的资料。</p> : null}
               </div>
             </section>
