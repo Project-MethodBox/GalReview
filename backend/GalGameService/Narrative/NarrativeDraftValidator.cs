@@ -23,10 +23,19 @@ public sealed partial class NarrativeDraftValidator
     };
 
     private readonly GamePackageValidator _packageValidator;
+    private readonly CharacterVoiceCatalog _characterVoiceCatalog;
 
     public NarrativeDraftValidator(GamePackageValidator packageValidator)
+        : this(packageValidator, CharacterVoiceCatalog.LoadDefault())
+    {
+    }
+
+    public NarrativeDraftValidator(
+        GamePackageValidator packageValidator,
+        CharacterVoiceCatalog characterVoiceCatalog)
     {
         _packageValidator = packageValidator;
+        _characterVoiceCatalog = characterVoiceCatalog;
     }
 
     public bool TryApply(
@@ -87,7 +96,7 @@ public sealed partial class NarrativeDraftValidator
         }
 
         var nodeById = (plan.Nodes ?? Array.Empty<PlanNode>()).ToDictionary(node => node.PointId);
-        var allowedSpeakers = NarrativePromptBuilder.AllowedSpeakers(request.Style);
+        var allowedSpeakers = _characterVoiceCatalog.AllowedSpeakers(request.Style);
         var rewrittenScenes = new List<Scene>(skeleton.Scenes.Length);
         var totalCharacters = 0;
 
@@ -243,11 +252,15 @@ public sealed partial class NarrativeDraftValidator
                     .Where(choice => choice.Correct is true)
                     .Select(choice => choiceDrafts[choice.ChoiceId])
                     .FirstOrDefault();
-                var correctQuote = correctDraft?.GroundingQuote?.Trim();
+                // groundingQuote 往往是题目概念本身（例如“分蘖期”），而知识场景又要求
+                // 对白自然出现概念锚点。用引文判断泄题会让这两条规则互相冲突。
+                // 真正需要阻止的是题前对白直接给出完整正确选项。
+                var correctAnswerText = correctDraft?.Text?.Trim();
                 var textBeforeAnswer = string.Join('\n',
                     rewrittenScenes.SelectMany(item => item.Dialogue).Select(line => line.Text));
-                if (!string.IsNullOrWhiteSpace(correctQuote)
-                    && textBeforeAnswer.Contains(correctQuote, StringComparison.Ordinal))
+                if (!string.IsNullOrWhiteSpace(correctAnswerText)
+                    && correctAnswerText.Length >= 6
+                    && textBeforeAnswer.Contains(correctAnswerText, StringComparison.Ordinal))
                     issues.Add($"{path}:ASSESSMENT_ANSWER_LEAKED_IN_DIALOGUE");
             }
         }

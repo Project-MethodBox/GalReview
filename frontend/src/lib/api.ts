@@ -300,6 +300,44 @@ async function requestRawJson<T>(path: string): Promise<T> {
   }
 }
 
+async function requestBlob(path: string, retryAfterRefresh = true): Promise<Blob> {
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS)
+  const headers = new Headers({
+    Accept: 'audio/wav, audio/*',
+    'X-Correlation-Id': createUuidV4(),
+  })
+  const token = readSession()?.tokens.accessToken
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  try {
+    const response = await fetch(resolveUrl(path), { headers, signal: controller.signal })
+    if (response.status === 401 && retryAfterRefresh) {
+      await refreshAccessToken()
+      return requestBlob(path, false)
+    }
+    if (!response.ok) {
+      const bodyText = await response.text()
+      const contentType = response.headers.get('Content-Type') || ''
+      const payload = bodyText && contentType.includes('json')
+        ? parseResponseJson(response, bodyText)
+        : null
+      if (!payload) throw nonJsonHttpError(response, bodyText)
+      throw errorFromPayload(payload, response.status, traceIdFromResponse(response))
+    }
+    return await response.blob()
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new ApiClientError('语音加载超时，请稍后重试。', 'SERVICE_UNAVAILABLE', 503)
+    }
+    if (error instanceof TypeError) {
+      throw new ApiClientError('无法连接语音服务。', 'SERVICE_UNAVAILABLE', 503)
+    }
+    throw error
+  } finally {
+    window.clearTimeout(timeout)
+  }
+}
+
 function json(body: unknown): string {
   return JSON.stringify(body)
 }
@@ -609,6 +647,10 @@ export const api = {
 
   getGamePackageContent(contentUrl: string): Promise<GamePackage> {
     return requestRawJson<GamePackage>(contentUrl)
+  },
+
+  getGameAudio(audioUrl: string): Promise<Blob> {
+    return requestBlob(audioUrl)
   },
 
   getRuntimeManifest(): Promise<RuntimeManifest> {

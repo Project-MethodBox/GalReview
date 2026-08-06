@@ -173,7 +173,12 @@ services:
       NarrativeGeneration__ApiKey: ${DSAPI:-}
       NarrativeGeneration__Endpoint: ${GALGAME_NARRATIVE_ENDPOINT:-https://api.deepseek.com/chat/completions}
       NarrativeGeneration__Model: ${GALGAME_NARRATIVE_MODEL:-deepseek-v4-pro}
-      NarrativeGeneration__PromptVersion: galgame-narrative-v2
+      NarrativeGeneration__PromptVersion: galgame-narrative-v3
+      VoiceSynthesis__Enabled: ${GALGAME_VOICE_ENABLED:-true}
+      VoiceSynthesis__ApiKey: ${MIMO_API_KEY:-}
+      VoiceSynthesis__Endpoint: ${MIMO_TTS_ENDPOINT:-https://api.xiaomimimo.com/v1/chat/completions}
+      VoiceSynthesis__Model: mimo-v2.5-tts
+      VoiceSynthesis__MaxConcurrency: ${MIMO_TTS_MAX_CONCURRENCY:-2}
     depends_on:
       knowledge-service:
         condition: service_healthy

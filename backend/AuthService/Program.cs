@@ -431,7 +431,8 @@ public sealed class MySqlAuthRepository(AuthDatabase database) : IAuthRepository
         if (!foundInvitation) { transaction.Rollback(); return RegistrationOutcome.InvitationUnavailable; }
         var now = DateTime.UtcNow;
         var timeWindowIsValid = type != "time-window" || (validFrom is not null && validTo is not null && validFrom <= now && validTo >= now);
-        if (usedCount >= maxUses || !timeWindowIsValid) { transaction.Rollback(); return RegistrationOutcome.InvitationUnavailable; }
+        var usageIsAvailable = type == "time-window" || usedCount < maxUses;
+        if (!usageIsAvailable || !timeWindowIsValid) { transaction.Rollback(); return RegistrationOutcome.InvitationUnavailable; }
         try
         {
             command.Parameters.Clear();
@@ -445,7 +446,7 @@ public sealed class MySqlAuthRepository(AuthDatabase database) : IAuthRepository
             return RegistrationOutcome.EmailAlreadyRegistered;
         }
         command.Parameters.Clear();
-        command.CommandText = "UPDATE admin_invitations SET used_count=used_count+1 WHERE code=@code AND used_count<max_uses;";
+        command.CommandText = "UPDATE admin_invitations SET used_count=used_count+1 WHERE code=@code AND (type='time-window' OR used_count<max_uses);";
         command.Parameters.AddWithValue("@code", invitationCode);
         if (command.ExecuteNonQuery() != 1) { transaction.Rollback(); return RegistrationOutcome.InvitationUnavailable; }
         transaction.Commit();
@@ -546,7 +547,10 @@ public sealed class MySqlAdminRepository(AuthDatabase database) : IAdminReposito
     }
     public AdminInvitation? CreateInvitation(CreateInvitationRequest request)
     {
-        var type=request.Type?.Trim().ToLowerInvariant();if(type is not ("single-use" or "multi-use" or "time-window")||(type=="multi-use"&&!request.MaxUses.HasValue))return null;var max=type=="single-use"?1:request.MaxUses.GetValueOrDefault(10);if(max is <1 or >10000||(type=="time-window"&&(!request.ValidFrom.HasValue||!request.ValidTo.HasValue||request.ValidTo<=request.ValidFrom)))return null;
+        var type=request.Type?.Trim().ToLowerInvariant();
+        if(type is not ("single-use" or "multi-use" or "time-window")||(type=="multi-use"&&!request.MaxUses.HasValue))return null;
+        var max=type switch{"single-use"=>1,"time-window"=>int.MaxValue,_=>request.MaxUses.GetValueOrDefault()};
+        if((type=="multi-use"&&max is <1 or >10000)||(type=="time-window"&&(!request.ValidFrom.HasValue||!request.ValidTo.HasValue||request.ValidTo<=request.ValidFrom)))return null;
         for(var i=0;i<3;i++){var value=new AdminInvitation("MS-"+Convert.ToHexString(RandomNumberGenerator.GetBytes(5)),type,max,0,request.ValidFrom,request.ValidTo,DateTimeOffset.UtcNow);try{using var c=database.OpenConnection();using var q=c.CreateCommand();q.CommandText="INSERT INTO admin_invitations (code,type,max_uses,used_count,valid_from,valid_to,created_at) VALUES (@code,@type,@max,0,@from,@to,@created);";q.Parameters.AddWithValue("@code",value.Code);q.Parameters.AddWithValue("@type",value.Type);q.Parameters.AddWithValue("@max",value.MaxUses);q.Parameters.AddWithValue("@from",value.ValidFrom?.UtcDateTime??(object)DBNull.Value);q.Parameters.AddWithValue("@to",value.ValidTo?.UtcDateTime??(object)DBNull.Value);q.Parameters.AddWithValue("@created",value.CreatedAt.UtcDateTime);q.ExecuteNonQuery();return value;}catch(MySqlException ex)when(ex.Number==1062){}}return null;
     }
     public bool DeleteInvitation(string code){using var c=database.OpenConnection();using var q=c.CreateCommand();q.CommandText="DELETE FROM admin_invitations WHERE code=@code;";q.Parameters.AddWithValue("@code",code);return q.ExecuteNonQuery()==1;}

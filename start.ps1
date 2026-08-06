@@ -242,7 +242,7 @@ try {
         Write-Host '  KnowledgeService:  http://localhost:5104'
         Write-Host '  GalGameService:    http://localhost:5105'
         Write-Host '  RenderService:     http://localhost:5106'
-        Write-Host '  Frontend:      http://localhost:5121'
+        Write-Host '  Frontend:          http://localhost:5121'
         Write-Host ''
         Write-Host 'Press Ctrl+R to restart, or Enter to stop services.'
 

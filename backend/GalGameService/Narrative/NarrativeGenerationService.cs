@@ -29,24 +29,40 @@ public sealed class NarrativeGenerationService
         PlanGraph plan,
         GameGenerationRequest request,
         string ownerUserId,
+        Action<int>? reportProgress = null,
         CancellationToken cancellationToken = default)
     {
         var skeleton = _skeletonGenerator.Generate(plan, request, ownerUserId);
+        reportProgress?.Invoke(20);
         if (!_modelClient.IsEnabled)
         {
             _logger.LogInformation(
                 "Narrative provider is disabled; package {PackageId} uses deterministic fallback",
                 skeleton.PackageId);
+            reportProgress?.Invoke(85);
             return skeleton;
         }
 
         try
         {
-            var prompt = _promptBuilder.Build(skeleton, plan, request, _options.PromptVersion);
-            var maxAttempts = Math.Clamp(_options.MaxDraftAttempts, 1, 2);
+            var originalPrompt = _promptBuilder.Build(skeleton, plan, request, _options.PromptVersion);
+            var prompt = originalPrompt;
+            var maxAttempts = Math.Clamp(_options.MaxDraftAttempts, 1, 3);
             for (var attempt = 1; attempt <= maxAttempts; attempt++)
             {
+                reportProgress?.Invoke(attempt switch
+                {
+                    1 => 25,
+                    2 => 55,
+                    _ => 70,
+                });
                 var rawJson = await _modelClient.GenerateJsonAsync(prompt, cancellationToken);
+                reportProgress?.Invoke(attempt switch
+                {
+                    1 => 50,
+                    2 => 65,
+                    _ => 80,
+                });
                 if (_draftValidator.TryApply(
                     rawJson,
                     skeleton,
@@ -62,6 +78,7 @@ public sealed class NarrativeGenerationService
                         _options.PromptVersion,
                         _modelClient.ModelName,
                         attempt);
+                    reportProgress?.Invoke(85);
                     return enhanced;
                 }
 
@@ -72,7 +89,9 @@ public sealed class NarrativeGenerationService
                         skeleton.PackageId,
                         attempt,
                         string.Join(',', validationErrors.Take(12)));
-                    prompt = _promptBuilder.BuildRepair(prompt, rawJson, validationErrors);
+                    // 每次都基于原始提示词构建修复请求，避免多次修复时把旧草稿和
+                    // 旧错误递归嵌套，令上下文膨胀并降低模型遵循率。
+                    prompt = _promptBuilder.BuildRepair(originalPrompt, rawJson, validationErrors);
                     continue;
                 }
 
@@ -97,6 +116,7 @@ public sealed class NarrativeGenerationService
                 ex.GetType().Name);
         }
 
+        reportProgress?.Invoke(85);
         return skeleton;
     }
 }

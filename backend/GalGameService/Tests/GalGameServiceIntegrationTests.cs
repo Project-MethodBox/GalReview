@@ -124,6 +124,49 @@ public class GalGameServiceIntegrationTests : IClassFixture<WebApplicationFactor
     }
 
     [Fact]
+    public async Task GetPackageAudio_ReturnsOwnedReferencedWav()
+    {
+        var packageId = Guid.NewGuid();
+        const string assetId = "voice-000-000";
+        var audioUri = $"/api/v1/game-packages/{packageId}/audio/{assetId}";
+        var package = new GamePackage(
+            "1.0",
+            packageId,
+            "test",
+            MockReviewPlanId,
+            MockSnapshotVersion,
+            "scene-001",
+            [new Scene("scene-001", null, [new DialogueLine("林澈", "你好。", "warm")], [], [])],
+            [new AssetRef(assetId, AssetType.AUDIO, audioUri)]);
+        var manifest = new GamePackageManifest(
+            packageId,
+            package.SchemaVersion,
+            package.GeneratorVersion,
+            package.ReviewPlanId,
+            package.SnapshotVersion,
+            package.EntrySceneId,
+            package.Scenes.Length,
+            GamePackageValidator.ComputeChecksum(package),
+            $"/api/v1/game-packages/{packageId}/content",
+            UserId,
+            DateTimeOffset.UtcNow);
+        var expected = new byte[] { 82, 73, 70, 70, 1, 2, 3, 4 };
+        var store = _factory.Services.GetRequiredService<IGameStore>();
+        store.SaveAudio(new GameAudioAsset(
+            packageId, assetId, "audio/wav", expected, DateTimeOffset.UtcNow));
+        store.SavePackage(package, manifest, UserId);
+
+        var client = CreateClientWithAuth();
+        var response = await client.GetAsync(audioUri);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("audio/wav", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(expected, await response.Content.ReadAsByteArrayAsync());
+        Assert.True(response.Headers.CacheControl?.Private);
+        Assert.True(response.Headers.CacheControl?.Extensions.Any(item => item.Name == "immutable"));
+    }
+
+    [Fact]
     public async Task GetPackageContent_BytesMatchManifestChecksumAndETag()
     {
         var client = CreateClientWithAuth();

@@ -23,13 +23,19 @@ public sealed class NarrativeGenerationServiceTests
         var request = NarrativeTestData.CreateRequest();
         var skeleton = NarrativeTestData.CreateSkeleton(plan, request);
         var service = CreateService(new StubNarrativeClient(NarrativeTestData.CreateValidDraftJson(skeleton)));
+        var progress = new List<int>();
 
-        var package = await service.GenerateAsync(plan, request, NarrativeTestData.OwnerUserId.ToString());
+        var package = await service.GenerateAsync(
+            plan,
+            request,
+            NarrativeTestData.OwnerUserId.ToString(),
+            progress.Add);
 
         Assert.Equal("雨停前的温室记录", package.Scenes[0].Title);
         Assert.Contains(package.Scenes.SelectMany(scene => scene.Dialogue),
             line => line.Text.Contains("解决了问题", StringComparison.Ordinal));
         Assert.True(new GamePackageValidator().Validate(package).Valid);
+        Assert.Equal(new[] { 20, 25, 50, 85 }, progress);
     }
 
     [Fact]
@@ -42,15 +48,21 @@ public sealed class NarrativeGenerationServiceTests
             "{\"promptVersion\":\"wrong\",\"scenes\":[]}",
             NarrativeTestData.CreateValidDraftJson(skeleton));
         var service = CreateService(client);
+        var progress = new List<int>();
 
-        var package = await service.GenerateAsync(plan, request, NarrativeTestData.OwnerUserId.ToString());
+        var package = await service.GenerateAsync(
+            plan,
+            request,
+            NarrativeTestData.OwnerUserId.ToString(),
+            progress.Add);
 
         Assert.Equal(2, client.CallCount);
         Assert.Equal("雨停前的温室记录", package.Scenes[0].Title);
+        Assert.Equal(new[] { 20, 25, 50, 55, 65, 85 }, progress);
     }
 
     [Fact]
-    public async Task GenerateAsync_NonJsonTwiceUsesFallback()
+    public async Task GenerateAsync_NonJsonThreeTimesUsesFallback()
     {
         var plan = NarrativeTestData.CreatePlan();
         var request = NarrativeTestData.CreateRequest();
@@ -59,7 +71,7 @@ public sealed class NarrativeGenerationServiceTests
         var package = await CreateService(client).GenerateAsync(
             plan, request, NarrativeTestData.OwnerUserId.ToString());
 
-        Assert.Equal(2, client.CallCount);
+        Assert.Equal(3, client.CallCount);
         Assert.Equal("图书馆的自习时光", package.Scenes[0].Title);
         Assert.True(new GamePackageValidator().Validate(package).Valid);
     }
@@ -84,7 +96,7 @@ public sealed class NarrativeGenerationServiceTests
         {
             Enabled = true,
             ApiKey = "test-only-key",
-            PromptVersion = "galgame-narrative-v2",
+            PromptVersion = NarrativeTestData.PromptVersion,
         };
         return new NarrativeGenerationService(
             new GameGenerator(packageValidator, NullLogger<GameGenerator>.Instance),

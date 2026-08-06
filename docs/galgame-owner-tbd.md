@@ -87,7 +87,7 @@ MongoDB 连接配置：
 |---|---|
 | `narrativeEnabled` | 叙事模型是否实际可用（`CanCallProvider`：`Enabled` + `ApiKey` + HTTPS 端点三者同时满足） |
 | `narrativeModel` | 当前配置的模型名称（如 `deepseek-v4-pro`） |
-| `narrativePromptVersion` | Prompt 版本（如 `galgame-narrative-v2`） |
+| `narrativePromptVersion` | Prompt 版本（如 `galgame-narrative-v3`） |
 
 ## 叙事生成（§7.3.2）
 
@@ -98,15 +98,17 @@ MongoDB 连接配置：
 
 | 配置项 | 默认值 | 说明 |
 |---|---|---|
-| `Enabled` | `false` | 是否启用叙事模型调用 |
+| `Enabled` | `true` | 是否启用叙事模型调用；缺少密钥时仍自动关闭 |
 | `Endpoint` | `https://api.deepseek.com/chat/completions` | OpenAI 兼容端点 |
 | `Model` | `deepseek-v4-pro` | 模型名称 |
-| `ApiKey` | （空） | API 密钥 |
-| `PromptVersion` | `galgame-narrative-v2` | Prompt 版本标识 |
+| `ApiKey` | （空） | API 密钥；本地可通过 `DSAPI` 注入，不写入配置文件 |
+| `PromptVersion` | `galgame-narrative-v3` | Prompt 版本标识 |
 | `TimeoutSeconds` | `120` | 单次请求超时（10-300 秒） |
 | `MaxOutputTokens` | `16000` | 最大输出 token 数 |
 | `Temperature` | `0.75` | 采样温度 |
-| `MaxDraftAttempts` | `2` | 最大草稿尝试次数（1-2） |
+| `MaxDraftAttempts` | `3` | 最大草稿尝试次数（1-3，含初稿） |
+| `MaxProviderAttempts` | `3` | 空内容、超时、429 和 5xx 的最大传输尝试次数（1-4） |
+| `RetryBaseDelayMilliseconds` | `400` | 传输重试的指数退避基准毫秒数 |
 
 Mock 模式下 `Enabled` 被强制设为 `false`，不发起任何外部调用。
 

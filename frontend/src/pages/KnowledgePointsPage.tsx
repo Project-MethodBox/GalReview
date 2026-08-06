@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router'
 import AppShell, { PageHeader } from '../components/AppShell'
+import LoadingIndicator from '../components/LoadingIndicator'
 import { api } from '../lib/api'
 import { readWorkflow } from '../lib/workflow'
 import type { KnowledgePoint } from '../types/api'
@@ -95,7 +96,7 @@ export default function KnowledgePointsPage() {
               <p>显示 {visiblePoints.length} / {points.length}</p>
             </aside>
             <section className="knowledge-list" aria-label="知识点列表">
-              {loading ? <p className="empty-row knowledge-list__status" role="status">正在读取知识点…</p> : visiblePoints.map((point) => {
+              {loading ? <LoadingIndicator className="knowledge-list__status" label="正在读取知识点…" /> : visiblePoints.map((point) => {
                 const expanded = expandedId === point.pointId
                 return <article key={point.pointId} className={expanded ? 'expanded' : ''}>
                   <button type="button" aria-expanded={expanded} onClick={() => void toggleDetails(point)}>

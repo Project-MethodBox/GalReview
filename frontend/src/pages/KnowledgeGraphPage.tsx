@@ -1,13 +1,49 @@
-import { useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router'
 import AppShell, { PageHeader } from '../components/AppShell'
-import KnowledgeDag from '../components/KnowledgeDag'
+import LoadingIndicator from '../components/LoadingIndicator'
 import { api } from '../lib/api'
 import { readWorkflow, updateWorkflow } from '../lib/workflow'
 import type { Chapter, KnowledgeGraphSummary, KnowledgePoint, KnowledgeRelation } from '../types/api'
 
+const KnowledgeDag = lazy(() => import('../components/KnowledgeDag'))
+
 const relationText = { PREREQUISITE: '前置', RELATED: '相关', CONTRASTS: '对照' } as const
 type RelationFilter = 'all' | 'prerequisite' | 'related'
+
+function findChapterRoot(points: KnowledgePoint[], relations: KnowledgeRelation[], chapterId: string) {
+  const chapterPoints = points.filter((point) => point.chapterId === chapterId)
+  if (!chapterPoints.length) return undefined
+
+  const pointIds = new Set(chapterPoints.map((point) => point.pointId))
+  const incomingIds = new Set<string>()
+  const outgoing = new Map<string, string[]>()
+  for (const relation of relations) {
+    if (relation.type !== 'PREREQUISITE' || !pointIds.has(relation.fromPointId) || !pointIds.has(relation.toPointId)) continue
+    incomingIds.add(relation.toPointId)
+    outgoing.set(relation.fromPointId, [...(outgoing.get(relation.fromPointId) || []), relation.toPointId])
+  }
+
+  const roots = chapterPoints.filter((point) => !incomingIds.has(point.pointId))
+  const candidates = roots.length ? roots : chapterPoints
+  const reachableCount = (rootId: string) => {
+    const visited = new Set<string>([rootId])
+    const pending = [rootId]
+    while (pending.length) {
+      const currentId = pending.pop()!
+      for (const nextId of outgoing.get(currentId) || []) {
+        if (visited.has(nextId)) continue
+        visited.add(nextId)
+        pending.push(nextId)
+      }
+    }
+    return visited.size
+  }
+
+  return [...candidates].sort((left, right) => reachableCount(right.pointId) - reachableCount(left.pointId)
+    || (left.sourceReferences[0]?.startOffset ?? Number.MAX_SAFE_INTEGER) - (right.sourceReferences[0]?.startOffset ?? Number.MAX_SAFE_INTEGER)
+    || left.title.localeCompare(right.title, 'zh-CN'))[0]
+}
 
 export default function KnowledgeGraphPage() {
   const workflow = readWorkflow()
@@ -22,6 +58,8 @@ export default function KnowledgeGraphPage() {
   const [chapterId, setChapterId] = useState('all')
   const [relationFilter, setRelationFilter] = useState<RelationFilter>('all')
   const [selectedPointId, setSelectedPointId] = useState<string>()
+  const [showAllRelations, setShowAllRelations] = useState(false)
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(false)
 
   useEffect(() => {
     if (!workflow.material) return
@@ -64,6 +102,7 @@ export default function KnowledgeGraphPage() {
     setPoints([])
     setRelations([])
     setChapterId('all')
+    setShowAllRelations(false)
     setSelectedPointId(undefined)
     updateWorkflow({
       graph: nextGraph,
@@ -86,6 +125,7 @@ export default function KnowledgeGraphPage() {
   }, [chapterId, points, search])
   const visiblePointIds = useMemo(() => new Set(visiblePoints.map((point) => point.pointId)), [visiblePoints])
   const visibleRelations = useMemo(() => relations.filter((relation) => visiblePointIds.has(relation.fromPointId) && visiblePointIds.has(relation.toPointId)), [relations, visiblePointIds])
+  const graphMode = chapterId === 'all' && !search.trim() ? (showAllRelations ? 'all' : 'overview') : 'detail'
   const selectedPoint = selectedPointId ? pointById.get(selectedPointId) : undefined
   const relevantRelations = useMemo(() => relations.filter((relation) => {
     const matchesPoint = Boolean(selectedPointId) && (relation.fromPointId === selectedPointId || relation.toPointId === selectedPointId)
@@ -107,8 +147,17 @@ export default function KnowledgeGraphPage() {
   function selectChapter(nextChapterId: string) {
     setChapterId(nextChapterId)
     setSearch('')
-    const nextPoint = points.find((point) => nextChapterId === 'all' || point.chapterId === nextChapterId)
+    if (nextChapterId !== 'all') setShowAllRelations(false)
+    const nextPoint = nextChapterId === 'all'
+      ? points[0]
+      : findChapterRoot(points, relations, nextChapterId)
     if (nextPoint) setSelectedPointId(nextPoint.pointId)
+  }
+
+  function toggleGraphView() {
+    setChapterId('all')
+    setSearch('')
+    setShowAllRelations((current) => !current)
   }
 
   function revealAndSelect(pointId: string) {
@@ -124,17 +173,18 @@ export default function KnowledgeGraphPage() {
         {!graph ? <section className="empty-state"><h2>还没有知识图谱</h2><Link className="button button--primary" to="/materials">上传资料</Link></section> : <>
           <section className="data-strip" aria-label="图谱概况"><div><span>章节</span><strong>{chapters.length || graph.chapterCount}</strong></div><div><span>知识点</span><strong>{points.length || graph.pointCount}</strong></div><div><span>关系</span><strong>{relations.length || graph.relationCount}</strong></div></section>
           {error ? <p className="status-line status-line--error" role="alert">{error}</p> : null}
-          <div className="graph-workbench">
+          <div className={`graph-workbench${inspectorCollapsed ? ' graph-workbench--inspector-collapsed' : ''}`}>
             <aside className="chapter-outline">
               <header><div><h2>章节</h2><p>按层级深度排列</p></div><button className={chapterId === 'all' ? 'active' : ''} type="button" onClick={() => selectChapter('all')}>全部</button></header>
               <nav>{sortedChapters.map((chapter) => <button className={chapterId === chapter.chapterId ? 'active' : ''} key={chapter.chapterId} type="button" onClick={() => selectChapter(chapter.chapterId)}><span>{chapter.title}</span><small>深度 {chapter.depth}</small></button>)}</nav>
             </aside>
             <section className="graph-board">
-              <header><div><h2>知识路径</h2><p>{visiblePoints.length} 个节点 · 拖动画布，滚轮缩放</p></div><input type="search" aria-label="搜索知识节点" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索知识点" /></header>
-              {loading ? <p className="empty-row" role="status">正在读取完整图谱…</p> : <KnowledgeDag points={visiblePoints} relations={visibleRelations} selectedPointId={selectedPointId} onSelect={setSelectedPointId} />}
+              <header><div><h2>知识路径</h2><p>{graphMode === 'overview' ? `${chapters.length} 个章节 · 点击章节查看详细路径` : graphMode === 'all' ? `${visiblePoints.length} 个节点 · ${visibleRelations.length} 条关系` : `${visiblePoints.length} 个节点 · 拖动画布，滚轮缩放`}</p></div><div className="graph-board-view-tools"><div className={`graph-view-switch graph-view-switch--${showAllRelations ? 'relations' : 'overview'}`} aria-label="图谱视图"><button className={!showAllRelations ? 'active' : ''} type="button" aria-pressed={!showAllRelations} onClick={toggleGraphView}>章节概览</button><button className={showAllRelations ? 'active' : ''} type="button" aria-pressed={showAllRelations} onClick={toggleGraphView}>全部关系</button></div><input type="search" aria-label="搜索知识节点" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索知识点" /></div></header>
+              {loading ? <LoadingIndicator label="正在读取完整图谱…" /> : <Suspense fallback={<LoadingIndicator label="正在加载图谱引擎…" />}><KnowledgeDag points={visiblePoints} relations={visibleRelations} chapters={chapters} mode={graphMode} selectedPointId={selectedPointId} onSelect={setSelectedPointId} onSelectChapter={selectChapter} /></Suspense>}
             </section>
             <aside className="graph-inspector">
-              <header><h2>节点详情</h2></header>
+              <header className="graph-inspector__header"><h2>节点详情</h2><button className="graph-inspector__toggle" type="button" aria-label={inspectorCollapsed ? '展开节点详情' : '收起节点详情'} title={inspectorCollapsed ? '展开节点详情' : '收起节点详情'} aria-expanded={!inspectorCollapsed} onClick={() => setInspectorCollapsed((current) => !current)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg></button></header>
+              <div className="graph-inspector__content" aria-hidden={inspectorCollapsed}>
               {selectedPoint ? <>
                 <span className="inspector-score">掌握度 {Math.round(selectedPoint.mastery.score)}</span>
                 <h3>{selectedPoint.title}</h3>
@@ -150,6 +200,7 @@ export default function KnowledgeGraphPage() {
                   return <button type="button" key={relation.relationId} onClick={() => other && revealAndSelect(other.pointId)}><span>{outbound ? '→' : '←'} {relationText[relation.type]}</span><span className="relation-copy"><strong>{other?.title || '未知知识点'}</strong><small>{relation.rationale}</small></span></button>
                 })}{!relevantRelations.length ? <p>当前筛选下没有关系。</p> : null}</div>
               </> : <p>选择一个知识节点查看详情。</p>}
+              </div>
             </aside>
           </div>
         </>}

@@ -24,38 +24,47 @@ public sealed class GameGenerator
     // 静态剧情模板：3 种 style 只初始化一次，避免每次 Generate 重复分配
     // ========================================================================
 
-    private static readonly Dictionary<GameStyle, StyleTemplate> StyleTemplates = new()
-    {
-        [GameStyle.CAMPUS] = new StyleTemplate(
-            GuideSpeaker: "林学姐",
-            EntrySceneTitle: "图书馆的自习时光",
-            EntryDialogue: "嘿，学弟！今天学姐陪你一起复习农业知识吧。",
-            EntryEmotion: "cheerful",
-            QuestionIntro: "来，看看这道题你掌握得怎么样？",
-            EndingSceneTitle: "复习结束",
-            EndingDialogue: "本轮复习内容已经完成，稍后可以查看学习记录。"),
-        [GameStyle.FANTASY] = new StyleTemplate(
-            GuideSpeaker: "精灵导师艾莉娅",
-            EntrySceneTitle: "魔法学院的试炼",
-            EntryDialogue: "勇敢的冒险者，欢迎来到知识之塔。今天我们将一同探索自然法则的奥秘。",
-            EntryEmotion: "mystical",
-            QuestionIntro: "魔法的试炼开始了，请回答这个问题：",
-            EndingSceneTitle: "试炼完成",
-            EndingDialogue: "知识之塔的本轮试炼已经完成！"),
-        [GameStyle.SCIENCE] = new StyleTemplate(
-            GuideSpeaker: "NEXUS",
-            EntrySceneTitle: "空间站知识模块",
-            EntryDialogue: "研究员，欢迎接入 NEXUS 知识系统。今日学习模块已加载完毕。",
-            EntryEmotion: "calm",
-            QuestionIntro: "系统已生成评估问题，请作答：",
-            EndingSceneTitle: "学习模块结束",
-            EndingDialogue: "本轮学习内容已完成，作答结果将由复习服务记录。"),
-    };
+    private readonly IReadOnlyDictionary<GameStyle, StyleTemplate> _styleTemplates;
 
     public GameGenerator(GamePackageValidator validator, ILogger<GameGenerator> logger)
+        : this(validator, logger, CharacterVoiceCatalog.LoadDefault())
+    {
+    }
+
+    public GameGenerator(
+        GamePackageValidator validator,
+        ILogger<GameGenerator> logger,
+        CharacterVoiceCatalog characterVoiceCatalog)
     {
         _validator = validator;
         _logger = logger;
+        _styleTemplates = new Dictionary<GameStyle, StyleTemplate>
+        {
+        [GameStyle.CAMPUS] = new StyleTemplate(
+            GuideSpeaker: characterVoiceCatalog.GuideSpeaker(GameStyle.CAMPUS),
+            EntrySceneTitle: "图书馆的自习时光",
+            EntryDialogue: "你总算来了。闭馆前，我们得把这份资料里的关键线索理清。",
+            EntryEmotion: "cheerful",
+            QuestionIntro: "线索已经齐了。现在该做判断。",
+            EndingSceneTitle: "复习结束",
+            EndingDialogue: "最后一条线索对上了。把记录收好，我们该走了。"),
+        [GameStyle.FANTASY] = new StyleTemplate(
+            GuideSpeaker: characterVoiceCatalog.GuideSpeaker(GameStyle.FANTASY),
+            EntrySceneTitle: "魔法学院的试炼",
+            EntryDialogue: "风停在石门前。先别碰那道发亮的纹路，它在等一个能自洽的判断。",
+            EntryEmotion: "mystical",
+            QuestionIntro: "纹路重新亮起。现在必须决定下一步。",
+            EndingSceneTitle: "试炼完成",
+            EndingDialogue: "石门后的风终于流动起来，来路也在微光中重新显现。"),
+        [GameStyle.SCIENCE] = new StyleTemplate(
+            GuideSpeaker: characterVoiceCatalog.GuideSpeaker(GameStyle.SCIENCE),
+            EntrySceneTitle: "空间站知识模块",
+            EntryDialogue: "外环监测出现偏差。原始读数已封存，等待共同核对。",
+            EntryEmotion: "calm",
+            QuestionIntro: "可用证据已对齐。请选择处置方案：",
+            EndingSceneTitle: "学习模块结束",
+            EndingDialogue: "处置已完成，异常趋势停止扩散。相关证据已归档。"),
+        };
     }
 
     /// <summary>
@@ -91,7 +100,7 @@ public sealed class GameGenerator
             QuestionId: DeterministicGuid(n.PointId, seed))).ToList();
 
         // 3. 获取剧情模板（静态查表，O(1)）
-        if (!StyleTemplates.TryGetValue(req.Style, out var template))
+        if (!_styleTemplates.TryGetValue(req.Style, out var template))
             throw new ArgumentOutOfRangeException(nameof(req.Style), req.Style, "不支持的剧情风格");
 
         // 4. 生成场景序列

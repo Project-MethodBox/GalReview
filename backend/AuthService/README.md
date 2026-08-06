@@ -257,7 +257,6 @@ POST /api/v1/admin/sessions
 ```json
 {
   "type": "time-window",
-  "maxUses": 100,
   "validFrom": "2026-08-01T00:00:00Z",
   "validTo": "2026-08-31T23:59:59Z"
 }

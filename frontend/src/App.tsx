@@ -12,6 +12,7 @@ import RegisterPage from './pages/RegisterPage'
 import ReviewPage from './pages/ReviewPage'
 import SettingsPage from './pages/SettingsPage'
 import StudyFlowPage from './pages/StudyFlowPage'
+import LoadingIndicator from './components/LoadingIndicator'
 import { api, ApiClientError } from './lib/api'
 import { clearSession, readSession } from './lib/session'
 import { readAdminSession } from './lib/adminSession'
@@ -71,7 +72,7 @@ function Protected({ children }: { children: ReactNode }) {
   }, [session?.session.sessionId])
 
   if (!session || !valid) return <Navigate replace to="/login" state={{ message: '登录状态已失效，请重新登录。' }} />
-  if (!ready) return <main className="app-loading" role="status"><span>正在恢复学习资料</span></main>
+  if (!ready) return <main className="app-loading"><LoadingIndicator label="正在恢复学习资料" /></main>
   return children
 }
 

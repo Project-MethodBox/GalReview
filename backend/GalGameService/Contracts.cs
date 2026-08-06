@@ -120,6 +120,14 @@ public enum AssetType { BACKGROUND, CHARACTER, AUDIO, OTHER }
 /// <summary>资源引用</summary>
 public sealed record AssetRef(string AssetId, AssetType? Type, string Uri);
 
+/// <summary>Package-scoped synthesized dialogue audio stored outside the JSON package.</summary>
+public sealed record GameAudioAsset(
+    Guid PackageId,
+    string AssetId,
+    string ContentType,
+    byte[] Data,
+    DateTimeOffset CreatedAt);
+
 // ============================================================================
 // 校验类型
 // ============================================================================

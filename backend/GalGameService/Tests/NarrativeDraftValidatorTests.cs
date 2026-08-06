@@ -18,7 +18,7 @@ public sealed class NarrativeDraftValidatorTests
             skeleton,
             plan,
             request,
-            "galgame-narrative-v2",
+            NarrativeTestData.PromptVersion,
             out var enhanced,
             out var errors);
 
@@ -54,7 +54,7 @@ public sealed class NarrativeDraftValidatorTests
         document["scenes"]![0]!["choices"]![0]!["choiceId"] = "model-invented-id";
 
         var accepted = new NarrativeDraftValidator(_packageValidator).TryApply(
-            document.ToJsonString(), skeleton, plan, request, "galgame-narrative-v2",
+            document.ToJsonString(), skeleton, plan, request, NarrativeTestData.PromptVersion,
             out var enhanced, out var errors);
 
         Assert.False(accepted);
@@ -74,7 +74,7 @@ public sealed class NarrativeDraftValidatorTests
         questionScene["choices"]![0]!["groundingQuote"] = "资料中从未出现的结论";
 
         var accepted = new NarrativeDraftValidator(_packageValidator).TryApply(
-            document.ToJsonString(), skeleton, plan, request, "galgame-narrative-v2",
+            document.ToJsonString(), skeleton, plan, request, NarrativeTestData.PromptVersion,
             out _, out var errors);
 
         Assert.False(accepted);
@@ -93,7 +93,7 @@ public sealed class NarrativeDraftValidatorTests
         questionScene["dialogue"]![0]!["text"] = "根据所学内容，来看看这道题。";
 
         var accepted = new NarrativeDraftValidator(_packageValidator).TryApply(
-            document.ToJsonString(), skeleton, plan, request, "galgame-narrative-v2",
+            document.ToJsonString(), skeleton, plan, request, NarrativeTestData.PromptVersion,
             out _, out var errors);
 
         Assert.False(accepted);
@@ -112,10 +112,30 @@ public sealed class NarrativeDraftValidatorTests
         explainScene["groundingQuotes"] = new JsonArray();
 
         var accepted = new NarrativeDraftValidator(_packageValidator).TryApply(
-            document.ToJsonString(), skeleton, plan, request, "galgame-narrative-v2",
+            document.ToJsonString(), skeleton, plan, request, NarrativeTestData.PromptVersion,
             out _, out var errors);
 
         Assert.False(accepted);
         Assert.Contains(errors, error => error.Contains("MISSING_SCENE_GROUNDING", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void TryApply_ConceptGroundingInDialogue_DoesNotCountAsAnswerLeak()
+    {
+        var plan = NarrativeTestData.CreatePlan();
+        var request = NarrativeTestData.CreateRequest();
+        var skeleton = NarrativeTestData.CreateSkeleton(plan, request);
+        var document = JsonNode.Parse(NarrativeTestData.CreateValidDraftJson(skeleton))!.AsObject();
+        var questionScene = document["scenes"]!.AsArray()
+            .First(scene => scene!["sceneId"]!.GetValue<string>() == "scene-003")!;
+        questionScene["groundingQuotes"] = new JsonArray("分蘖期");
+        foreach (var choice in questionScene["choices"]!.AsArray())
+            choice!["groundingQuote"] = "分蘖期";
+
+        var accepted = new NarrativeDraftValidator(_packageValidator).TryApply(
+            document.ToJsonString(), skeleton, plan, request, NarrativeTestData.PromptVersion,
+            out _, out var errors);
+
+        Assert.True(accepted, string.Join(',', errors));
     }
 }

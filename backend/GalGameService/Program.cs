@@ -46,6 +46,10 @@ var storageName = (isMockMode, useMongoStore) switch
 // 叙事生成配置（§7.3.2）
 var narrativeSection = builder.Configuration.GetSection(NarrativeGenerationOptions.SectionName);
 var narrativeOptions = narrativeSection.Get<NarrativeGenerationOptions>() ?? new NarrativeGenerationOptions();
+// 本地 dotnet run 不会像 Compose 那样自动把 DSAPI 映射到配置节；允许直接从
+// 进程环境读取，但绝不要求开发者把密钥写进 appsettings.json。
+if (string.IsNullOrWhiteSpace(narrativeOptions.ApiKey))
+    narrativeOptions.ApiKey = Environment.GetEnvironmentVariable("DSAPI") ?? string.Empty;
 // Mock 模式强制关闭外部模型调用
 if (isMockMode)
     narrativeOptions.Enabled = false;
@@ -55,6 +59,20 @@ builder.Services.AddSingleton(narrativeOptions);
 var narrativeEnabled = narrativeOptions.CanCallProvider;
 var narrativeModel = narrativeOptions.Model;
 var narrativePromptVersion = narrativeOptions.PromptVersion;
+
+var voiceSection = builder.Configuration.GetSection(VoiceSynthesisOptions.SectionName);
+var voiceOptions = voiceSection.Get<VoiceSynthesisOptions>() ?? new VoiceSynthesisOptions();
+if (string.IsNullOrWhiteSpace(voiceOptions.ApiKey))
+    voiceOptions.ApiKey = Environment.GetEnvironmentVariable("MIMO_API_KEY") ?? string.Empty;
+if (isMockMode)
+    voiceOptions.Enabled = false;
+builder.Services.AddSingleton(voiceOptions);
+var voiceEnabled = voiceOptions.CanCallProvider;
+
+var characterVoiceCatalog = CharacterVoiceCatalog.Load(Path.Combine(
+    builder.Environment.ContentRootPath,
+    CharacterVoiceCatalog.DefaultFileName));
+builder.Services.AddSingleton(characterVoiceCatalog);
 
 var validationAllowedServices = InternalServiceAccessPolicy.CreateAllowlist(
     builder.Configuration.GetSection("InternalAccess:ValidationAllowedServices"),
@@ -77,6 +95,15 @@ builder.Services.AddHttpClient("narrative", client =>
     client.MaxResponseContentBufferSize = 2 * 1024 * 1024; // 2 MiB 安全上限
 });
 
+builder.Services.AddHttpClient("mimo-tts", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(Math.Clamp(voiceOptions.TimeoutSeconds, 10, 300));
+    client.MaxResponseContentBufferSize = Math.Clamp(
+        voiceOptions.MaxAudioBytes * 2L,
+        128 * 1024L,
+        24 * 1024 * 1024L);
+});
+
 // DI 注册
 builder.Services.AddSingleton<GamePackageValidator>();
 builder.Services.AddSingleton<NarrativePromptBuilder>();
@@ -85,6 +112,10 @@ builder.Services.AddSingleton<INarrativeModelClient>(sp => new DeepSeekNarrative
     sp.GetRequiredService<IHttpClientFactory>(),
     narrativeOptions));
 builder.Services.AddSingleton<NarrativeGenerationService>();
+builder.Services.AddSingleton<ITtsClient>(sp => new MiMoTtsClient(
+    sp.GetRequiredService<IHttpClientFactory>(),
+    voiceOptions));
+builder.Services.AddSingleton<PackageVoiceService>();
 if (useMongoStore)
 {
     builder.Services.AddSingleton<IGameStore>(sp => new MongoGameStore(
@@ -104,6 +135,34 @@ builder.Services.AddSingleton<PlanGraphClient>(sp => new PlanGraphClient(
 builder.Services.AddSingleton<GameGenerator>();
 
 var app = builder.Build();
+
+if (narrativeOptions.Enabled && !narrativeEnabled)
+{
+    app.Logger.LogWarning(
+        "Narrative generation was requested but provider configuration is incomplete; set DSAPI and a valid HTTPS endpoint to avoid deterministic fallback");
+}
+else if (narrativeEnabled)
+{
+    app.Logger.LogInformation(
+        "Narrative generation enabled: model={Model}, prompt={PromptVersion}, providerAttempts={ProviderAttempts}, draftAttempts={DraftAttempts}",
+        narrativeModel,
+        narrativePromptVersion,
+        Math.Clamp(narrativeOptions.MaxProviderAttempts, 1, 4),
+        Math.Clamp(narrativeOptions.MaxDraftAttempts, 1, 3));
+}
+
+if (voiceOptions.Enabled && !voiceEnabled)
+{
+    app.Logger.LogWarning(
+        "MiMo voice synthesis was requested but provider configuration is incomplete; set MIMO_API_KEY to enable dialogue audio");
+}
+else if (voiceEnabled)
+{
+    app.Logger.LogInformation(
+        "MiMo voice synthesis enabled: model={Model}; concurrency={Concurrency}",
+        voiceOptions.Model,
+        Math.Clamp(voiceOptions.MaxConcurrency, 1, 6));
+}
 
 // ============================================================================
 // 启动恢复：将因服务重启而卡在 RUNNING/QUEUED 的生成任务标记为 FAILED
@@ -233,7 +292,7 @@ app.MapGet("/readyz", (HttpContext c, IGameStore store) =>
 //   - 校验通过 → 202 Accepted，后台异步生成
 // ============================================================================
 
-app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, HttpContext c, IGameStore store, PlanGraphClient planClient, NarrativeGenerationService narrativeService) =>
+app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, HttpContext c, IGameStore store, PlanGraphClient planClient, NarrativeGenerationService narrativeService, PackageVoiceService voiceService) =>
 {
     var userId = GatewayUser(c, gatewayKey);
     if (userId is null) return Failure(c, 401, "AUTH_REQUIRED", "需要网关认证的用户身份。");
@@ -301,16 +360,33 @@ app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, Ht
 
     // 后台异步生成（PlanGraph 已确认可用，不再重复获取）
     // 使用 _ = 丢弃 Task 但内部有完整异常处理，不会静默吞异常
-    _ = Task.Run(() =>
+    _ = Task.Run(async () =>
     {
         try
         {
             // 原子状态转换：QUEUED → RUNNING
             if (store.TryTransitionJob(job.GenerationId, JobStatus.QUEUED,
-                j => j with { Status = JobStatus.RUNNING, Progress = 50 }) is null)
+                j => j with { Status = JobStatus.RUNNING, Progress = 5 }) is null)
             {
                 logger.LogWarning("Job {GenerationId} was not in QUEUED state, skipping generation", job.GenerationId);
                 return;
+            }
+
+            void ReportProgress(int progress)
+            {
+                try
+                {
+                    store.TryTransitionJob(job.GenerationId, JobStatus.RUNNING, current =>
+                        current.Progress >= progress ? current : current with { Progress = progress });
+                }
+                catch (Exception progressError)
+                {
+                    // 进度写入是观测信息，不应破坏已经在进行的剧情生成。
+                    logger.LogWarning(progressError,
+                        "Unable to persist progress {Progress} for job {GenerationId}",
+                        progress,
+                        job.GenerationId);
+                }
             }
 
             logger.LogInformation("Job {GenerationId} started generating. Style={Style}, Difficulty={Difficulty}",
@@ -319,10 +395,29 @@ app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, Ht
             // Mock 固定返回同一套原创演示剧情；仍保留请求的计划与快照字段，
             // 使包的溯源、任务查询和权限边界继续符合 §7.1 / §7.3.1。
             // 非 Mock 才执行真实的骨架生成与可选叙事模型重写。
-            var package = isMockMode
-                ? MockStoryPackageFactory.Create(request)
-                : narrativeService.GenerateAsync(graph, request, userId).GetAwaiter().GetResult();
+            GamePackage package;
+            if (isMockMode)
+            {
+                package = MockStoryPackageFactory.Create(request);
+                ReportProgress(85);
+            }
+            else
+            {
+                package = await narrativeService.GenerateAsync(
+                    graph,
+                    request,
+                    userId,
+                    ReportProgress);
+            }
+
+            ReportProgress(86);
+            var voiceResult = await voiceService.SynthesizeAsync(
+                package,
+                ReportProgress);
+            package = voiceResult.Package;
+            ReportProgress(94);
             var checksum = GamePackageValidator.ComputeChecksum(package);
+            ReportProgress(95);
             var manifest = new GamePackageManifest(
                 package.PackageId, package.SchemaVersion, package.GeneratorVersion,
                 package.ReviewPlanId, package.SnapshotVersion, package.EntrySceneId,
@@ -330,7 +425,10 @@ app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, Ht
                 $"/api/v1/game-packages/{package.PackageId}/content",
                 userId, DateTimeOffset.UtcNow);
 
+            foreach (var audio in voiceResult.AudioAssets)
+                store.SaveAudio(audio);
             store.SavePackage(package, manifest, userId);
+            ReportProgress(97);
 
             // 原子状态转换：RUNNING → SUCCEEDED
             store.TryTransitionJob(job.GenerationId, JobStatus.RUNNING,
@@ -415,6 +513,45 @@ app.MapGet("/api/v1/game-packages/{packageId}/content", (string packageId, HttpC
     return Results.Text(
         GamePackageValidator.SerializeCanonical(package),
         "application/json; charset=utf-8");
+});
+
+// Package-scoped MiMo dialogue audio. Authorization is identical to package content;
+// the browser downloads bytes with its bearer token and plays a local Blob URL.
+app.MapGet("/api/v1/game-packages/{packageId}/audio/{assetId}", (
+    string packageId,
+    string assetId,
+    HttpContext c,
+    IGameStore store) =>
+{
+    var userId = GatewayUser(c, gatewayKey);
+    if (userId is null)
+        return Failure(c, 401, "AUTH_REQUIRED", "需要网关认证的用户身份。");
+    if (!TryParseUuidV4(packageId, out var id)
+        || string.IsNullOrWhiteSpace(assetId)
+        || assetId.Length > 128)
+        return Failure(c, 400, "VALIDATION_ERROR", "packageId 或 assetId 格式无效。");
+
+    var owner = store.GetPackageOwner(id);
+    var package = store.GetPackage(id);
+    if (owner is null || package is null || owner != userId)
+        return Failure(c, 404, "RESOURCE_NOT_FOUND", "语音资源不存在。");
+
+    var expectedUri = $"/api/v1/game-packages/{id}/audio/{assetId}";
+    var referenced = (package.Assets ?? Array.Empty<AssetRef>()).Any(asset =>
+        asset is not null
+        && asset.Type == AssetType.AUDIO
+        && string.Equals(asset.AssetId, assetId, StringComparison.Ordinal)
+        && string.Equals(asset.Uri, expectedUri, StringComparison.Ordinal));
+    var audio = referenced ? store.GetAudio(id, assetId) : null;
+    if (audio is null)
+        return Failure(c, 404, "RESOURCE_NOT_FOUND", "语音资源不存在。");
+
+    c.Response.Headers.CacheControl = "private, max-age=31536000, immutable";
+    c.Response.Headers.XContentTypeOptions = "nosniff";
+    return Results.File(
+        audio.Data,
+        audio.ContentType,
+        enableRangeProcessing: true);
 });
 
 // ============================================================================

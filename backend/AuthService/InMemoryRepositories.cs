@@ -206,8 +206,9 @@ public sealed class InMemoryAuthRepository(MockAuthStore store) : IAuthRepositor
 
     private static bool InvitationIsUsable(AdminInvitation invitation)
     {
-        if (invitation.UsedCount >= invitation.MaxUses) return false;
-        return invitation.Type != "time-window" || (invitation.ValidFrom <= DateTimeOffset.UtcNow && invitation.ValidTo >= DateTimeOffset.UtcNow);
+        if (invitation.Type == "time-window")
+            return invitation.ValidFrom <= DateTimeOffset.UtcNow && invitation.ValidTo >= DateTimeOffset.UtcNow;
+        return invitation.UsedCount < invitation.MaxUses;
     }
 
     private static string Token() => Convert.ToBase64String(RandomNumberGenerator.GetBytes(48)).Replace('+', '-').Replace('/', '_').TrimEnd('=');
@@ -240,8 +241,14 @@ public sealed class InMemoryAdminRepository(MockAuthStore store) : IAdminReposit
         var type = request.Type?.Trim().ToLowerInvariant();
         if (type is not ("single-use" or "multi-use" or "time-window") ||
             (type == "multi-use" && !request.MaxUses.HasValue)) return null;
-        var maxUses = type == "single-use" ? 1 : request.MaxUses.GetValueOrDefault(10);
-        if (maxUses is < 1 or > 10000 || (type == "time-window" && (!request.ValidFrom.HasValue || !request.ValidTo.HasValue || request.ValidTo <= request.ValidFrom))) return null;
+        var maxUses = type switch
+        {
+            "single-use" => 1,
+            "time-window" => int.MaxValue,
+            _ => request.MaxUses.GetValueOrDefault(),
+        };
+        if ((type == "multi-use" && maxUses is < 1 or > 10000)
+            || (type == "time-window" && (!request.ValidFrom.HasValue || !request.ValidTo.HasValue || request.ValidTo <= request.ValidFrom))) return null;
 
         lock (store.Sync)
         {
