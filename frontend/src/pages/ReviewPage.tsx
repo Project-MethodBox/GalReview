@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+﻿import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import AppShell, { PageHeader } from '../components/AppShell'
 import { api } from '../lib/api'
@@ -42,6 +42,26 @@ function isFixedMockStory(gamePackage: GamePackage): boolean {
 }
 
 const fixedMockSceneBackgrounds = ['/bg.png', '/bg_1.png', '/bg2.png', '/bg3.png', '/bg4.png']
+// 后端最多执行两次、每次 120 秒的叙事模型请求；为校验与持久化预留余量。
+const gameGenerationPollTimeoutMs = 360_000
+
+function preloadBackground(source: string): Promise<void> {
+  return new Promise((resolve) => {
+    const image = new Image()
+    image.decoding = 'async'
+    const complete = () => {
+      if (typeof image.decode === 'function') {
+        void image.decode().catch(() => undefined).finally(resolve)
+      } else {
+        resolve()
+      }
+    }
+    image.addEventListener('load', complete, { once: true })
+    image.addEventListener('error', () => resolve(), { once: true })
+    image.src = source
+    if (image.complete) complete()
+  })
+}
 
 function runtimeEvent(events: Array<Record<string, unknown>>, type: string) {
   return events.find((event) => event.type === type)
@@ -93,6 +113,7 @@ export default function ReviewPage() {
   const [adapterVersion, setAdapterVersion] = useState(0)
   const [dialogueIndex, setDialogueIndex] = useState(0)
   const [typedLength, setTypedLength] = useState(0)
+  const [backgroundsReady, setBackgroundsReady] = useState(false)
 
   useEffect(() => {
     const audio = new Audio('/bgm.mp3')
@@ -133,13 +154,13 @@ export default function ReviewPage() {
 
   useEffect(() => () => adapterRef.current?.dispose(), [])
 
-  useEffect(() => {
-    if (!gamePackage || !isFixedMockStory(gamePackage)) return
-    fixedMockSceneBackgrounds.forEach((source) => {
-      const image = new Image()
-      image.src = source
+useEffect(() => {
+    let active = true
+    void Promise.all(fixedMockSceneBackgrounds.map(preloadBackground)).then(() => {
+      if (active) setBackgroundsReady(true)
     })
-  }, [gamePackage])
+    return () => { active = false }
+  }, [])
 
   useEffect(() => {
     setDialogueIndex(0)
@@ -208,6 +229,7 @@ export default function ReviewPage() {
           updateWorkflow({ gameGeneration: job })
           setProgress(`GalGame 正在生成… ${job.progress}%`)
         },
+        gameGenerationPollTimeoutMs,
       )
     setGeneration(completed)
     updateWorkflow({ gameGeneration: completed })
@@ -537,7 +559,8 @@ export default function ReviewPage() {
       ) : result || shellCompleted ? (
         <section className="review-complete workspace-card"><p>复习完成</p><h2>{shellCompleted ? '本地体验已完成' : result?.status === 'ACCEPTED' ? '结果已提交' : '结果已去重'}</h2><p>{shellCompleted ? `本地记录 ${attempt.answers.length} 条作答。当前 RenderService 仅提供基础壳，本次结果没有提交，掌握度不会更新。` : `共记录 ${attempt.answers.length} 条作答证据。`}</p><div className="completion-actions"><Link className="button" to="/knowledge-graph">查看知识图谱</Link><button className="button button--primary" type="button" onClick={resetGame}>重新生成</button></div></section>
       ) : scene ? (
-        <section className={`game-stage game-stage--${scene.sceneId}`} ref={gameStageRef}>
+        <section className={`game-stage game-stage--${scene.sceneId}${backgroundsReady ? '' : ' game-stage--backgrounds-loading'}`} ref={gameStageRef}>
+          {!backgroundsReady ? <div className="game-stage__background-loading" role="status">场景加载中…</div> : null}
           <div className="game-stage__meta"><span>{runtimeManifest?.wasmVersion} · {adapterRef.current?.engine === 'wasm' ? 'WASM' : '兼容模式'}</span><span>{visitedSceneIds.length} 个场景已访问</span></div>
           <button className="game-stage__fullscreen" type="button" onClick={() => void toggleGameFullscreen()} aria-label="切换全屏" title="切换全屏">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V5h4M20 9V5h-4M4 15v4h4M20 15v4h-4" /></svg>

@@ -1,4 +1,4 @@
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -119,7 +119,6 @@ public sealed class MongoFileStore : IFileStore
     public bool TryDelete(string materialId, string ownerUserId, out Material? material)
     {
         material = null; var stored = FindMaterial(materialId); if (stored is null || stored.Material.OwnerUserId != ownerUserId || stored.Material.Status == "DELETED") return false;
-        if (stored.Material.Status == "PROCESSING" || GetLatestJob(materialId)?.Status is "QUEUED" or "RUNNING") return false;
         var deleted = stored.Material with { Status = "DELETED", UpdatedAt = DateTimeOffset.UtcNow };
         _materials.ReplaceOne(x => x.Material.MaterialId == materialId, stored with { Material = deleted }); material = deleted;
         if (ObjectId.TryParse(stored.GridFsId, out var gridFsId)) _files.Delete(gridFsId); return true;
@@ -189,6 +188,7 @@ public sealed class MongoFileStore : IFileStore
                 Material = staged.Material with
                 {
                     Status = "READY",
+                    OcrUsed = pendingOcrUsed,
                     UpdatedAt = now
                 }
             };
@@ -280,10 +280,11 @@ public sealed class MongoFileStore : IFileStore
         }
         if (parserKind == ParserInputKind.Pdf)
         {
+            if (enableOcr) return await ExtractOcrAsync(material, content, ocrClient, ocrMode, ocrJobId, cancellationToken);
+
             var pdf = ExtractStructuredPdf(content);
             if (!string.IsNullOrWhiteSpace(pdf.Text)) return pdf;
-            if (!enableOcr) throw new InvalidOperationException("No embedded PDF text was found. Enable OCR to parse a scanned PDF.");
-            return await ExtractOcrAsync(material, content, ocrClient, ocrMode, ocrJobId, cancellationToken);
+            throw new InvalidOperationException("No embedded PDF text was found. Enable OCR to parse a scanned PDF.");
         }
         return parserKind switch
         {

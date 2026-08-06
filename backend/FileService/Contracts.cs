@@ -1,7 +1,7 @@
-using System.Text.Json.Serialization;
+﻿using System.Text.Json.Serialization;
 using MongoDB.Bson.Serialization.Attributes;
 
-public sealed record Material(string MaterialId, string OwnerUserId, string DisplayName, string OriginalFileName, string MediaType, long SizeBytes, string Checksum, string Status, string? LatestIngestionJobId, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
+public sealed record Material(string MaterialId, string OwnerUserId, string DisplayName, string OriginalFileName, string MediaType, long SizeBytes, string Checksum, string Status, string? LatestIngestionJobId, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt, bool OcrUsed = false);
 public sealed record MaterialPage(IReadOnlyList<Material> Items, string? NextCursor);
 public sealed record CreateIngestionJobRequest(string? ParserVersion, bool Force = false, bool EnableOcr = false, string? OcrMode = null);
 [BsonIgnoreExtraElements]

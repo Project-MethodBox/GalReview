@@ -1,4 +1,4 @@
-export type Uuid = string
+﻿export type Uuid = string
 export type DateTime = string
 export type JobStatus = 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED'
 
@@ -74,6 +74,7 @@ export interface Material {
   checksum: string
   status: MaterialStatus
   latestIngestionJobId: Uuid | null
+  ocrUsed: boolean
   createdAt: DateTime
   updatedAt: DateTime
 }

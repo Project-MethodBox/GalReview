@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -58,7 +58,6 @@ public sealed class LocalFileStore : IFileStore
     public bool TryDelete(string materialId, string ownerUserId, out Material? material)
     {
         material = null; if (!_materials.TryGetValue(materialId, out var stored) || stored.Material.OwnerUserId != ownerUserId || stored.Material.Status == "DELETED") return false;
-        if (stored.Material.Status == "PROCESSING" || GetLatestJob(materialId)?.Status is "QUEUED" or "RUNNING") return false;
         var deleted = stored.Material with { Status = "DELETED", UpdatedAt = DateTimeOffset.UtcNow }; _materials[materialId] = stored with { Material = deleted }; material = deleted; return true;
     }
     public IngestionJob? GetJob(string jobId) => _jobs.TryGetValue(jobId, out var job) ? job : null;
@@ -81,6 +80,7 @@ public sealed class LocalFileStore : IFileStore
             var sourceMap = text.Length == 0 ? Array.Empty<TextSourceSpan>() : [new TextSourceSpan(0, text.Length, null, null, null)];
             var blocks = text.Length == 0 ? Array.Empty<TextDocumentBlock>() : [new TextDocumentBlock("PARAGRAPH", null, text, sourceMap[0])];
             var document = new ExtractedTextDocument(job.MaterialId, stored.Material.OwnerUserId, "READY", text, "utf-8", "NFC", "LF", checksum, text.Length, job.ParserVersion, "1", sourceMap, blocks, DateTimeOffset.UtcNow);
+            if (!_materials.TryGetValue(job.MaterialId, out var current) || current.Material.Status != "PROCESSING" || current.Material.LatestIngestionJobId != jobId) return;
             var now = DateTimeOffset.UtcNow; var succeeded = job with { Status = "SUCCEEDED", Progress = 100, UpdatedAt = now };
             _jobs[jobId] = succeeded;
             // Store text before publishing READY: internal readers can never observe READY without its document.
@@ -91,7 +91,8 @@ public sealed class LocalFileStore : IFileStore
         {
             var now = DateTimeOffset.UtcNow; var error = new ApiError("MATERIAL_TEXT_EXTRACTION_FAILED", "Text extraction failed.", new { });
             _jobs[jobId] = job with { Status = "FAILED", Progress = 100, Error = error, UpdatedAt = now };
-            _materials[job.MaterialId] = stored with { Material = stored.Material with { Status = "FAILED", UpdatedAt = now } };
+            if (_materials.TryGetValue(job.MaterialId, out var current) && current.Material.Status == "PROCESSING" && current.Material.LatestIngestionJobId == jobId)
+                _materials[job.MaterialId] = current with { Material = current.Material with { Status = "FAILED", UpdatedAt = now } };
             _logger.LogWarning(exception, "Extraction failed for material {MaterialId}", job.MaterialId);
         }
     }

@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Diagnostics;
+﻿using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 
@@ -23,7 +23,20 @@ builder.Services.AddHttpClient("ocr", client =>
 builder.Services.AddSingleton<MongoFileStore>();
 builder.Services.AddSingleton<IFileStore>(serviceProvider => serviceProvider.GetRequiredService<MongoFileStore>());
 var app = builder.Build();
-await app.Services.GetRequiredService<MongoFileStore>().RecoverIncompleteJobsAsync(CancellationToken.None);
+app.Lifetime.ApplicationStarted.Register(() =>
+{
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            await app.Services.GetRequiredService<MongoFileStore>().RecoverIncompleteJobsAsync(CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            app.Logger.LogError(exception, "Failed to recover incomplete ingestion jobs.");
+        }
+    });
+});
 app.Use(async (context, next) =>
 {
     context.TraceIdentifier = context.Request.Headers["X-Correlation-Id"].FirstOrDefault() is { Length: > 0 } id ? id : Guid.NewGuid().ToString("N");
@@ -91,8 +104,22 @@ app.MapDelete("/api/v1/materials/{materialId}", (string materialId, HttpContext 
     var material = store.GetMaterial(materialId);
     if (material is null || material.OwnerUserId != userId || material.Status == "DELETED")
         return Failure(c, 404, "RESOURCE_NOT_FOUND", "Material was not found.");
-    if (material.Status == "PROCESSING" || store.GetLatestJob(materialId)?.Status is "QUEUED" or "RUNNING")
-        return Failure(c, 409, "STATE_CONFLICT", "A running ingestion job prevents deletion.");
+var activeJob = store.GetLatestJob(materialId);
+    if (activeJob?.EnableOcr == true && activeJob.Status is ("QUEUED" or "RUNNING"))
+    {
+        var ocrClient = c.RequestServices.GetRequiredService<IHttpClientFactory>().CreateClient("ocr");
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await ocrClient.PostAsync($"v1/ocr/jobs/{activeJob.JobId}/cancel", content: null, CancellationToken.None);
+            }
+            catch
+            {
+                // Deletion remains successful even if OCRService is already offline.
+            }
+        });
+    }
     if (store.TryDelete(materialId, userId, out _)) return Results.NoContent();
 
     // Reclassify a concurrent state change without revealing another owner's material.
