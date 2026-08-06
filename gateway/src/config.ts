@@ -11,6 +11,14 @@ export interface GatewayConfig {
   port: number;
   host?: string;
   gatewayKey: string;
+  /**
+   * Express `trust proxy` 设置：决定是否根据 X-Forwarded-For 还原客户端 IP。
+   * 默认 false —— 只认 socket 对端地址，客户端自带的 XFF 一律忽略，否则任何人
+   * 都能靠轮换该头拿到全新的匿名限流桶（登录爆破防护失效）。
+   * 网关位于可信反向代理之后时，用 TRUST_PROXY 显式列出该代理的地址/网段
+   * （如 `172.18.0.0/16`）或 Express 预设（`loopback` / `uniquelocal`）。
+   */
+  trustProxy: boolean | number | string;
   corsOrigins: string[];
   defaultTimeoutMs: number;
   uploadTimeoutMs: number;
@@ -34,6 +42,21 @@ function envInt(key: string, fallback: number): number {
   if (!v) return fallback;
   const n = parseInt(v, 10);
   return Number.isNaN(n) ? fallback : n;
+}
+
+/**
+ * 解析 TRUST_PROXY：未设置或 false/0 → 不信任任何 XFF（默认，最安全）；
+ * 纯数字 → 信任的代理跳数；其余按 Express 语法原样传递（IP、CIDR、
+ * 逗号分隔列表、loopback/linklocal/uniquelocal 预设）。
+ */
+function envTrustProxy(key: string): boolean | number | string {
+  const raw = process.env[key]?.trim();
+  if (!raw) return false;
+  const lowered = raw.toLowerCase();
+  if (lowered === 'false' || lowered === 'off' || lowered === 'no') return false;
+  if (lowered === 'true') return true;
+  if (/^\d+$/.test(raw)) return Number.parseInt(raw, 10);
+  return raw;
 }
 
 export function loadConfig(): GatewayConfig {
@@ -95,6 +118,7 @@ export function loadConfig(): GatewayConfig {
     port: envInt('GATEWAY_PORT', 5000),
     host: env('GATEWAY_HOST', '0.0.0.0'),
     gatewayKey,
+    trustProxy: envTrustProxy('TRUST_PROXY'),
     corsOrigins: env('CORS_ORIGINS', 'http://localhost:5120,http://localhost:5121,http://localhost:5122')
       .split(',')
       .map((s) => s.trim())

@@ -3,6 +3,7 @@ using KnowledgeService.Application.Persistence;
 using KnowledgeService.Application.Time;
 using KnowledgeService.Domain.Builds;
 using KnowledgeService.Domain.Common;
+using KnowledgeService.Domain.Segmentation;
 using MediatR;
 
 namespace KnowledgeService.Application.Features.Builds;
@@ -102,6 +103,32 @@ public sealed partial class CreateGraphBuildCommandHandler
                 400,
                 "SEGMENTATION_MODE_INVALID",
                 "segmentationMode 不是受支持的契约枚举值。");
+        }
+
+        // 契约要求切分参数越界与 DELIMITER 缺分隔符在 POST 同步返回 400；此前它们
+        // 被推迟到后台切分器，客户端会先拿到 202 再轮询到 FAILED（与同请求内的
+        // 枚举校验行为自相矛盾）。后台的同名校验保留为防御层。
+        if (request.Segmentation.MinChapterCharacters is < 20 or > 20_000 ||
+            request.Segmentation.MaxChapterCharacters is < 500 or > 500_000 ||
+            request.Segmentation.FixedWindowCharacters is < 500 or > 100_000 ||
+            request.Segmentation.MinChapterCharacters >
+                request.Segmentation.MaxChapterCharacters)
+        {
+            throw new KnowledgeServiceException(
+                400,
+                "SEGMENTATION_OPTIONS_INVALID",
+                "章节分割参数超出允许范围。");
+        }
+
+        // 判定与 ChapterSegmenter.SegmentByDelimiter 完全一致（含空白串），
+        // 避免同一输入在两层得到不同结论
+        if (request.Segmentation.Mode == SegmentationMode.Delimiter &&
+            string.IsNullOrWhiteSpace(request.Segmentation.Delimiter))
+        {
+            throw new KnowledgeServiceException(
+                400,
+                "SEGMENTATION_DELIMITER_REQUIRED",
+                "DELIMITER 模式必须提供非空 delimiter。");
         }
 
         if (!string.IsNullOrWhiteSpace(request.ExtractorVersion) &&

@@ -58,6 +58,9 @@ builder.Services.AddSingleton<MasteryEvidenceUpdater>();
 builder.Services.AddSingleton<IGraphBuildQueue, GraphBuildQueue>();
 builder.Services.AddHostedService<Neo4jSchemaInitializer>();
 builder.Services.AddHostedService<GraphBuildWorker>();
+// 重启会清空内存队列：把上一次运行遗留的 Queued/Running 任务重新排队，
+// 否则它们的状态永远停在 RUNNING（详见 GraphBuildRecoveryService）
+builder.Services.AddHostedService<GraphBuildRecoveryService>();
 
 var app = builder.Build();
 app.UseMiddleware<TraceContextMiddleware>();

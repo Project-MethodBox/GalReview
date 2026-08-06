@@ -102,7 +102,17 @@ function endAfterDrain(request, response, upstream) {
 function proxyToGateway(request, response) {
   const target = new URL(request.url || '/', gateway)
   const traceId = getCorrelationId(request)
-  const headers = { ...request.headers, host: target.host, 'x-correlation-id': traceId }
+  // 本进程是浏览器侧入口：客户端自带的 X-Forwarded-* 一律不可信，直接以真实
+  // socket 对端地址覆盖，网关（配置 TRUST_PROXY 指向本代理时）才能得到可信的
+  // 客户端 IP 用于匿名限流分桶。
+  const headers = {
+    ...request.headers,
+    host: target.host,
+    'x-correlation-id': traceId,
+    'x-forwarded-for': request.socket?.remoteAddress || '',
+    'x-forwarded-proto': 'http',
+    'x-forwarded-host': request.headers.host || '',
+  }
   // 崩溃防护：早期拒绝后上游/客户端连接的迟到错误（如网关排空超时 RST）
   // 不能变成未捕获异常打崩整个前端进程
   request.on('error', () => {})
@@ -129,6 +139,11 @@ function proxyToGateway(request, response) {
   })
   upstream.setTimeout(180_000, () => upstream.destroy(new Error('Gateway request timed out')))
   upstream.on('socket', (socket) => socket.on('error', () => {}))
+  // 客户端在上传途中断开时 pipe 只会 unpipe、不会结束上游请求，网关会一直
+  // 等待剩余请求体直到 180 秒空闲超时；主动销毁上游腿让网关立即回收连接。
+  request.once('close', () => {
+    if (!settled && !request.complete && !upstream.destroyed) upstream.destroy()
+  })
   upstream.on('error', (error) => {
     logProxyFailure('frontend_gateway_transport_error', request, traceId, {
       code: typeof error.code === 'string' ? error.code : 'UNKNOWN',
@@ -155,7 +170,16 @@ function proxyToGateway(request, response) {
 }
 
 async function serveFrontend(request, response) {
-  const pathname = decodeURIComponent(new URL(request.url || '/', 'http://frontend').pathname)
+  // 畸形百分号编码（如 `/%`、`/%E0%A4%A`）会让 decodeURIComponent 抛 URIError；
+  // 该异常若逸出会成为未处理的 Promise 拒绝并直接终止进程，因此就地回退为
+  // 原始 pathname（后续 normalize + 前缀校验仍保证不会越出静态根目录）。
+  const rawPathname = requestPath(request)
+  let pathname
+  try {
+    pathname = decodeURIComponent(rawPathname)
+  } catch {
+    pathname = rawPathname
+  }
   const relative = normalize(pathname).replace(/^([/\\])+/, '')
   let filePath = join(staticRoot, relative)
   if (!filePath.startsWith(staticRoot)) filePath = join(staticRoot, 'index.html')
@@ -188,7 +212,14 @@ const server = createServer((request, response) => {
     proxyToGateway(request, response)
     return
   }
-  void serveFrontend(request, response)
+  // 兜底：静态服务的任何异步异常都不得逸出为未处理拒绝（会终止进程）
+  void serveFrontend(request, response).catch((error) => {
+    logProxyFailure('frontend_static_error', request, getCorrelationId(request), {
+      code: typeof error?.code === 'string' ? error.code : error?.name || 'UNKNOWN',
+    })
+    if (!response.headersSent) response.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' })
+    if (!response.writableEnded) response.end()
+  })
 })
 
 server.requestTimeout = 190_000

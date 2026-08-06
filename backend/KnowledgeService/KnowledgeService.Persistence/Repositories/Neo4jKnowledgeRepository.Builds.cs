@@ -78,6 +78,28 @@ public sealed partial class Neo4jKnowledgeRepository
             : Neo4jDomainMapper.BuildJob(records[0]["job"].As<INode>());
     }
 
+    public async Task<IReadOnlyList<GraphBuildJob>> ListUnfinishedBuildJobsAsync(
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        const string query =
+            """
+            MATCH (job:GraphBuildJob)
+            WHERE job.status IN ['Queued', 'Running']
+            RETURN job
+            ORDER BY job.createdAt ASC
+            LIMIT $limit
+            """;
+
+        await using var session = OpenSession(AccessMode.Read);
+        var cursor = await session.RunAsync(query, new { limit });
+        var records = await cursor.ToListAsync();
+        return records
+            .Select(record => Neo4jDomainMapper.BuildJob(record["job"].As<INode>()))
+            .ToArray();
+    }
+
     public async Task UpdateBuildJobAsync(
         GraphBuildJob job,
         CancellationToken cancellationToken)

@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 
 public sealed class DeepSeekNarrativeClient : INarrativeModelClient
@@ -64,9 +65,11 @@ public sealed class DeepSeekNarrativeClient : INarrativeModelClient
         if (response.Content.Headers.ContentLength is > MaxResponseCharacters)
             throw new InvalidDataException("Narrative provider response exceeded the size limit.");
 
-        var responseText = await response.Content.ReadAsStringAsync(timeout.Token);
-        if (responseText.Length > MaxResponseCharacters)
-            throw new InvalidDataException("Narrative provider response exceeded the size limit.");
+        // 必须自己限长读取：请求用 ResponseHeadersRead 发送，HttpClient 的
+        // MaxResponseContentBufferSize 不再生效；对无 Content-Length 的 chunked 响应，
+        // ReadAsStringAsync 会把整个响应体无界缓冲进内存（上限 int.MaxValue），
+        // 故障或被劫持的上游可在超时窗口内把容器吃到 OOM。
+        var responseText = await ReadBoundedAsync(response.Content, MaxResponseCharacters, timeout.Token);
 
         using var document = JsonDocument.Parse(responseText);
         if (document.RootElement.ValueKind != JsonValueKind.Object
@@ -92,5 +95,27 @@ public sealed class DeepSeekNarrativeClient : INarrativeModelClient
             throw new InvalidDataException("Narrative provider returned empty content.");
 
         return content;
+    }
+
+    /// <summary>
+    /// 按字符上限读取响应体，一旦越界立即抛出并停止读取（连接随 response 释放而中断），
+    /// 从而给 chunked / 无 Content-Length 的响应也加上真正的内存上限。
+    /// </summary>
+    private static async Task<string> ReadBoundedAsync(
+        HttpContent content, int maxCharacters, CancellationToken cancellationToken)
+    {
+        await using var stream = await content.ReadAsStreamAsync(cancellationToken);
+        using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        var builder = new StringBuilder();
+        var buffer = new char[8192];
+        int read;
+        while ((read = await reader.ReadAsync(buffer, cancellationToken)) > 0)
+        {
+            if (builder.Length + read > maxCharacters)
+                throw new InvalidDataException("Narrative provider response exceeded the size limit.");
+            builder.Append(buffer, 0, read);
+        }
+
+        return builder.ToString();
     }
 }

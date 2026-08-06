@@ -38,6 +38,14 @@ internal static class MongoGameStoreMappings
     {
         if (Interlocked.Exchange(ref _registered, 1) == 1) return;
 
+        // MongoDB.Driver 3.x 起 Guid 序列化必须显式指定表示，否则类映射中的
+        // GenerationId / PackageId 等 Guid 成员在首次写入时抛
+        // "GuidSerializer cannot serialize a Guid when GuidRepresentation is
+        // Unspecified"。与本文件原生查询使用的
+        // BsonBinaryData(..., GuidRepresentation.Standard) 保持一致，统一注册
+        // Standard 表示。
+        BsonSerializer.TryRegisterSerializer(new GuidSerializer(GuidRepresentation.Standard));
+
         // --- GameGenerationJob ---
         BsonClassMap.RegisterClassMap<GameGenerationJob>(cm =>
         {
@@ -145,7 +153,10 @@ public sealed class MongoGameStore : IGameStore
             if (seedGoldenPackage)
                 SeedGoldenPackage();
         }
-        catch (MongoException ex)
+        // 服务器不可达时驱动抛的是 System.TimeoutException（"selecting a server"），
+        // 只捕获 MongoException 会让构造函数抛出：单例工厂随后对每个请求重试构造，
+        // /readyz 与全部端点变成"阻塞 30 秒后 500"，而不是契约要求的 503。
+        catch (Exception ex) when (ex is MongoException or TimeoutException)
         {
             _logger?.LogWarning(ex, "MongoDB not available during initialization; store will report unhealthy until connection is restored");
         }
@@ -188,7 +199,9 @@ public sealed class MongoGameStore : IGameStore
 
             return recovered;
         }
-        catch (MongoException ex)
+        // 同上：不可达时是 TimeoutException，只捕 MongoException 会让"失败即维持原状"
+        // 的自述路径实际走不到，异常会一路冒到启动逻辑
+        catch (Exception ex) when (ex is MongoException or TimeoutException)
         {
             _logger?.LogWarning(ex, "Failed to recover stale jobs; they will remain in RUNNING/QUEUED state");
             return 0;

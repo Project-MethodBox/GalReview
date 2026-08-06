@@ -213,6 +213,9 @@ services:
       READINESS_SERVICES: userService,authService,fileService,knowledgeService,galGameService,renderService
       DEFAULT_TIMEOUT_MS: 30000
       UPLOAD_TIMEOUT_MS: 120000
+      # 未设置时不采信 X-Forwarded-For（匿名限流按 socket 对端计量）。网关端口
+      # 若只经可信反代对外，可设为该代理的地址/网段，例如 TRUST_PROXY=172.18.0.0/16
+      TRUST_PROXY: ${TRUST_PROXY:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5120,http://localhost:5121,http://localhost:5122}
     depends_on:
       user-service:
