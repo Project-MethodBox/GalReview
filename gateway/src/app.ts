@@ -9,19 +9,17 @@ import { createServiceIdentityMiddleware } from './middleware/serviceIdentity.js
 import { createRateLimiters } from './middleware/rateLimiter.js';
 import { errorHandlerMiddleware, notFoundHandler } from './middleware/errorHandler.js';
 import { createProxyForRoute } from './proxy/createProxy.js';
+import { bodyLimitForRequest } from './limits.js';
 import { createHealthRouter } from './routes/health.js';
 import { ROUTE_TABLE } from './routes/routeTable.js';
 import { buildApiFailure } from './types.js';
 
-/** 默认请求体大小上限（10MB） */
-const DEFAULT_BODY_LIMIT_BYTES = 10 * 1024 * 1024;
-/** FileService 对文件本体执行的严格上限（10 MiB） */
-export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
-/** multipart 边界、字段和头部可占用的有限开销（1 MiB） */
-export const MULTIPART_OVERHEAD_BYTES = 1 * 1024 * 1024;
-/** Gateway 可接受的整个 multipart 请求上限；文件本体仍由 FileService 校验 */
-export const MAX_UPLOAD_REQUEST_BYTES =
-  MAX_UPLOAD_BYTES + MULTIPART_OVERHEAD_BYTES;
+// 阈值集中在 limits.ts，与 chunked 流式计数共用；此处再导出保持既有导入路径不变
+export {
+  MAX_UPLOAD_BYTES,
+  MULTIPART_OVERHEAD_BYTES,
+  MAX_UPLOAD_REQUEST_BYTES,
+} from './limits.js';
 
 /**
  * 创建 Gateway Express 应用
@@ -29,8 +27,11 @@ export const MAX_UPLOAD_REQUEST_BYTES =
 export function createApp(config: GatewayConfig): express.Express {
   const app = express();
 
-  // 信任代理（用于正确获取客户端 IP）
-  app.set('trust proxy', 1);
+  // 客户端 IP 还原策略。默认 false：X-Forwarded-For 一律不采信，req.ip 取
+  // socket 对端地址——网关端口可直连时，无条件信任该头等于把匿名限流的桶
+  // 键交给调用方，轮换头值即可无限绕过登录/注册/找回密码的爆破防护。
+  // 部署在可信反代之后时用 TRUST_PROXY 显式声明该代理的地址/网段。
+  app.set('trust proxy', config.trustProxy);
 
   // ===== 全局中间件 =====
   // 1. 链路追踪
@@ -70,9 +71,7 @@ export function createApp(config: GatewayConfig): express.Express {
     const contentLength = Array.isArray(raw) ? raw[0] : raw;
     if (contentLength) {
       // 使用 req.originalUrl 避免子应用挂载场景下路径解析错误
-      const requestPath = (req.originalUrl || req.path).split('?', 1)[0];
-      const isUpload = requestPath === '/api/v1/materials' && req.method === 'POST';
-      const limit = isUpload ? MAX_UPLOAD_REQUEST_BYTES : DEFAULT_BODY_LIMIT_BYTES;
+      const limit = bodyLimitForRequest(req.method, req.originalUrl || req.path);
       const size = parseInt(contentLength, 10);
       if (isNaN(size) || size > limit) {
         const traceId = req.traceId ?? 'unknown';

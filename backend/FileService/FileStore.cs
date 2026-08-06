@@ -10,7 +10,8 @@ public interface IFileStore
     bool TryDelete(string materialId, string ownerUserId, out Material? material);
     IngestionJob? GetJob(string jobId);
     IngestionJob? GetLatestJob(string materialId);
-    IngestionJob CreateJob(string materialId, string parserVersion, bool enableOcr, string ocrMode);
+    /// <summary>Creates a queued job and claims the material; null when a concurrent change (delete/other job) won the claim.</summary>
+    IngestionJob? CreateJob(string materialId, string parserVersion, bool enableOcr, string ocrMode);
     Task ProcessJobAsync(string jobId, CancellationToken cancellationToken);
     Stream? OpenContent(string materialId);
     ExtractedTextDocument? GetExtractedText(string materialId);
@@ -59,14 +60,24 @@ public sealed class LocalFileStore : IFileStore
     {
         material = null; if (!_materials.TryGetValue(materialId, out var stored) || stored.Material.OwnerUserId != ownerUserId || stored.Material.Status == "DELETED") return false;
         if (stored.Material.Status == "PROCESSING" || GetLatestJob(materialId)?.Status is "QUEUED" or "RUNNING") return false;
-        var deleted = stored.Material with { Status = "DELETED", UpdatedAt = DateTimeOffset.UtcNow }; _materials[materialId] = stored with { Material = deleted }; material = deleted; return true;
+        var deleted = stored.Material with { Status = "DELETED", UpdatedAt = DateTimeOffset.UtcNow };
+        // Compare-and-swap on the snapshot read above: a job created in between must not be lost.
+        if (!_materials.TryUpdate(materialId, stored with { Material = deleted }, stored)) return false;
+        material = deleted; return true;
     }
     public IngestionJob? GetJob(string jobId) => _jobs.TryGetValue(jobId, out var job) ? job : null;
     public IngestionJob? GetLatestJob(string materialId) => _jobs.Values.Where(x => x.MaterialId == materialId).OrderByDescending(x => x.CreatedAt).FirstOrDefault();
-    public IngestionJob CreateJob(string materialId, string parserVersion, bool enableOcr, string ocrMode)
+    public IngestionJob? CreateJob(string materialId, string parserVersion, bool enableOcr, string ocrMode)
     {
+        if (!_materials.TryGetValue(materialId, out var stored) || stored.Material.Status == "DELETED") return null;
         var now = DateTimeOffset.UtcNow; var job = new IngestionJob(Guid.NewGuid().ToString(), materialId, "QUEUED", 0, parserVersion, null, now, now, enableOcr, ocrMode); _jobs[job.JobId] = job;
-        var stored = _materials[materialId]; _materials[materialId] = stored with { Material = stored.Material with { Status = "PROCESSING", LatestIngestionJobId = job.JobId, UpdatedAt = now } }; return job;
+        // Compare-and-swap on the exact snapshot read above, so a concurrent delete is not undone.
+        if (!_materials.TryUpdate(materialId, stored with { Material = stored.Material with { Status = "PROCESSING", LatestIngestionJobId = job.JobId, UpdatedAt = now } }, stored))
+        {
+            _jobs.TryRemove(job.JobId, out _);
+            return null;
+        }
+        return job;
     }
     public async Task ProcessJobAsync(string jobId, CancellationToken cancellationToken)
     {

@@ -24,6 +24,14 @@ public interface IKnowledgeRepository
         GraphBuildJob job,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// 列出仍处于 Queued/Running 的构建任务，供进程启动时重新排队。
+    /// 内存队列在重启后清空，若不重放这些任务，其状态将永远停在 RUNNING。
+    /// </summary>
+    Task<IReadOnlyList<GraphBuildJob>> ListUnfinishedBuildJobsAsync(
+        int limit,
+        CancellationToken cancellationToken);
+
     Task<KnowledgeGraph> SaveGraphAsync(
         KnowledgeGraph graph,
         Guid buildId,

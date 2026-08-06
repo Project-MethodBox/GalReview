@@ -128,13 +128,26 @@ app.MapPost("/api/v1/auth/registrations", async (RegistrationRequest request, Ht
     var registration = repository.TryCreateCredentialWithInvitation(credential, invitationCode);
     if (registration == RegistrationOutcome.EmailAlreadyRegistered) return Failure(c, 409, "STATE_CONFLICT", "该邮箱已注册");
     if (registration == RegistrationOutcome.InvitationUnavailable) return Failure(c, 422, "BUSINESS_RULE_VIOLATION", "邀请码无效、已过期或使用次数已达上限");
-    var profileCreated = await CreateProfileAsync(clients.CreateClient("gateway"), gatewayKey, c.TraceIdentifier, credential.UserId, request.DisplayName.Trim(), c.RequestAborted);
+    // 凭证与邀请码次数已在上一步提交。此后任何失败——包括 HttpClient 超时、
+    // 客户端断开导致的 OperationCanceledException——都必须回滚，否则会留下无
+    // 用户资料的孤儿凭证（该邮箱永久 409）且 single-use 邀请码被白白烧掉。
+    // 补偿调用不能复用 c.RequestAborted：请求已被取消时该令牌会让补偿自身立刻抛出。
+    bool profileCreated;
+    try
+    {
+        profileCreated = await CreateProfileAsync(clients.CreateClient("gateway"), gatewayKey, c.TraceIdentifier, credential.UserId, request.DisplayName.Trim(), c.RequestAborted);
+    }
+    catch
+    {
+        repository.RollbackRegistration(credential.UserId, invitationCode);
+        throw;
+    }
     if (!profileCreated) { repository.RollbackRegistration(credential.UserId, invitationCode); return Failure(c, 503, "SERVICE_UNAVAILABLE", "用户资料服务暂时不可用"); }
     StoredSession session;
     try { session = repository.CreateSession(credential.UserId, request.DeviceName); }
     catch
     {
-        await DeleteUserProfileAsync(clients.CreateClient("gateway"), gatewayKey, c.TraceIdentifier, credential.UserId, c.RequestAborted);
+        await DeleteUserProfileAsync(clients.CreateClient("gateway"), gatewayKey, c.TraceIdentifier, credential.UserId, CancellationToken.None);
         repository.RollbackRegistration(credential.UserId, invitationCode);
         throw;
     }
@@ -487,7 +500,10 @@ public sealed class MySqlAuthRepository(AuthDatabase database) : IAuthRepository
     public StoredSession CreateSession(string userId,string? deviceName) { var now=DateTimeOffset.UtcNow;var s=new StoredSession(Guid.NewGuid().ToString(),userId,Token(),Token(),now,now.AddMinutes(15),now.AddDays(7),null); InsertSession(s);return s; }
     public StoredSession? FindSession(string id) => FindSession("session_id",id,false); public StoredSession? FindByAccessToken(string token)=>FindSession("access_hash",Hash(token),true); public StoredSession? TouchAccessToken(string token) { var session=FindByAccessToken(token); var now=DateTimeOffset.UtcNow; return session is null||session.Status!="ACTIVE"||session.AccessExpiresAt<=now?null:session; }
     public bool RevokeSession(string sessionId,string userId) { using var c=database.OpenConnection();using var q=c.CreateCommand();q.CommandText="UPDATE auth_sessions SET revoked_at=UTC_TIMESTAMP(6) WHERE session_id=@id AND user_id=@user AND revoked_at IS NULL;";q.Parameters.AddWithValue("@id",sessionId);q.Parameters.AddWithValue("@user",userId);return q.ExecuteNonQuery()==1; }
-    public StoredSession? Rotate(string refresh) { var old=FindSession("refresh_hash",Hash(refresh),true); if(old is null||old.Status!="ACTIVE")return null;using var c=database.OpenConnection();using var q=c.CreateCommand();q.CommandText="UPDATE auth_sessions SET revoked_at=UTC_TIMESTAMP(6) WHERE session_id=@id AND revoked_at IS NULL;";q.Parameters.AddWithValue("@id",old.SessionId);q.ExecuteNonQuery();return CreateSession(old.UserId,null); }
+    // 撤销必须作为原子抢占：只有把 revoked_at 从 NULL 改成时间戳的那一个调用者
+    // 才有权签发新会话。忽略受影响行数会让同一枚刷新令牌被并发兑换多次，
+    // 各自拿到有效期 7 天的新会话，破坏"刷新令牌一次性轮换"语义。
+    public StoredSession? Rotate(string refresh) { var old=FindSession("refresh_hash",Hash(refresh),true); if(old is null||old.Status!="ACTIVE")return null;using var c=database.OpenConnection();using var q=c.CreateCommand();q.CommandText="UPDATE auth_sessions SET revoked_at=UTC_TIMESTAMP(6) WHERE session_id=@id AND revoked_at IS NULL;";q.Parameters.AddWithValue("@id",old.SessionId);if(q.ExecuteNonQuery()!=1)return null;return CreateSession(old.UserId,null); }
     public void RevokeAllSessions(string userId){using var c=database.OpenConnection();using var q=c.CreateCommand();q.CommandText="UPDATE auth_sessions SET revoked_at=UTC_TIMESTAMP(6) WHERE user_id=@id AND revoked_at IS NULL;";q.Parameters.AddWithValue("@id",userId);q.ExecuteNonQuery();}
     public void UpdatePassword(Credential credential){using var c=database.OpenConnection();using var q=c.CreateCommand();q.CommandText="UPDATE auth_credentials SET password_hash=@hash WHERE user_id=@id;";q.Parameters.AddWithValue("@id",credential.UserId);q.Parameters.AddWithValue("@hash",credential.PasswordHash);q.ExecuteNonQuery();}
     public string CreatePasswordReset(string userId)

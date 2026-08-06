@@ -8,6 +8,8 @@ namespace KnowledgeService.Application.Extraction;
 public sealed class RuleBasedKnowledgeExtractor : IKnowledgeExtractor
 {
     private const int MaximumPointsPerGraph = 5_000;
+    /// <summary>与持久化校验（GraphValidation）的 1-20 标签上限一致。</summary>
+    private const int MaximumTagsPerPoint = 20;
     private readonly StructuredPointParser _pointParser = new();
     private readonly DependencyInferer _dependencyInferer = new();
 
@@ -98,9 +100,14 @@ public sealed class RuleBasedKnowledgeExtractor : IKnowledgeExtractor
                     .First();
                 return richest with
                 {
+                    // 合并同概念各草稿的标签时必须重新截断到 20：每个草稿自带所在
+                    // 章节标题，同一概念出现在约 18 个以上章节时合并结果会超过
+                    // 持久化校验的 1-20 上限，导致整份资料的构建以
+                    // KNOWLEDGE_GRAPH_INVALID 确定性失败（且报错与真实原因无关）。
                     Tags = group
                         .SelectMany(draft => draft.Tags)
                         .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .Take(MaximumTagsPerPoint)
                         .ToArray(),
                     SourceReferences = group
                         .SelectMany(draft => draft.SourceReferences)
