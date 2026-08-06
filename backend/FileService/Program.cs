@@ -23,7 +23,29 @@ builder.Services.AddHttpClient("ocr", client =>
 builder.Services.AddSingleton<MongoFileStore>();
 builder.Services.AddSingleton<IFileStore>(serviceProvider => serviceProvider.GetRequiredService<MongoFileStore>());
 var app = builder.Build();
-await app.Services.GetRequiredService<MongoFileStore>().RecoverIncompleteJobsAsync(CancellationToken.None);
+// Recovery re-downloads every staged file and may re-run OCR (20 minutes per call), so it
+// must not run before Kestrel listens: a blocked startup makes /healthz and /readyz
+// unreachable, the container is marked unhealthy and every service that depends on it
+// (gateway, and through it the frontend) fails to start. Run it in the background right
+// after the server is up; requests keep working while it catches up.
+app.Lifetime.ApplicationStarted.Register(() =>
+{
+    var recoveryLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("FileService");
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            var store = app.Services.GetRequiredService<MongoFileStore>();
+            store.EnsureIndexes();
+            await store.RecoverIncompleteJobsAsync(app.Lifetime.ApplicationStopping);
+        }
+        catch (OperationCanceledException) { /* shutting down */ }
+        catch (Exception exception)
+        {
+            recoveryLogger.LogError(exception, "Recovering incomplete ingestion jobs failed.");
+        }
+    });
+});
 app.Use(async (context, next) =>
 {
     context.TraceIdentifier = context.Request.Headers["X-Correlation-Id"].FirstOrDefault() is { Length: > 0 } id ? id : Guid.NewGuid().ToString("N");
@@ -32,6 +54,17 @@ app.Use(async (context, next) =>
 app.UseExceptionHandler(error => error.Run(context =>
 {
     var exception = context.Features.Get<IExceptionHandlerFeature>()?.Error;
+    // Bodies past the limits never reach the endpoint's own 413 check: Kestrel raises
+    // BadHttpRequestException with StatusCode 413, and the multipart length limit raises an
+    // InvalidDataException that minimal-API form binding rewraps as a 400. Both mean the
+    // upload is too large, and the contract requires 413 FILE_TOO_LARGE for that.
+    if (exception is BadHttpRequestException { StatusCode: StatusCodes.Status413PayloadTooLarge }
+        || IsBodyTooLarge(exception))
+    {
+        context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("FileService")
+            .LogWarning(exception, "Oversized FileService upload. CorrelationId {CorrelationId}", context.TraceIdentifier);
+        return Failure(context, 413, "FILE_TOO_LARGE", "The file exceeds the 10 MB limit.").ExecuteAsync(context);
+    }
     if (exception is BadHttpRequestException or System.Text.Json.JsonException)
     {
         context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("FileService")
@@ -52,6 +85,9 @@ app.MapPost("/api/v1/materials", async (HttpContext c, [FromForm] IFormFile? fil
     if (file is null || file.Length == 0) return Failure(c, 400, "VALIDATION_ERROR", "A non-empty file is required.");
     if (file.Length > MaxFileSizeBytes) return Failure(c, 413, "FILE_TOO_LARGE", "The file exceeds the 10 MB limit.");
     if (string.IsNullOrWhiteSpace(file.ContentType)) return Failure(c, 415, "MEDIA_TYPE_UNSUPPORTED", "Content-Type is required.");
+    // ParserInputPolicy.IsSupported throws ArgumentException on a blank file name, which would
+    // escape as 500; a blank name is plain invalid input.
+    if (string.IsNullOrWhiteSpace(file.FileName)) return Failure(c, 400, "VALIDATION_ERROR", "A file name is required.");
     if (!ParserInputPolicy.IsSupported(file.FileName, file.ContentType))
         return Failure(c, 415, "MEDIA_TYPE_UNSUPPORTED", "The file format or media type is not supported.");
     var name = string.IsNullOrWhiteSpace(displayName) ? Path.GetFileName(file.FileName) : displayName.Trim();
@@ -111,6 +147,8 @@ app.MapPost("/api/v1/materials/{materialId}/ingestion-jobs", (string materialId,
     var ocrMode = string.IsNullOrWhiteSpace(request.OcrMode) ? "standard" : request.OcrMode.Trim().ToLowerInvariant();
     if (ocrMode is not ("quick" or "standard")) return Failure(c, 400, "VALIDATION_ERROR", "OCR mode must be quick or standard.");
     var job = store.CreateJob(materialId, string.IsNullOrWhiteSpace(request.ParserVersion) ? "files-text-v1" : request.ParserVersion, request.EnableOcr, ocrMode);
+    // Null means a concurrent change (deletion or another job) claimed the material first.
+    if (job is null) return Failure(c, 409, "STATE_CONFLICT", "The material state changed before the job was created.");
     _ = Task.Run(() => store.ProcessJobAsync(job.JobId, CancellationToken.None));
     return Results.Accepted($"/api/v1/ingestion-jobs/{job.JobId}", ApiSuccess.Create(job, c.TraceIdentifier));
 });
@@ -163,3 +201,18 @@ static string? NormalizeSubjectCode(string? value)
         : null;
 }
 static IResult Failure(HttpContext context, int status, string code, string message) => Results.Json(ApiFailure.Create(code, message, context.TraceIdentifier), statusCode: status);
+/// <summary>
+/// True when the exception chain reports an oversized request body. Exceeding
+/// FormOptions.MultipartBodyLengthLimit throws InvalidDataException, which minimal-API form
+/// binding rewraps as a generic 400 BadHttpRequestException; without this check such uploads
+/// would answer 400 VALIDATION_ERROR instead of the contract's 413 FILE_TOO_LARGE.
+/// </summary>
+static bool IsBodyTooLarge(Exception? exception)
+{
+    for (var current = exception; current is not null; current = current.InnerException)
+    {
+        if (current is InvalidDataException) return true;
+        if (current is BadHttpRequestException { StatusCode: StatusCodes.Status413PayloadTooLarge }) return true;
+    }
+    return false;
+}

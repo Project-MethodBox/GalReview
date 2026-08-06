@@ -121,6 +121,7 @@ Copy-Item .\.env.deploy.example .\.env
 | `NEO4J_BROWSER_HOST_PORT` | Neo4j Browser 诊断宿主端口，默认 `5254` |
 | `NEO4J_BOLT_HOST_PORT` | Neo4j Bolt 诊断宿主端口，默认 `5255` |
 | `CORS_ORIGINS` | 允许访问 Gateway 的前端 Origin，多个值用逗号分隔 |
+| `TRUST_PROXY` | Gateway 是否按 `X-Forwarded-For` 还原客户端 IP。默认留空＝不采信该头，匿名限流按 socket 对端计量；只有当 Gateway 端口仅经可信反向代理对外时，才填该代理的地址或网段（如 `172.18.0.0/16`），否则任何客户端都能靠轮换该头刷新匿名配额 |
 
 建议服务器只把 Frontend 或现有反向代理暴露给外部。Frontend 在容器网络内把 `/api` 转发到 Gateway；KnowledgeService 与 Neo4j 的诊断端口应保持 `127.0.0.1`，不应开放到公网。
 

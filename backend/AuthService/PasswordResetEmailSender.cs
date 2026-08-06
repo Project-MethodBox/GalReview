@@ -30,9 +30,19 @@ public sealed class PasswordResetEmailSender(
         var useSsl = configuration.GetValue("Email:UseSsl", true);
         var fromName = configuration["Email:FromName"] ?? "\u5343\u77e5\u4e07\u7406";
 
+        // Parse the recipient before any delivery attempt and report failure through the
+        // return value: MailboxAddress.Parse throws ParseException on malformed addresses,
+        // which would escape as a 500 (the contract allows only 202/400/404) and skip the
+        // caller's compensating delete of the freshly stored reset token.
+        if (!MailboxAddress.TryParse(recipient, out var recipientAddress))
+        {
+            logger.LogWarning("Password-reset recipient address is not parseable. CorrelationId: {CorrelationId}", correlationId);
+            return false;
+        }
+
         var message = new MimeMessage();
         message.From.Add(new MailboxAddress(fromName, fromAddress));
-        message.To.Add(MailboxAddress.Parse(recipient));
+        message.To.Add(recipientAddress);
         message.Subject = "\u60a8\u7684\u91cd\u7f6e\u9a8c\u8bc1\u7801";
         message.Body = new TextPart("html")
         {

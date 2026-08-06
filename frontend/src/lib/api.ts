@@ -121,6 +121,16 @@ function resolveUrl(path: string): string {
   return `${API_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`
 }
 
+/**
+ * 该错误是否表示"服务端明确认定凭证无效"。只有这种情况才应清除本地会话；
+ * 网络中断、超时、网关重启等瞬时故障（503/502）下刷新令牌通常仍然有效。
+ */
+function isAuthRejection(error: unknown): boolean {
+  if (!(error instanceof ApiClientError)) return false
+  if (error.status === 401 || error.status === 403) return true
+  return error.code === 'AUTH_REQUIRED' || error.code === 'TOKEN_EXPIRED'
+}
+
 function errorFromPayload(payload: unknown, status: number, responseTraceId?: string): ApiClientError {
   if (payload && typeof payload === 'object' && 'error' in payload) {
     const failure = payload as ApiFailure
@@ -196,7 +206,9 @@ async function refreshAccessToken(): Promise<TokenPair> {
       updateSessionTokens(tokens)
       return tokens
     }).catch((error) => {
-      clearSession()
+      // 只有服务端明确拒绝刷新令牌才清除会话。网关重启、超时等瞬时故障会被
+      // 映射成 503，此时刷新令牌通常仍然有效，清除会话等于把用户无故踢下线。
+      if (isAuthRejection(error)) clearSession()
       throw error
     }).finally(() => {
       refreshPromise = null
@@ -324,7 +336,8 @@ async function adminRequest<T>(path: string, options: RequestOptions = {}, retry
       updateAdminSessionTokens(tokens)
       return adminRequest<T>(path, options, false)
     } catch (refreshError) {
-      clearAdminSession()
+      // 同 refreshAccessToken：瞬时故障不等于刷新令牌失效，不能清除管理端会话
+      if (isAuthRejection(refreshError)) clearAdminSession()
       throw refreshError
     }
   }
