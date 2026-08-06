@@ -851,3 +851,150 @@ npm 缓存键；即使关闭缓存，后续 `npm ci` 也会因缺少 lockfile �
 
 日志中的 Action Node 20/24 与 `punycode` 内容是非致命弃用提示，本次失败点是缺失的缓存依赖
 路径。项目测试运行时仍由 workflow 固定为 Node 22。
+
+## 21. 2026-08-03 上传竞态残余根治（vite dev 跳）与全路径压测收官
+
+上一轮修复后 vite dev 路径仍有"已接受残余"。本轮用 socket 级仪器化 vite（记录每个客户端
+连接的生命周期与 destroy 调用栈）抓到了两个独立机制并全部根治：
+
+1. **CL 提前完成绕过网关的排空保护。** 网关 bodyDrain 冲刷的错误信封带 `Content-Length`，
+   中继跳（vite http-proxy）的 HTTP 客户端凑满 CL 字节即判定响应完成并立刻结束对客户端的
+   响应，不等网关排空后的延迟 FIN；此时客户端请求体未上传完、响应又是 `connection: close`
+   （http-proxy 无 agent 的默认），Node 在响应 finish 时销毁客户端 socket，RST 冲掉在途
+   上传与客户端未读缓冲。仪器化日志中损坏请求均呈现 `PROXYRES 429` 早于 `req-end`、随后
+   `res-finish → DESTROY` 的固定序列；服务端（FileService/网关限流器）对这些请求零痕迹。
+2. **旧钩子的 unpipe 悬空腿。** 此前 vite 代理钩子在 proxyRes 时 `req.unpipe()` 截断
+   "客户端体 → 网关"转发，网关排空等不到剩余字节，10 秒超时后硬毁该连接；销毁事件在 vite
+   进程内间歇性殃及无关的在途请求（组合探针中 S3#8 恰在 S2 竞态请求 +10s 时刻死亡，可
+   复现）。该钩子是网关修复前的遗物，其"本地排空"作用已由机制 1 的正确修复取代。
+
+修复（`frontend/vite.config.ts`，仅 dev 代理段）：移除 unpipe 钩子，改为与
+`frontend/server.mjs` 的 `endAfterDrain`、网关 `bodyDrain` 同构的 **drain-before-end**
+包装——响应字节照常立即转发，`res.end` 推迟到客户端请求体收完；不截断上游腿；排空有
+12 MiB 上限与 10 秒超时，越界时在响应完成后只断开本连接。接口、构建产物与生产路径行为
+均未改变。
+
+| 复验项 | 结果 |
+|---|---:|
+| vite dev 路径全矩阵 ×12（S1 401 / S2 429 / S3 413 / S4 正常 / S5 恶劣客户端） | 两次独立运行均 PASS，0 mangled |
+| vite dev 路径 413 专项 ×8（限流窗清空，直达 FileService） | 8/8 信封完整 |
+| 生产代理路径全矩阵 ×12 | PASS，0 mangled（此前"已接受残余" 2 项消失） |
+| 生产代理路径 413 专项 ×8 | 8/8 信封完整 |
+| keep-alive 头部与 X-Correlation-Id 存活探针（vite + 生产双路径） | 全部回显 |
+| frontend `tsc --noEmit` 与 Vite production build | 通过 |
+| S5 停滞 12 秒 / 中途撕裂后服务存活 | 双路径均 YES |
+
+对照：修复前基线 vite 路径 14/39 损坏（S3 全灭）；仅移除旧钩子后仍余 5/10（机制 1 暴露）；
+drain-before-end 后为 0。所有场景要求响应为完整契约信封且延迟 ≤ 4 秒。dev 路径仍保留一个
+文档化边界：单请求体超过网关 12 MiB 排空上限时该连接会被明示断开（生产路径行为一致）。
+
+## 22. 2026-08-03 GalGameService Mongo 持久化 Guid 序列化修复
+
+E2E 闭环回归在"创建游戏生成任务"处失败：网关返回 500 `INTERNAL_ERROR`，GalGameService
+日志为 `GuidSerializer cannot serialize a Guid when GuidRepresentation is Unspecified`
+（`GameGenerationJob.GenerationId`）。检查发现 `qzwl_galgame` 库的 `game_jobs`、
+`game_manifests` 集合均为 0 文档——MongoGameStore 自启用以来从未成功写入：此前全部闭环
+验证走的是 InMemoryGameStore，合并启用 Mongo 持久化后首次真实流量即触发。MongoDB.Driver
+3.x 起 Guid 序列化必须显式指定表示，类映射对 Guid 成员的 AutoMap 缺少该配置。
+
+修复（`backend/GalGameService/MongoGameStore.cs`）：在 `MongoGameStoreMappings.
+EnsureRegistered` 注册 `GuidSerializer(GuidRepresentation.Standard)`，与同文件原生查询
+使用的 `BsonBinaryData(..., GuidRepresentation.Standard)` 保持一致；库中无旧表示数据，
+无兼容负担。接口、GamePackage schema 与任务状态机均未改变。
+
+| 复验项 | 结果 |
+|---|---:|
+| CI 原命令 `dotnet test .../GalGame.GalGameService.Tests.csproj --nologo` | 348 / 348 通过 |
+| galgame-service 镜像重建与容器重建 | healthy |
+| E2E 闭环（注册→提取→构图→计划→游戏包→复习会话→结果→mastery） | PASS，3/3 掌握度 0 → 35 |
+| Mongo 持久化实证 | game_jobs / game_packages / game_manifests / game_owners 各 1 文档 |
+
+## 23. 2026-08-03 全组件巡检与缺陷修复
+
+对全部成员组件（Gateway、Frontend、FileService、AuthService、UserService、
+KnowledgeService、GalGameService，以及编排/CI/文档横切面）做了一轮以实证为准的缺陷巡检：
+每条发现都要求给出"触发条件 → 错误结果"的完整代码级因果链，严重级发现另经一轮以驳倒为
+目标的独立复核，未能复推的一律丢弃。本节记录经复核成立并已修复的问题。所有修复均保持
+原有接口、请求响应结构与业务语义不变。
+
+### 23.1 安全
+
+**匿名限流可被请求头绕过（Gateway，实测确认）。** `app.set('trust proxy', 1)` 使
+`req.ip` 无条件采信客户端自带的 `X-Forwarded-For`，而该头未被 headerSanitizer 剥离，且
+Gateway 端口在集成与演示部署中直接对外发布。实测：对 `POST /api/v1/auth/sessions` 连续
+请求时，固定 XFF 的 `ratelimit-remaining` 正常递减（19→16），每次轮换 XFF 则恒为 19——
+即任何人都能靠改一个请求头无限刷新匿名配额，登录/注册/找回密码的爆破节流完全失效。
+修复：新增 `TRUST_PROXY` 配置（`gateway/src/config.ts`、`limits.ts` 与 `app.ts`），
+**默认不采信** `X-Forwarded-For`，`req.ip` 取 socket 对端地址；部署在可信反代之后时显式
+声明该代理的地址/网段。`frontend/server.mjs` 相应地以真实 socket 对端地址覆盖客户端自带
+的 `X-Forwarded-*`，使配置该项后网关拿到的是可信值。已认证路由本就按 userId 计量，不受
+影响。
+
+**真实 SMTP 凭据入库（AuthService）。** `appsettings.Development.json` 提交了可用的
+126.com 邮箱账号与授权码，且该文件未被 `.dockerignore` 排除、会随 `COPY . .` 进入镜像。
+修复：文件内改为 `CHANGE_ME_*` 占位（容器一律经 compose 已支持的 `SMTP_*` → `Email__*`
+环境变量注入，机制未变），并在 `.dockerignore` 排除本机开发配置与 launchSettings。
+**该凭据须视为已泄露：仓库历史仍包含原值，必须在邮箱侧吊销/更换授权码。**
+
+### 23.2 可用性与状态一致性
+
+| 组件 | 问题 | 修复 |
+|---|---|---|
+| Frontend | `GET /%` 等畸形百分号路径使 `decodeURIComponent` 抛 URIError，异常逸出为未处理拒绝并终止进程（免认证、单请求即可循环打断服务） | `server.mjs` 就地捕获并回退原始路径，入口再加 `.catch` 兜底返回 400 |
+| Frontend | 客户端上传中断时不销毁上游腿，网关连接被占用至 180 秒空闲超时 | 监听 `request` 关闭，未收到响应且请求体未完时销毁上游请求 |
+| Frontend | 刷新令牌请求遇到 503/超时也清除本地会话，把仍有效的会话踢下线 | 仅在服务端明确拒绝（401/403 或 AUTH_REQUIRED/TOKEN_EXPIRED）时清除，管理端同理 |
+| FileService | 在 Kestrel 监听之前同步 `await` 全量重解析（含最长 20 分钟/次的 OCR），期间 /healthz、/readyz 不可达，容器被判 unhealthy 并阻塞 gateway、frontend 启动 | 恢复改到 `ApplicationStarted` 之后的后台任务；索引创建改为可失败可重试，MongoDB 不可用时按契约由 /readyz 返回 503 而不是构造函数抛出 |
+| FileService | 超过 multipart 限制的上传返回 400 VALIDATION_ERROR（契约要求 413） | 异常处理器识别 413 状态与 `InvalidDataException` 链，输出 FILE_TOO_LARGE |
+| FileService | 空白文件名触发 `ArgumentException` → 500 | 入口补 400 校验 |
+| FileService | 上传补偿删除复用已取消的请求令牌，客户端断连时 GridFS 内容永久孤儿化 | 补偿改用 `CancellationToken.None` 并记录清理失败 |
+| FileService | 删除与创建解析任务的 check-then-act 竞态（已删除资料复活 / 活动任务下内容被删） | 两处状态迁移改为条件写（Mongo 过滤器带期望状态、内存实现用 CAS），冲突时按既有 404/409 路径处理 |
+| FileService | 崩溃窗口留下"任务 QUEUED 但资料未 PROCESSING"或"任务 FAILED 但资料仍 PROCESSING"，该资料永远 409、既不能重试也不能删除 | 启动恢复补齐这两类残留态的收敛 |
+| AuthService | 注册时凭证与邀请码已提交后，`CreateProfileAsync` 只捕获 `HttpRequestException`；超时/客户端断连抛的取消异常绕过补偿，留下孤儿凭证并烧掉 single-use 邀请码 | 该段包入 try/catch 后统一回滚，补偿调用不再使用请求取消令牌 |
+| AuthService | `Rotate` 忽略撤销 UPDATE 的受影响行数，同一刷新令牌可被并发兑换出两个有效会话 | 以"撤销影响 1 行"作为原子抢占，未抢到则返回 null |
+| AuthService | 畸形收件地址使 `MailboxAddress.Parse` 抛出，密码重置返回 500 且残留有效重置令牌 | 改用 `TryParse`，失败按"发送失败"返回，交由既有补偿删除令牌 |
+| UserService | `UpdateProfile` 忽略受影响行数产生"幻影成功"（资料已被并发删除仍返回 200） | 受影响行数不为 1 时返回 null，上层按契约回 404 |
+| UserService | 偏好写入撞外键约束（1452）逸出为 500 | 捕获该错误码返回 null，上层回 404 |
+| KnowledgeService | 构建队列是纯内存 Channel 且无启动恢复：重启后持久化为 Running 的任务永远不会被处理，GET 永远返回 RUNNING，幂等键也救不回来 | 新增 `ListUnfinishedBuildJobsAsync` 与 `GraphBuildRecoveryService`，启动后把 Queued/Running 任务重新排队（处理器对 Succeeded 短路，重放安全） |
+| KnowledgeService | 切分参数越界、DELIMITER 模式缺 delimiter 被 202 受理后异步失败（契约要求同步 400） | `CreateGraphBuildCommandHandler` 补齐与切分器完全一致的同步校验，后台校验保留为防御层 |
+| KnowledgeService | 概念去重合并标签无上限，同概念跨约 18 个以上章节时超出 1-20 校验，整份资料构建确定性失败 | 合并后按同一上限截断 |
+| GalGameService | MongoDB 不可达时驱动抛 `TimeoutException`，`catch (MongoException)` 接不住，优雅降级失效（每请求阻塞约 30 秒后 500） | 构造函数与 `RecoverStaleJobs` 同时捕获 `TimeoutException` |
+| GalGameService | 叙事模型响应对 chunked（无 Content-Length）无实际大小上限，可无界缓冲至 OOM | 改为按上限流式读取，超限即中止 |
+| GalGameService | 内存模式下 `_jobLocks` 只增不减 | 淘汰 job 时一并移除锁对象 |
+| Gateway | 请求体上限只在有 Content-Length 时生效，chunked 请求可绕过 11 MiB / 10 MB 前置限制 | 阈值抽到 `limits.ts` 共用，代理阶段对无 Content-Length 的 chunked 请求流式计数，超限返回 413 信封 |
+
+### 23.3 复验
+
+| 复验项 | 结果 |
+|---|---:|
+| Gateway 自动化测试（新增 chunked 上限 2 项、限流分桶 2 项） | 188 / 188 通过 |
+| AuthService | 8 / 8 通过 |
+| UserService | 32 / 32 通过 |
+| KnowledgeService | 105 / 105 通过 |
+| GalGameService | 348 / 348 通过 |
+| FileService `dotnet build` | 通过，0 warning / 0 error |
+| Frontend `tsc --noEmit` 与 Vite production build | 通过 |
+| XFF 伪造探针（修复前后对照） | 修复前轮换 XFF 恒得满配额（remaining 恒为 19）；修复后按真实对端稳定递减（19→15） |
+
+容器全部重建后在集成栈上的端到端复验：
+
+| 集成复验项（Gateway :5000 / Frontend :5220 / vite dev :5223） | 结果 |
+|---|---:|
+| 全部 12 个容器 | healthy |
+| 畸形百分号路径 `/%`、`/%E0%A4%A`、`/%zz`、`/a/%` | 均返回 200（SPA 回退），前端进程存活 |
+| chunked（无 Content-Length）超限请求 | 413 FILE_TOO_LARGE 信封 |
+| 10.5 MB 上传 | 413 FILE_TOO_LARGE（此前多部分限制路径会退化为 400） |
+| 空白文件名上传 | 400 VALIDATION_ERROR（此前 500） |
+| 正常上传 | 201 |
+| E2E 闭环（注册→提取→构图→计划→游戏包→会话→结果→mastery） | PASS，3/3 掌握度 0 → 35 |
+| 上传竞态全矩阵 ×12（生产代理 :5220） | PASS，0 mangled |
+| 上传竞态全矩阵 ×12（vite dev :5223） | PASS，0 mangled |
+| keep-alive 头部与 X-Correlation-Id 存活（双路径） | 全部回显 |
+
+### 23.4 记录但未改动
+
+- `/api/v1/assessment-plans` 与 `/api/v1/learning-plans` 归入 `generation` 限流类别，与
+  contract.md §9 "只有 knowledge-graph-builds 与 game-generations 两个 POST 使用
+  generation 限流"的枚举不一致。二者确为较昂贵的创建型端点，究竟改代码还是改契约属
+  PM 决策，此处仅记录。
+- AuthService 的 time-window 邀请码在未指定 maxUses 时被隐式赋予 10 次上限，契约对该类型
+  只描述了时间窗。同样属语义待澄清项，未擅自更改既有行为。

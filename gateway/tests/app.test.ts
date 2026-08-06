@@ -11,6 +11,7 @@ import type { GatewayConfig } from '../src/config.js';
 const mockConfig: GatewayConfig = {
   port: 5000,
   gatewayKey: 'test-gateway-key',
+  trustProxy: false,
   corsOrigins: ['http://localhost:5173'],
   defaultTimeoutMs: 5000,
   uploadTimeoutMs: 10000,

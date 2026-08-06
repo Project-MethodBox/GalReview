@@ -29,9 +29,30 @@ public sealed class MongoFileStore : IFileStore
         _materials = _database.GetCollection<MaterialDocument>("materials");
         _jobs = _database.GetCollection<IngestionJob>("ingestion_jobs");
         _files = new GridFSBucket(_database, new GridFSBucketOptions { BucketName = "material_content" });
-        _materials.Indexes.CreateOne(new CreateIndexModel<MaterialDocument>(Builders<MaterialDocument>.IndexKeys.Ascending(x => x.Material.OwnerUserId).Descending(x => x.Material.CreatedAt)));
-        _materials.Indexes.CreateOne(new CreateIndexModel<MaterialDocument>(Builders<MaterialDocument>.IndexKeys.Ascending(x => x.Material.OwnerUserId).Ascending(x => x.SubjectCode).Descending(x => x.Material.CreatedAt)));
-        _jobs.Indexes.CreateOne(new CreateIndexModel<IngestionJob>(Builders<IngestionJob>.IndexKeys.Ascending(x => x.MaterialId).Descending(x => x.CreatedAt)));
+        EnsureIndexes();
+    }
+
+    /// <summary>
+    /// Creates the query indexes. Index creation must never take the process down: if MongoDB
+    /// is unreachable while the container restarts, a throwing constructor would make every
+    /// later resolution of this singleton fail with 500 instead of letting /readyz report the
+    /// documented 503 SERVICE_UNAVAILABLE. Failures are logged and retried by the background
+    /// recovery pass.
+    /// </summary>
+    public bool EnsureIndexes()
+    {
+        try
+        {
+            _materials.Indexes.CreateOne(new CreateIndexModel<MaterialDocument>(Builders<MaterialDocument>.IndexKeys.Ascending(x => x.Material.OwnerUserId).Descending(x => x.Material.CreatedAt)));
+            _materials.Indexes.CreateOne(new CreateIndexModel<MaterialDocument>(Builders<MaterialDocument>.IndexKeys.Ascending(x => x.Material.OwnerUserId).Ascending(x => x.SubjectCode).Descending(x => x.Material.CreatedAt)));
+            _jobs.Indexes.CreateOne(new CreateIndexModel<IngestionJob>(Builders<IngestionJob>.IndexKeys.Ascending(x => x.MaterialId).Descending(x => x.CreatedAt)));
+            return true;
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "MongoDB index creation failed; the store stays unready until MongoDB is reachable.");
+            return false;
+        }
     }
 
     public bool IsReady()
@@ -83,7 +104,59 @@ public sealed class MongoFileStore : IFileStore
         foreach (var job in activeJobs)
         {
             var material = FindMaterial(job.MaterialId);
-            if (material?.Material.Status == "PROCESSING") await ProcessJobAsync(job.JobId, cancellationToken);
+            if (material?.Material.Status == "PROCESSING") { await ProcessJobAsync(job.JobId, cancellationToken); continue; }
+            // The process died between inserting the QUEUED job and marking the material
+            // PROCESSING. Nothing will ever run this job, yet both the delete and the
+            // create-job endpoints keep answering 409 because it is still the latest job.
+            // Close it out so the material becomes usable again.
+            if (material is not null)
+            {
+                await _jobs.ReplaceOneAsync(
+                    candidate => candidate.JobId == job.JobId && (candidate.Status == "QUEUED" || candidate.Status == "RUNNING"),
+                    job with
+                    {
+                        Status = "FAILED",
+                        Error = new ApiError("MATERIAL_TEXT_EXTRACTION_FAILED", "The service restarted before this job started running.", new Dictionary<string, string>()),
+                        UpdatedAt = DateTimeOffset.UtcNow
+                    },
+                    cancellationToken: cancellationToken);
+                _logger.LogWarning("Closed orphaned ingestion job {JobId} for material {MaterialId}.", job.JobId, job.MaterialId);
+            }
+        }
+
+        // The mirror case: the job was already marked FAILED but the process died before the
+        // material was moved out of PROCESSING. Such a material can neither be reprocessed nor
+        // deleted, and no other pass covers it (staged recovery requires SUCCEEDED + text).
+        var strandedMaterials = await _materials
+            .Find(material => material.Material.Status == "PROCESSING" && material.ExtractedText == null)
+            .ToListAsync(cancellationToken);
+        foreach (var material in strandedMaterials)
+        {
+            var latestJob = GetLatestJob(material.Material.MaterialId);
+            if (latestJob is null || latestJob.Status is "QUEUED" or "RUNNING") continue;
+            if (material.Material.LatestIngestionJobId != latestJob.JobId) continue;
+            var settled = material with
+            {
+                Material = material.Material with
+                {
+                    Status = latestJob.Status == "SUCCEEDED" ? "READY" : "FAILED",
+                    UpdatedAt = DateTimeOffset.UtcNow
+                }
+            };
+            var repaired = await _materials.ReplaceOneAsync(
+                candidate => candidate.Material.MaterialId == material.Material.MaterialId
+                    && candidate.Material.Status == "PROCESSING"
+                    && candidate.Material.LatestIngestionJobId == latestJob.JobId,
+                settled,
+                cancellationToken: cancellationToken);
+            if (repaired.IsAcknowledged && repaired.MatchedCount == 1)
+            {
+                _logger.LogWarning(
+                    "Material {MaterialId} was stuck in PROCESSING after job {JobId} finished as {Status}; state repaired.",
+                    material.Material.MaterialId,
+                    latestJob.JobId,
+                    latestJob.Status);
+            }
         }
     }
 
@@ -101,7 +174,15 @@ public sealed class MongoFileStore : IFileStore
         var originalFileName = Path.GetFileName(file.FileName);
         var material = new Material(id, ownerUserId, displayName, originalFileName, DetectMediaType(originalFileName, file.ContentType), file.Length, checksum, "UPLOADED", null, now, now);
         try { await _materials.InsertOneAsync(new MaterialDocument { Material = material, GridFsId = gridFsId.ToString(), SubjectCode = subjectCode }, cancellationToken: cancellationToken); }
-        catch { await _files.DeleteAsync(gridFsId, cancellationToken); throw; }
+        catch
+        {
+            // The compensating delete must not reuse the request token: when the client
+            // disconnects mid-insert the token is already cancelled, the delete would abort
+            // immediately and leave the uploaded GridFS chunks orphaned forever.
+            try { await _files.DeleteAsync(gridFsId, CancellationToken.None); }
+            catch (Exception cleanupFailure) { _logger.LogError(cleanupFailure, "Failed to remove orphaned GridFS content {GridFsId}.", gridFsId); }
+            throw;
+        }
         return new StoredMaterial(material, gridFsId.ToString(), subjectCode, null);
     }
 
@@ -120,15 +201,34 @@ public sealed class MongoFileStore : IFileStore
     {
         material = null; var stored = FindMaterial(materialId); if (stored is null || stored.Material.OwnerUserId != ownerUserId || stored.Material.Status == "DELETED") return false;
         var deleted = stored.Material with { Status = "DELETED", UpdatedAt = DateTimeOffset.UtcNow };
-        _materials.ReplaceOne(x => x.Material.MaterialId == materialId, stored with { Material = deleted }); material = deleted;
+        // Conditional replace: the status observed above must still hold. An unconditional write
+        // would let a delete that raced with a freshly created ingestion job wipe the material
+        // (and its GridFS content) out from under the running job.
+        var replaced = _materials.ReplaceOne(
+            x => x.Material.MaterialId == materialId && x.Material.Status == stored.Material.Status,
+            stored with { Material = deleted });
+        if (!replaced.IsAcknowledged || replaced.MatchedCount != 1) return false;
+        material = deleted;
         if (ObjectId.TryParse(stored.GridFsId, out var gridFsId)) _files.Delete(gridFsId); return true;
     }
     public IngestionJob? GetJob(string jobId) => _jobs.Find(x => x.JobId == jobId).FirstOrDefault();
     public IngestionJob? GetLatestJob(string materialId) => _jobs.Find(x => x.MaterialId == materialId).SortByDescending(x => x.CreatedAt).FirstOrDefault();
-    public IngestionJob CreateJob(string materialId, string parserVersion, bool enableOcr, string ocrMode)
+    public IngestionJob? CreateJob(string materialId, string parserVersion, bool enableOcr, string ocrMode)
     {
+        var stored = FindMaterial(materialId);
+        if (stored is null || stored.Material.Status == "DELETED") return null;
         var now = DateTimeOffset.UtcNow; var job = new IngestionJob(Guid.NewGuid().ToString(), materialId, "QUEUED", 0, parserVersion, null, now, now, enableOcr, ocrMode); _jobs.InsertOne(job);
-        var stored = FindMaterial(materialId)!; _materials.ReplaceOne(x => x.Material.MaterialId == materialId, stored with { Material = stored.Material with { Status = "PROCESSING", LatestIngestionJobId = job.JobId, UpdatedAt = now } }); return job;
+        // Conditional replace: a concurrent delete must not be undone by this write, otherwise a
+        // material the client already saw removed (its content is gone) comes back as PROCESSING.
+        var claimed = _materials.ReplaceOne(
+            x => x.Material.MaterialId == materialId && x.Material.Status == stored.Material.Status,
+            stored with { Material = stored.Material with { Status = "PROCESSING", LatestIngestionJobId = job.JobId, UpdatedAt = now } });
+        if (!claimed.IsAcknowledged || claimed.MatchedCount != 1)
+        {
+            _jobs.DeleteOne(x => x.JobId == job.JobId);
+            return null;
+        }
+        return job;
     }
     public async Task ProcessJobAsync(string jobId, CancellationToken cancellationToken)
     {

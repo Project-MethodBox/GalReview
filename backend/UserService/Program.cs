@@ -268,7 +268,11 @@ public sealed class MySqlUserRepository(UserDatabase database) : IUserRepository
         var updated = current with { DisplayName = request.DisplayName?.Trim() ?? current.DisplayName, Locale = request.Locale?.Trim() ?? current.Locale, PreferredSubjectCodes = request.PreferredSubjectCodes ?? current.PreferredSubjectCodes, UpdatedAt = DateTimeOffset.UtcNow };
         using var connection = database.OpenConnection(); using var command = connection.CreateCommand();
         command.CommandText = "UPDATE user_profiles SET display_name=@name, locale=@locale, preferred_subject_codes=@subjects, updated_at=@updated WHERE user_id=@id;";
-        command.Parameters.AddWithValue("@id", updated.UserId); command.Parameters.AddWithValue("@name", updated.DisplayName); command.Parameters.AddWithValue("@locale", updated.Locale); command.Parameters.AddWithValue("@subjects", JsonSerializer.Serialize(updated.PreferredSubjectCodes)); command.Parameters.AddWithValue("@updated", updated.UpdatedAt.UtcDateTime); command.ExecuteNonQuery(); return updated;
+        command.Parameters.AddWithValue("@id", updated.UserId); command.Parameters.AddWithValue("@name", updated.DisplayName); command.Parameters.AddWithValue("@locale", updated.Locale); command.Parameters.AddWithValue("@subjects", JsonSerializer.Serialize(updated.PreferredSubjectCodes)); command.Parameters.AddWithValue("@updated", updated.UpdatedAt.UtcDateTime);
+        // 忽略受影响行数会造成"幻影成功"：资料在读取后被并发删除时，UPDATE 影响 0 行，
+        // 却仍向客户端返回 200 与未持久化的资料；契约要求此时是 404。
+        if (command.ExecuteNonQuery() != 1) return null;
+        return updated;
     }
     public UserPreferences? FindPreferences(string userId)
     {
@@ -281,7 +285,12 @@ public sealed class MySqlUserRepository(UserDatabase database) : IUserRepository
         if (FindProfile(userId) is null) return null;
         var result = new UserPreferences(request.DailyGoalMinutes, request.ContentDifficulty, request.ReducedMotion, DateTimeOffset.UtcNow);
         using var connection = database.OpenConnection(); using var command = connection.CreateCommand(); command.CommandText = "INSERT INTO user_preferences (user_id, daily_goal_minutes, content_difficulty, reduced_motion, updated_at) VALUES (@id,@goal,@difficulty,@motion,@updated) ON DUPLICATE KEY UPDATE daily_goal_minutes=@goal, content_difficulty=@difficulty, reduced_motion=@motion, updated_at=@updated;";
-        command.Parameters.AddWithValue("@id", userId); command.Parameters.AddWithValue("@goal", result.DailyGoalMinutes); command.Parameters.AddWithValue("@difficulty", result.ContentDifficulty); command.Parameters.AddWithValue("@motion", result.ReducedMotion); command.Parameters.AddWithValue("@updated", result.UpdatedAt.UtcDateTime); command.ExecuteNonQuery(); return result;
+        command.Parameters.AddWithValue("@id", userId); command.Parameters.AddWithValue("@goal", result.DailyGoalMinutes); command.Parameters.AddWithValue("@difficulty", result.ContentDifficulty); command.Parameters.AddWithValue("@motion", result.ReducedMotion); command.Parameters.AddWithValue("@updated", result.UpdatedAt.UtcDateTime);
+        // 资料在存在性检查之后被并发删除时，外键（fk_preferences_profile）会让 INSERT
+        // 抛 1452；那是"资料不存在"，按契约应为 404，而不是 500 INTERNAL_ERROR。
+        try { command.ExecuteNonQuery(); }
+        catch (MySqlException failure) when (failure.Number == 1452) { return null; }
+        return result;
     }
     private static UserProfile ReadProfile(MySqlDataReader r) => new(DbText(r.GetValue(0)), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2), r.GetString(3), JsonSerializer.Deserialize<string[]>(r.GetString(4)) ?? [], AsUtc(r.GetDateTime(5)), AsUtc(r.GetDateTime(6)));
     private static string DbText(object value) => value is Guid guid ? guid.ToString() : Convert.ToString(value)!;

@@ -213,7 +213,12 @@ public sealed class InMemoryGameStore : IGameStore
         foreach (var id in completed)
         {
             if (_jobs.TryRemove(id, out _))
+            {
                 Interlocked.Decrement(ref _jobCount);
+                // 锁对象只在 job 存活期间有意义；不一并移除会让 _jobLocks
+                // 随历史 job 总数只增不减（长跑实例的内存缓慢泄漏）
+                _jobLocks.TryRemove(id, out _);
+            }
         }
     }
 }

@@ -3,3 +3,6 @@
 .git
 .gitignore
 README.md
+# 本机开发配置不进镜像（容器一律经 Email__*/ConnectionStrings__* 环境变量注入）
+appsettings.Development.json
+Properties/launchSettings.json

@@ -37,6 +37,11 @@ internal sealed class KnowledgeRepositoryStub : IKnowledgeRepository
         CancellationToken cancellationToken) =>
         throw new NotSupportedException();
 
+    public Task<IReadOnlyList<GraphBuildJob>> ListUnfinishedBuildJobsAsync(
+        int limit,
+        CancellationToken cancellationToken) =>
+        throw new NotSupportedException();
+
     public Task<KnowledgeGraph> SaveGraphAsync(
         KnowledgeGraph graph,
         Guid buildId,

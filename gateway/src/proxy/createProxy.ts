@@ -4,6 +4,7 @@ import type { Request, RequestHandler, Response } from 'express';
 import type { GatewayConfig } from '../config.js';
 import type { RouteEntry } from '../types.js';
 import { buildApiFailure } from '../types.js';
+import { bodyLimitForRequest } from '../limits.js';
 
 /** 代理错误分类 */
 type ProxyErrorKind = 'timeout' | 'connection' | 'contract' | 'other';
@@ -106,9 +107,28 @@ export function createProxyForRoute(
     // 才会跳过默认的 errorResponsePlugin（否则默认插件先注册并返回 504 纯文本，
     // 覆盖本网关的统一 JSON 错误信封）。plugins 适用于中间件式扩展，不适用于覆盖默认错误响应。
     on: {
-      proxyReq: (proxyReq, req: Request) => {
+      proxyReq: (proxyReq, req: Request, res: Response) => {
         // 剥离客户端原始敏感头，防止凭证泄露给下游
         stripSensitiveHeaders(proxyReq);
+
+        // 无 Content-Length 的 chunked 请求绕过了 app.ts 的体积早拒（那里只能读
+        // Content-Length），流式计数补齐同一上限。计数器在此挂载：http-proxy 紧接
+        // 本事件同步执行 req.pipe(proxyReq)，先于任何 data 事件，因此不会丢字节。
+        if (req.headers['content-length'] === undefined && req.headers['transfer-encoding'] !== undefined) {
+          const limit = bodyLimitForRequest(req.method, req.originalUrl || req.url);
+          let streamed = 0;
+          req.on('data', (chunk: Buffer) => {
+            streamed += chunk.length;
+            if (streamed <= limit) return;
+            req.removeAllListeners('data');
+            proxyReq.destroy();
+            if (!res.headersSent) {
+              res.status(413).json(buildApiFailure('FILE_TOO_LARGE', '请求体超过大小限制', req.traceId ?? 'unknown'));
+            } else if (!res.writableEnded) {
+              res.end();
+            }
+          });
+        }
 
         // 注入链路追踪
         if (req.traceId) {
