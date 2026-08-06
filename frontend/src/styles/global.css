@@ -1,4 +1,4 @@
-﻿:root {
+:root {
   font-family: "Microsoft YaHei", "Microsoft YaHei UI", sans-serif;
   color: #303236;
   background: #f3f4f5;
@@ -1138,9 +1138,13 @@ input[type="password"]::-webkit-credentials-auto-fill-button { visibility: hidde
   animation: review-wheat-breeze 5.8s ease-in-out infinite alternate;
 }
 .game-stage__meta { color: rgb(255 238 214 / .9); text-shadow: 0 1px 8px rgb(31 20 31 / .45); }
-.game-stage .game-stage__meta { right: 78px; }
-.game-stage__fullscreen { position: absolute; z-index: 2; top: 16px; right: 18px; display: grid; width: 38px; height: 38px; padding: 0; border: 1px solid rgb(255 223 181 / .5); border-radius: 12px; place-items: center; color: #fff6e7; background: rgb(47 43 59 / .42); box-shadow: 0 5px 16px rgb(28 17 23 / .22); cursor: pointer; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
-.game-stage__fullscreen:hover { border-color: rgb(255 232 195 / .85); background: rgb(72 50 61 / .62); }
+.game-stage .game-stage__meta { right: 184px; }
+.game-stage__actions { position: absolute; z-index: 2; top: 16px; right: 18px; display: flex; align-items: center; gap: 8px; }
+.game-stage__end, .game-stage__fullscreen { border: 1px solid rgb(255 223 181 / .5); color: #fff6e7; background: rgb(47 43 59 / .42); box-shadow: 0 5px 16px rgb(28 17 23 / .22); cursor: pointer; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+.game-stage__end { height: 38px; padding: 0 14px; border-radius: 999px; font: inherit; font-size: 13px; font-weight: 700; }
+.game-stage__fullscreen { display: grid; width: 38px; height: 38px; padding: 0; border-radius: 12px; place-items: center; }
+.game-stage__end:hover:not(:disabled), .game-stage__fullscreen:hover { border-color: rgb(255 232 195 / .85); background: rgb(72 50 61 / .62); }
+.game-stage__end:disabled { opacity: .58; cursor: wait; }
 .game-stage__fullscreen svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
 .game-stage:fullscreen { width: 100vw; max-width: none; min-height: 100vh; height: 100vh; border: 0; border-radius: 0; }
 .game-stage .dialogue-panel { position: absolute; bottom: 94px; left: clamp(24px, 5vw, 62px); width: fit-content; max-width: min(760px, 86%); margin: 0; border-color: rgb(255 205 151 / .38); border-radius: 16px; color: #fff8ed; background: linear-gradient(125deg, rgb(55 42 60 / .53), rgb(30 49 65 / .48)); box-shadow: 0 12px 30px rgb(35 21 25 / .22); backdrop-filter: blur(11px) saturate(116%); -webkit-backdrop-filter: blur(11px) saturate(116%); }
@@ -1154,7 +1158,9 @@ input[type="password"]::-webkit-credentials-auto-fill-button { visibility: hidde
 .game-stage .dialogue-line__measure { visibility: hidden; pointer-events: none; }
 .game-stage .dialogue-line__typed { margin: 0; overflow-wrap: anywhere; }
 .game-stage .dialogue-line--narration { grid-template-columns: 1fr; }
-.game-stage .choice-list button { border-color: rgb(255 207 151 / .4); border-radius: 12px; color: #fff7e9; background: linear-gradient(115deg, rgb(117 65 49 / .76), rgb(78 50 65 / .76)); box-shadow: 0 5px 14px rgb(46 24 19 / .2); backdrop-filter: blur(10px) saturate(118%); -webkit-backdrop-filter: blur(10px) saturate(118%); }
+.game-stage .dialogue-panel { bottom: 138px; }
+.game-stage .choice-list { position: absolute; right: clamp(24px, 5vw, 62px); bottom: 28px; display: grid; width: min(440px, calc(100% - clamp(48px, 10vw, 124px))); grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.game-stage .choice-list button { min-height: 43px; padding: 9px 12px; font-size: 13px; line-height: 1.35; }.game-stage .choice-list button { border-color: rgb(255 207 151 / .4); border-radius: 12px; color: #fff7e9; background: linear-gradient(115deg, rgb(117 65 49 / .76), rgb(78 50 65 / .76)); box-shadow: 0 5px 14px rgb(46 24 19 / .2); backdrop-filter: blur(10px) saturate(118%); -webkit-backdrop-filter: blur(10px) saturate(118%); }
 .game-stage .choice-list button:hover:not(:disabled) { border-color: #ffe0ae; color: #fffaf1; background: linear-gradient(115deg, rgb(157 83 54 / .9), rgb(105 64 83 / .9)); transform: none; }
 .game-stage > .primary-button { justify-self: end; margin-top: 14px; padding: 12px 22px; border: 1px solid rgb(255 218 172 / .5); border-radius: 999px; color: #fff; background: linear-gradient(115deg, #cf714c, #8f596c); box-shadow: 0 8px 18px rgb(59 30 34 / .28); font-size: 14px; font-weight: 750; }
 .game-stage > .primary-button:hover:not(:disabled) { background: linear-gradient(115deg, #df8054, #a4647a); transform: translateY(-1px); }
