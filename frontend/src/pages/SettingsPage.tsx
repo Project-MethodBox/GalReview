@@ -100,7 +100,7 @@ export default function SettingsPage() {
   return (
     <AppShell>
       <main className="page settings-page">
-        <PageHeader title="个人设置" />
+        <PageHeader title="我的" />
         <div className="settings-layout">
           <aside className="settings-index" aria-label="设置分类">
             <h2>设置</h2>

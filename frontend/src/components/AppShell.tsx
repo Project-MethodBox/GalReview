@@ -6,12 +6,12 @@ import { resetWorkflow } from '../lib/workflow'
 import { GraphIcon, HomeIcon, KnowledgeIcon, LogoutIcon, MaterialsIcon, ReviewIcon, SettingsIcon } from './icons'
 
 const navigation = [
-  { to: '/home', label: '主页', icon: HomeIcon },
-  { to: '/materials', label: '资料', icon: MaterialsIcon },
-  { to: '/knowledge', label: '知识点', icon: KnowledgeIcon },
-  { to: '/knowledge-graph', label: '图谱', icon: GraphIcon },
-  { to: '/review', label: '复习', icon: ReviewIcon },
-  { to: '/settings', label: '设置', icon: SettingsIcon },
+  { to: '/home', label: '起点', icon: HomeIcon },
+  { to: '/materials', label: '藏书阁', icon: MaterialsIcon },
+  { to: '/knowledge', label: '拾知', icon: KnowledgeIcon },
+  { to: '/knowledge-graph', label: '识网', icon: GraphIcon },
+  { to: '/review', label: '回响', icon: ReviewIcon },
+  { to: '/settings', label: '我的', icon: SettingsIcon },
 ]
 
 export default function AppShell({ children }: { children: ReactNode }) {

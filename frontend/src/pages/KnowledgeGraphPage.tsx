@@ -169,7 +169,7 @@ export default function KnowledgeGraphPage() {
   return (
     <AppShell>
       <main className="page graph-page">
-        <PageHeader title="知识图谱" description={workflow.material?.displayName} actions={<>{graphVersions.length > 1 ? <label className="graph-version-control"><span>图谱版本</span><select value={graph?.graphId || ''} onChange={(event) => void switchGraph(event.target.value)}>{graphVersions.map((item) => <option key={item.graphId} value={item.graphId}>v{item.version} · {item.status}</option>)}</select></label> : null}<Link className="button graph-create-plan-button" to="/materials">创建计划</Link></>} />
+        <PageHeader title="识网" description={workflow.material?.displayName} actions={<>{graphVersions.length > 1 ? <label className="graph-version-control"><span>图谱版本</span><select value={graph?.graphId || ''} onChange={(event) => void switchGraph(event.target.value)}>{graphVersions.map((item) => <option key={item.graphId} value={item.graphId}>v{item.version} · {item.status}</option>)}</select></label> : null}<Link className="button graph-create-plan-button" to="/materials">创建计划</Link></>} />
         {!graph ? <section className="empty-state"><h2>还没有知识图谱</h2><Link className="button button--primary" to="/materials">上传资料</Link></section> : <>
           <section className="data-strip" aria-label="图谱概况"><div><span>章节</span><strong>{chapters.length || graph.chapterCount}</strong></div><div><span>知识点</span><strong>{points.length || graph.pointCount}</strong></div><div><span>关系</span><strong>{relations.length || graph.relationCount}</strong></div></section>
           {error ? <p className="status-line status-line--error" role="alert">{error}</p> : null}

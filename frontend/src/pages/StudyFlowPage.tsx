@@ -205,7 +205,7 @@ export default function StudyFlowPage() {
   return (
     <AppShell>
       <main className="page materials-page">
-        <PageHeader title="资料与学习计划" />
+        <PageHeader title="藏书阁" description="资料与学习计划" />
 
         <div className={`process-layout process-layout--${flowStep} process-layout--${flowAnimation}`}>
           <section className="process-primary">

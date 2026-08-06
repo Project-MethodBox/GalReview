@@ -738,7 +738,7 @@ useEffect(() => {
   }
 
   if (!initial.plan) {
-    return <AppShell><main className="page review-page"><PageHeader title="复习" /><section className="empty-state"><h2>还没有复习计划</h2><Link className="button button--primary" to="/materials">创建新复习计划</Link></section></main></AppShell>
+    return <AppShell><main className="page review-page"><PageHeader title="回响" /><section className="empty-state"><h2>还没有复习计划</h2><Link className="button button--primary" to="/materials">创建新复习计划</Link></section></main></AppShell>
   }
 
   function advanceDialogue() {

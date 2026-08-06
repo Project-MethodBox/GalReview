@@ -41,12 +41,13 @@ const pageTitles: Record<string, string> = {
   '/home': '起点',
   '/materials': '藏书阁',
   '/knowledge': '拾知',
-  '/knowledge-graph': '知网',
+  '/knowledge-graph': '识网',
   '/review': '回响',
   '/settings': '我的',
 }
 
 function Protected({ children }: { children: ReactNode }) {
+  const location = useLocation()
   const session = readSession()
   const [ready, setReady] = useState(false)
   const [valid, setValid] = useState(Boolean(session))
@@ -72,7 +73,7 @@ function Protected({ children }: { children: ReactNode }) {
   }, [session?.session.sessionId])
 
   if (!session || !valid) return <Navigate replace to="/login" state={{ message: '登录状态已失效，请重新登录。' }} />
-  if (!ready) return <main className="app-loading"><LoadingIndicator label="正在恢复学习资料" /></main>
+  if (!ready) return <main className="app-loading"><LoadingIndicator label={`正在加载${pageTitles[location.pathname] ?? '页面'}`} /></main>
   return children
 }
 
