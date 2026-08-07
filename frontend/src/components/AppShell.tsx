@@ -3,6 +3,7 @@ import { Link, NavLink, useLocation, useNavigate } from 'react-router'
 import { api } from '../lib/api'
 import { clearSession, readProfile, readSession } from '../lib/session'
 import { resetWorkflow } from '../lib/workflow'
+import BrandMark from './BrandMark'
 import { GraphIcon, HomeIcon, KnowledgeIcon, LogoutIcon, MaterialsIcon, ReviewIcon, SettingsIcon } from './icons'
 
 const navigation = [
@@ -36,7 +37,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
     <div className="app-shell">
       <header className="app-rail">
         <Link className="rail-brand" to="/home" aria-label="千知万理主页" title="千知万理">
-          <img className="brand-mark brand-mark--compact" src="/brand-logo.svg" alt="" aria-hidden="true" />
+          <BrandMark compact />
           <span><strong>千知万理</strong><small>GalReview</small></span>
         </Link>
         <nav className="rail-nav" aria-label="主要导航">
@@ -53,7 +54,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         </div>
       </header>
       <header className="mobile-shell-head">
-        <Link to="/home" aria-label="千知万理主页"><img className="brand-mark brand-mark--compact" src="/brand-logo.svg" alt="" aria-hidden="true" /><strong>千知万理</strong></Link>
+        <Link to="/home" aria-label="千知万理主页"><BrandMark compact /><strong>千知万理</strong></Link>
         <span>{currentNavigation?.label || '工作台'}</span>
         <button type="button" aria-label="退出登录" onClick={() => void logout()}><LogoutIcon /></button>
       </header>

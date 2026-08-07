@@ -24,6 +24,7 @@
 * { box-sizing: border-box; }
 html { min-width: 320px; min-height: 100%; background: var(--canvas); }
 body { min-width: 320px; min-height: 100vh; margin: 0; color: var(--ink); background: var(--canvas); font-family: "Microsoft YaHei", "Microsoft YaHei UI", sans-serif; }
+.brand-mark { display: block; flex: 0 0 auto; object-fit: contain; object-position: center; }
 button, input, select, textarea { font: inherit; font-family: "Microsoft YaHei", "Microsoft YaHei UI", sans-serif; }
 button, a { -webkit-tap-highlight-color: transparent; }
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid color-mix(in srgb, var(--ink) 28%, transparent); outline-offset: 2px; }
@@ -1829,8 +1830,10 @@ input[type="password"]::-webkit-credentials-auto-fill-button { visibility: hidde
 
 .auth-page--login .auth-entry-copy h1,
 .auth-page--register .auth-entry-copy h1,
-.auth-page--forgot .auth-entry-copy h1 {
+.auth-page--forgot .auth-entry-copy h1,
+.auth-page--admin .auth-entry-copy h1 {
   line-height: 1.16;
+  letter-spacing: -.025em;
 }
 
 /* Refined management console. Kept fully scoped so the learner workspace is unaffected. */
