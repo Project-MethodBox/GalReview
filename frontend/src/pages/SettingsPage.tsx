@@ -10,6 +10,7 @@ import type { ContentDifficulty, UserPreferencesInput, UserProfile } from '../ty
 const defaults: UserPreferencesInput = { dailyGoalMinutes: 30, contentDifficulty: 'STANDARD', reducedMotion: readReducedMotion() }
 
 type SettingsSection = 'profile' | 'learning' | 'security' | 'danger'
+type SupportedLocale = 'zh-CN' | 'en-US'
 
 const settingsSections: { id: SettingsSection; label: string }[] = [
   { id: 'profile', label: '个人资料' },
@@ -27,6 +28,7 @@ export default function SettingsPage() {
   const stored = readProfile()
   const [profile, setProfile] = useState<UserProfile | null>(stored)
   const [displayName, setDisplayName] = useState(stored?.displayName || '')
+  const [locale, setLocale] = useState<SupportedLocale>(stored?.locale === 'en-US' ? 'en-US' : 'zh-CN')
   const [subjectText, setSubjectText] = useState(stored?.preferredSubjectCodes.join(', ') || '')
   const [preferences, setPreferences] = useState<UserPreferencesInput>(defaults)
   const [passwords, setPasswords] = useState({ current: '', next: '', confirm: '' })
@@ -44,6 +46,7 @@ export default function SettingsPage() {
       saveReducedMotion(nextPreferences.reducedMotion)
       setProfile(nextProfile)
       setDisplayName(nextProfile.displayName)
+      setLocale(nextProfile.locale === 'en-US' ? 'en-US' : 'zh-CN')
       setSubjectText(nextProfile.preferredSubjectCodes.join(', '))
       setPreferences(nextPreferences)
     }).catch((reason: unknown) => {
@@ -61,8 +64,8 @@ export default function SettingsPage() {
     if (subjects.length > 10 || subjects.some((item) => !/^[A-Z][A-Z0-9_]{0,31}$/.test(item))) return setError('学科代码最多 10 项，只能使用大写字母、数字和下划线。')
     start('profile')
     try {
-      const next = await api.updateCurrentUser({ displayName: displayName.trim(), locale: 'zh-CN', preferredSubjectCodes: subjects })
-      saveProfile(next); setProfile(next); setSubjectText(next.preferredSubjectCodes.join(', ')); setMessage('个人资料已保存。')
+      const next = await api.updateCurrentUser({ displayName: displayName.trim(), locale, preferredSubjectCodes: subjects })
+      saveProfile(next); setProfile(next); setLocale(next.locale === 'en-US' ? 'en-US' : 'zh-CN'); setSubjectText(next.preferredSubjectCodes.join(', ')); setMessage('个人资料已保存。')
     } catch (reason) { setError(reason instanceof Error ? reason.message : '个人资料保存失败。') } finally { setBusy(null) }
   }
 
@@ -125,7 +128,7 @@ export default function SettingsPage() {
             <form className="form-section" id="profile-settings" onSubmit={submitProfile}>
               <header><h2>个人资料</h2></header>
               <label>显示名称<input maxLength={64} required value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label>
-              <div className="settings-language"><span>界面语言</span><strong>简体中文</strong></div>
+              <label className="settings-language">界面语言<select value={locale} onChange={(event) => setLocale(event.target.value as SupportedLocale)}><option value="zh-CN">简体中文</option><option value="en-US">English</option></select></label>
               <label>偏好学科<input value={subjectText} onChange={(event) => setSubjectText(event.target.value)} placeholder="GENERAL, AGRONOMY" /><small>逗号或空格分隔，最多 10 项。</small></label>
               <button className="button button--primary" disabled={busy !== null} type="submit">{busy === 'profile' ? '正在保存' : '保存资料'}</button>
             </form>

@@ -19,6 +19,12 @@ function ingestionText(job: IngestionJob) {
   return `正在提取文字 · ${job.progress}%`
 }
 
+function formatUploadTime(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '上传时间未知'
+  return `上传于 ${date.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })}`
+}
+
 export default function StudyFlowPage() {
   const navigate = useNavigate()
   const initial = readWorkflow()
@@ -205,7 +211,7 @@ export default function StudyFlowPage() {
   return (
     <AppShell>
       <main className="page materials-page">
-        <PageHeader title="藏书阁" description="资料与学习计划" />
+        <PageHeader title="藏书阁" />
 
         <div className={`process-layout process-layout--${flowStep} process-layout--${flowAnimation}`}>
           <section className="process-primary">
@@ -217,7 +223,7 @@ export default function StudyFlowPage() {
               <label>学科代码<input value={subjectCode} onChange={(event) => setSubjectCode(event.target.value.toUpperCase())} pattern="[A-Z][A-Z0-9_]{0,31}" placeholder="GENERAL" /></label>
               <div className="option-row">
                 <label className="toggle-field"><span><strong>启用 OCR</strong><small>仅在图片或扫描件需要时开启。</small></span><input type="checkbox" role="switch" aria-label="启用 OCR" checked={enableOcr} onChange={(event) => setEnableOcr(event.target.checked)} /></label>
-                <label className="inline-select-field"><span>OCR 模式</span><select aria-label="OCR 模式" disabled={!enableOcr} value={ocrMode} onChange={(event) => setOcrMode(event.target.value as 'quick' | 'standard')}><option value="standard">标准</option><option value="quick">快速</option></select></label>
+                <label className={`inline-select-field${enableOcr ? ' is-enabled' : ''}`}><span>OCR 模式</span><select aria-label="OCR 模式" disabled={!enableOcr} value={ocrMode} onChange={(event) => setOcrMode(event.target.value as 'quick' | 'standard')}><option value="standard">标准</option><option value="quick">快速</option></select></label>
               </div>
               <label className="toggle-field compact-toggle"><span><strong>重新提取</strong><small>再次处理已完成的资料并更新提取结果。</small></span><input type="checkbox" role="switch" aria-label="重新提取" checked={force} onChange={(event) => setForce(event.target.checked)} /></label>
               <button className="button button--primary" disabled={busy} type="submit">{busy ? '正在处理' : '上传并构建图谱'}</button>
@@ -227,7 +233,7 @@ export default function StudyFlowPage() {
             <section className="material-library">
               <header><div><h2>资料库</h2><p>{materials.filter((item) => item.status !== 'DELETED').length} 份资料</p></div><input aria-label="搜索资料" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索资料" /></header>
               <div className="material-table">
-                {visibleMaterials.map((item) => <article className={material?.materialId === item.materialId ? 'selected' : ''} key={item.materialId}><button className="material-open" type="button" disabled={busy} onClick={() => void processMaterial(item)}><span><strong>{item.displayName}</strong><small>{item.originalFileName}</small>{item.ocrUsed ? <em className="material-ocr-badge">OCR</em> : null}</span><em className={`material-status material-status--${item.status.toLowerCase()}`}>{item.status}</em></button><div className="material-actions">{item.status === 'READY' ? <button type="button" disabled={previewBusy} onClick={() => void openTextPreview(item)}>文本</button> : null}<button className="material-delete" type="button" disabled={busy && item.status !== 'PROCESSING'} onClick={() => void deleteMaterial(item)}>删除</button></div></article>)}
+                {visibleMaterials.map((item) => <article className={material?.materialId === item.materialId ? 'selected' : ''} key={item.materialId}><button className="material-open" type="button" disabled={busy} onClick={() => void processMaterial(item)}><span><strong>{item.displayName}</strong><small>{formatUploadTime(item.createdAt)}</small>{item.ocrUsed ? <em className="material-ocr-badge">OCR</em> : null}</span><em className={`material-status material-status--${item.status.toLowerCase()}`}>{item.status}</em></button><div className="material-actions">{item.status === 'READY' ? <button type="button" disabled={previewBusy} onClick={() => void openTextPreview(item)}>文本</button> : null}<button className="material-delete" type="button" disabled={busy && item.status !== 'PROCESSING'} onClick={() => void deleteMaterial(item)}>删除</button></div></article>)}
                 {!visibleMaterials.length ? <p className="empty-row">没有匹配的资料。</p> : null}
               </div>
               {graph && flowStep === 'materials' ? <button className="button button--primary flow-next-button" type="button" disabled={busy} onClick={() => moveToStep('scope')}>选择复习范围 →</button> : null}
