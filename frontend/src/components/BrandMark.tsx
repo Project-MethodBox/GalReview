@@ -1,19 +1,10 @@
 export default function BrandMark({ compact = false }: { compact?: boolean }) {
   return (
-    <svg className={`brand-mark${compact ? ' brand-mark--compact' : ''}`} viewBox="0 0 272 154" xmlns="http://www.w3.org/2000/svg" xmlnsXlink="http://www.w3.org/1999/xlink" width="272.000000" height="154.000000" fill="none">
-      <g id="组合 1">
-        <rect id="矩形 4" width="25.961983" height="107.556786" x="0.000000" y="0.000000" rx="12.980991" fill="currentColor" transform="matrix(0.705972,-0.708239,0.705972,0.708239,177.739,18.3873)" />
-        <rect id="矩形 5" width="25.961983" height="53.778393" x="0.000000" y="0.000000" rx="12.980991" fill="currentColor" transform="matrix(0.705972,-0.708239,0.705972,0.708239,59.2466,18.3873)" />
-        <rect id="矩形 6" width="25.961985" height="107.556763" x="0.000000" y="0.000000" rx="12.980992" fill="currentColor" transform="matrix(-0.705972,-0.708239,-0.705972,0.708239,94.2607,18.3873)" />
-        <rect id="矩形 7" width="25.961985" height="89.012497" x="0.000000" y="0.000000" rx="12.980992" fill="currentColor" transform="matrix(-0.705972,-0.708239,-0.705972,0.708239,212.753,18.3873)" />
-        <rect id="矩形 13" width="25.961983" height="64.248413" x="0.000000" y="0.000000" rx="1.000000" fill="currentColor" transform="matrix(-0.705972,-0.708239,-0.705972,0.708239,195.271,35.9263)" />
-        <rect id="矩形 8" width="25.961985" height="107.556793" x="0.000000" y="0.000000" rx="12.980992" fill="currentColor" transform="matrix(0.705972,0.708239,0.705972,-0.708239,177.739,135.613)" />
-        <rect id="矩形 9" width="25.961985" height="89.012497" x="0.000000" y="0.000000" rx="12.980992" fill="currentColor" transform="matrix(0.705972,0.708239,0.705972,-0.708239,59.2466,135.613)" />
-        <rect id="矩形 12" width="25.961983" height="58.505898" x="0.000000" y="0.000000" rx="1.000000" fill="currentColor" transform="matrix(0.705972,0.708239,0.705972,-0.708239,80.7832,114.007)" />
-        <rect id="矩形 10" width="25.961985" height="107.556763" x="0.000000" y="0.000000" rx="12.980992" fill="currentColor" transform="matrix(-0.705972,0.708239,-0.705972,-0.708239,94.2607,135.613)" />
-        <rect id="矩形 11" width="25.961985" height="53.778385" x="0.000000" y="0.000000" rx="12.980992" fill="currentColor" transform="matrix(-0.705972,0.708239,-0.705972,-0.708239,212.753,135.613)" />
-      </g>
-    </svg>
-
+    <img
+      className={`brand-mark${compact ? ' brand-mark--compact' : ''}`}
+      src="/brand-logo.svg"
+      alt=""
+      aria-hidden="true"
+    />
   )
 }
