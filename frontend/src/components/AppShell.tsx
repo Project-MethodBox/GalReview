@@ -76,7 +76,7 @@ export function PageHeader({
   actions?: ReactNode
 }) {
   return (
-    <header className="page-header">
+    <header className={`page-header${description ? ' page-header--has-description' : ''}${actions ? ' page-header--has-actions' : ''}`}>
       <div className="page-header__copy">
         <div><h1>{title}</h1>{description ? <p>{description}</p> : null}</div>
       </div>

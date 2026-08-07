@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router'
-import AppShell, { PageHeader } from '../components/AppShell'
+import AppShell from '../components/AppShell'
 import { GraphIcon, KnowledgeIcon, MaterialsIcon, ReviewIcon } from '../components/icons'
 import { api } from '../lib/api'
 import { readProfile, saveProfile } from '../lib/session'
@@ -37,15 +37,13 @@ export default function HomePage() {
   return (
     <AppShell>
       <main className="page home-dashboard">
-        <PageHeader title="起点" actions={(
+        {message ? <p className="status-line" role="status">{message}</p> : null}
+
+        <section className="home-welcome">
           <label className="toggle-field home-theme-toggle">
             <span><strong>深色模式</strong></span>
             <input type="checkbox" role="switch" aria-label="深色模式" checked={colorTheme === 'dark'} onChange={(event) => changeColorTheme(event.target.checked ? 'dark' : 'light')} />
           </label>
-        )} />
-        {message ? <p className="status-line" role="status">{message}</p> : null}
-
-        <section className="home-welcome">
           <div className="home-welcome__intro">
             <div><span>{resume.step}</span><h2>欢迎回来，{profile?.displayName || '学习者'}</h2><p>{resume.detail}</p></div>
             {resume.action === '选择复习范围' ? null : <Link className="button button--primary" to={resume.to}>{resume.action}</Link>}
