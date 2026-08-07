@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-route
 import ForgotPasswordPage from './pages/ForgotPasswordPage'
 import AdminLoginPage from './pages/AdminLoginPage'
 import AdminPage from './pages/AdminPage'
+import LandingPage from './pages/LandingPage'
 import HomePage from './pages/HomePage'
 import KnowledgeGraphPage from './pages/KnowledgeGraphPage'
 import KnowledgePointsPage from './pages/KnowledgePointsPage'
@@ -95,13 +96,17 @@ function AnimatedRoutes() {
   }, [location.pathname])
 
   useEffect(() => {
-    document.title = `${pageTitles[location.pathname] ?? '页面未找到'} · 千知万理`
+    if (location.pathname === '/') {
+      document.title = '千知万理 — 知识有图谱，复习有剧情'
+    } else {
+      document.title = `${pageTitles[location.pathname] ?? '页面未找到'} · 千知万理`
+    }
   }, [location.pathname])
 
   return (
     <div className={`route-transition route-transition--${direction}`} key={location.key}>
       <Routes location={location}>
-        <Route path="/" element={<Navigate replace to={readSession() ? '/home' : '/login'} />} />
+        <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
