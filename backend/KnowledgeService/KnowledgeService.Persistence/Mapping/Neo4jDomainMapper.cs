@@ -43,7 +43,8 @@ internal static class Neo4jDomainMapper
             Neo4jPropertyReader.NullableString(properties, "errorCode"),
             Neo4jPropertyReader.NullableString(properties, "errorMessage"),
             Neo4jPropertyReader.DateTimeOffset(properties, "createdAt"),
-            Neo4jPropertyReader.DateTimeOffset(properties, "updatedAt"));
+            Neo4jPropertyReader.DateTimeOffset(properties, "updatedAt"),
+            Neo4jPropertyReader.NullableGuid(properties, "studyProjectId"));
     }
 
     public static KnowledgeGraph Graph(
@@ -71,7 +72,8 @@ internal static class Neo4jDomainMapper
             chapters,
             points,
             relations,
-            Neo4jPropertyReader.DateTimeOffset(properties, "createdAt"));
+            Neo4jPropertyReader.DateTimeOffset(properties, "createdAt"),
+            Neo4jPropertyReader.NullableGuid(properties, "studyProjectId"));
     }
 
     public static KnowledgeGraphSummary GraphSummary(INode graph)
@@ -89,7 +91,8 @@ internal static class Neo4jDomainMapper
                 properties,
                 "status"),
             Neo4jPropertyReader.String(properties, "textChecksum"),
-            Neo4jPropertyReader.DateTimeOffset(properties, "createdAt"));
+            Neo4jPropertyReader.DateTimeOffset(properties, "createdAt"),
+            Neo4jPropertyReader.NullableGuid(properties, "studyProjectId"));
     }
 
     public static Chapter Chapter(INode node)

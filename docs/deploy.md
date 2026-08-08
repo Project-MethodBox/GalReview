@@ -174,6 +174,55 @@ docker compose --env-file .env -f compose.integration.yaml config --profiles
 PracticeService publish 与容器镜像同时包含 `THIRD_PARTY_LICENSES/ReciteHelper.LICENSE` 和
 `NOTICE.md`；部署裁剪镜像时不得只复制 DLL/模型而移除许可证文件。
 
+### 经典复习项目主线更新的部署顺序
+
+本版没有新增容器、端口、数据库或环境变量，但收紧了 PracticeService 与 KnowledgeService 的业务契约，把
+KnowledgeService mastery 算法升级为 `sm2-graph-v2`，并把前端入口
+从全局 GalReview 计划切到研习册上下文。图谱所有权同时由 material 改为 StudyProject，新增
+KnowledgeService ↔ PracticeService 的两条受信作用域核验路由；Gateway 路由表也随之更新。四者必须
+作为一个发布单元。推荐顺序：
+
+```bash
+docker compose --env-file .env -f compose.integration.yaml build knowledge-service practice-service gateway frontend
+docker compose --env-file .env -f compose.integration.yaml up -d --wait knowledge-service practice-service gateway frontend
+```
+
+兼容与回滚边界：
+
+- 新建研习册先以 `graphId=null` 落库，再用 `studyProjectId + materialId` 构建本册图谱、PATCH 绑定并自动成题。
+  藏书阁不得提前构图。中断态与旧包的 `graphId=null` 数据不迁移、不删除；本册“恢复自动成题”会先恢复识网。
+- KnowledgeService 启动时删除旧 `(ownerUserId, materialId, version)` 唯一约束，创建
+  `(ownerUserId, studyProjectId, version)` 约束与索引。旧图不改写、不删除，缺少 `studyProjectId` 时只按
+  既有 graphId 兼容读取，不能绑定给新册。回滚到旧 KnowledgeService 前必须停止新立册写入，否则旧服务
+  会把同资料不同研习册错误视为同一版本序列。
+- 图谱项目中历史 `READY` 且 `knowledgePointId=null` 的题目不会计入“可练习题”，也不会进入计分会话；
+  用户在题库中“补签入库”后恢复使用。Mongo 不需要离线 schema migration。
+- 自动成题必须携带 OPEN plan/snapshot；滚动发布期间旧前端仍发送无 plan 请求时会得到
+  `400 PLAN_REQUIRED`，因此不要长时间混跑新 PracticeService 与旧前端。
+- 每次章节练习、模拟试卷与故事回响都创建新 PlanGraph。已完成或过期计划不得因重启、回滚或恢复
+  localStorage 再次使用；遇到 `REVIEW_PLAN_NOT_OPEN` 应回到研习册重新开始。
+- `sm2-graph-v2` 不迁移既有 mastery 行：下一次直接作答会把展示 score 更新为本次 quality 的
+  直接投影，并继续推进原有 SM-2 interval/easiness/repetitions。新旧 KnowledgeService 实例不得
+  长时间混跑，否则同一用户会看到两种 score 语义；滚动发布应先停止新会话结果提交，再整体替换。
+- `sm2-graph-v2` 不再为未作答的前置或后继知识点写入推断分。发布后，图谱继续参与到期目标覆盖，
+  但只有明确绑定该知识点的普通练习、试卷或故事作答可以改变该点 mastery。
+- 2026-08-09 的前端顺序调整不改变 API、路由、容器或环境变量；只需重新构建并替换 `frontend`。
+  发布后确认侧栏与首页均为“藏书阁”先于“研习册”，且 `/projects` 的“立册”表单随页面正常滚动，
+  不再 sticky 覆盖其下方的项目包导入区。
+- 同日的研习入口可用性修正仍是纯前端发布：无 READY 题时显示“题库待成”，入口点击后在调用
+  assessment-plan API 前给出成题/核对指引。验收时需确认普通不可用按钮使用 `not-allowed`，只有
+  `aria-busy=true` 的真实进行中操作显示等待光标。
+- 恢复“立册即成题”需要同时发布 `gateway`、`knowledge-service`、`practice-service` 与 `frontend`：前端在创建册后
+  先调用现有构图接口并绑定项目，再复用章节、assessment-plan 和 question-generation 接口完成编排；PracticeService 将通过唯一知识点、答案及
+  精确 SourceReference 校验的 `recite-question-v1` 结果直接保存为 READY。首次生成不请求判断题；当前 PracticeService
+  还保证在题数足够时先覆盖单选、填空、名词解释、简答四类，再重复任一题型。只替换前端无法获得这一保证，
+  发布时必须重建并替换 `practice-service`。
+  滚动发布时先替换 Gateway、PracticeService、KnowledgeService，再替换 Frontend；旧前端的资料级构图请求会因缺少
+  `studyProjectId` 得到 400，故部署窗口内应暂停售新立册。新前端遇到
+  credits 不足或生成失败会保留已建立的册并引导到同册重试，不会重复立册。
+- 回滚应用镜像不会回滚已经写入的题目绑定和 mastery。需要回滚时先停止新会话入口，等待活动会话
+  完成或明确放弃，再回滚 `practice-service` 与 `frontend`；不得回滚 Neo4j/Mongo 数据卷来撤销学习记录。
+
 ### 默认服务
 
 ```bash
@@ -309,7 +358,7 @@ docker compose --env-file .env -f compose.integration.yaml up -d --no-deps --wai
 | `knowledge-service` | `backend/KnowledgeService/KnowledgeService.API/Dockerfile` | 依赖 `neo4j`，构图时经 Gateway 读取 FileService 文本 |
 | `galgame-service` | `backend/GalGameService/Dockerfile` | 经 Gateway 读取 KnowledgeService PlanGraph，并在生成前后调用 CreditService 预授权/结算；任务和包持久化到 `qzwl_galgame` |
 | `render-service` | `backend/RenderService/Dockerfile` | 编译并自检 `cpp-wasm-0.2.0` runtime，公开 WASM 与 JS Adapter，并提供 ReviewSession、进度快照、作答和同步证据提交 |
-| `practice-service` | `backend/PracticeService/Dockerfile` | 发布 `PracticeService.API`；内部为 API/Application/Domain/Persistence 四层并由 MediatR CQRS 解耦；依赖 `mongo`、Gateway、File/Knowledge/Credit 内部契约及本地模型资产；题库生成预授权并按实际内容结算；共享 `.qzwlp` 存 GridFS |
+| `practice-service` | `backend/PracticeService/Dockerfile` | 发布 `PracticeService.API`；内部为 API/Application/Domain/Persistence 四层并由 MediatR CQRS 解耦；依赖 `mongo`、Gateway、File/Knowledge/Credit 内部契约及本地模型资产；按 PlanGraph 目标生成带知识点/原文证据的 READY 确定性题目，不能机械校验的导入/未来模型结果保持 DRAFT；章节练习和试卷完成后提交 mastery；题库生成预授权并按实际内容结算；共享 `.qzwlp` 存 GridFS |
 | `credit-service` | `backend/CreditService/Dockerfile` | API/Application/Domain/Persistence 四层，Application 使用 MediatR CQRS；依赖 `credit-mysql`，内部端口 `5108`，不向宿主发布 |
 | `frontend` | `frontend/Dockerfile` | 生产静态构建；容器内 Node 服务通过 `GATEWAY_UPSTREAM` 同源代理 `/api` |
 | `ocr-service` | `backend/OCRService/Dockerfile` | `ocr` profile；只允许 FileService 在内部网络调用 |
@@ -511,7 +560,7 @@ OCR 镜像较大，首次加载模型也需要时间。检查容器资源、模�
 - Practice 题目生成与 GalGame 游戏生成在开始前预授权，credits 不足时返回 402；成功按实际用量扣除，失败释放 held，页面不展示内部 token 换算；
 - PracticeService 四层项目构建和测试通过，`/readyz` 模型哈希状态与镜像内资产一致；
 - 普通 Practice 会话和 Render 视觉小说会话都只能经受信身份向 KnowledgeService 提交证据，重复提交不二次更新 mastery；
-- 一次完成会关闭对应评估计划；若同一资料库先做普通练习再做故事复习，应从同一 graph 新建第二个不可变评估计划，不能复用已完成计划，否则应得到 `REVIEW_PLAN_NOT_OPEN`；
+- 一次完成会关闭对应评估计划；若同一研习册先做普通练习再做故事复习，应从该册 graph 新建第二个不可变评估计划，不能复用已完成计划，否则应得到 `REVIEW_PLAN_NOT_OPEN`；相同资料建立的另一研习册必须使用自己的 graph；
 - RenderService 检查 C++/WASM 自检、manifest、会话、同步证据与掌握度更新；异步消息总线未实现时明确标注未测；
 - 未启动 `ocr` profile 时，测试结论不包含 OCR；
 - 日志和配置输出不含密码、令牌、服务密钥或第三方 API key；

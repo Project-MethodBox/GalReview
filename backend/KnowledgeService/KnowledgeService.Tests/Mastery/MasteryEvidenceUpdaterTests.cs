@@ -11,7 +11,7 @@ namespace KnowledgeService.Tests.Mastery;
 public sealed class MasteryEvidenceUpdaterTests
 {
     [Fact]
-    public void Shared_prerequisite_receives_one_bounded_positive_inference()
+    public void Correct_assessment_updates_only_answered_points()
     {
         var graph = GraphFixture.CreateHubGraph();
         var requestedChapter = graph.Chapters.Single(chapter => chapter.Title == "目标章节");
@@ -46,17 +46,12 @@ public sealed class MasteryEvidenceUpdaterTests
             submission,
             submission.CompletedAt);
         var foundation = graph.Points.Single(point => point.Title == "生态学");
-        var inferred = result.Changes.Where(change =>
-            change.PointId == foundation.PointId &&
-            !change.DirectEvidence).ToArray();
-
-        Assert.Single(inferred);
-        Assert.All(inferred, change => Assert.InRange(change.NewScore, 0.01, 5));
-        var inferredState = Assert.Single(
-            result.States,
-            state => state.PointId == foundation.PointId);
-        Assert.Equal(graph.CreatedAt, inferredState.NextReviewAt);
-        Assert.Null(inferredState.LastReviewedAt);
+        Assert.Equal(targets.Length, result.Changes.Count);
+        Assert.All(result.Changes, change => Assert.True(change.DirectEvidence));
+        Assert.All(result.States, state =>
+            Assert.Contains(state.PointId, targets.Select(target => target.PointId)));
+        Assert.DoesNotContain(result.States, state =>
+            state.PointId == foundation.PointId);
     }
 
     [Fact]
@@ -101,7 +96,7 @@ public sealed class MasteryEvidenceUpdaterTests
     }
 
     [Fact]
-    public void Diamond_inference_uses_stronger_path_not_low_confidence_shortcut()
+    public void Correct_answer_does_not_change_unanswered_prerequisite()
     {
         var graph = GraphFixture.CreateDiamondGraph();
         var requestedChapter = graph.Chapters.Single(
@@ -147,22 +142,21 @@ public sealed class MasteryEvidenceUpdaterTests
             submission,
             submission.CompletedAt);
 
-        var inferred = Assert.Single(
-            result.Changes,
-            change =>
-                change.PointId == foundation.PointId &&
-                !change.DirectEvidence);
-        Assert.Contains("depth=2", inferred.Reason);
+        var direct = Assert.Single(result.Changes);
+        Assert.True(direct.DirectEvidence);
+        Assert.Equal(target.PointId, direct.PointId);
+        Assert.DoesNotContain(result.States, state =>
+            state.PointId == foundation.PointId);
     }
 
     [Theory]
-    [InlineData(0, false, 32.5, 0, 1)]
-    [InlineData(1, false, 39.5, 0, 1)]
-    [InlineData(2, false, 46.5, 0, 1)]
-    [InlineData(3, true, 53.5, 1, 0)]
-    [InlineData(4, true, 60.5, 1, 0)]
-    [InlineData(5, true, 67.5, 1, 0)]
-    public void Direct_update_uses_fixed_quality_mapping(
+    [InlineData(0, false, 0, 0, 1)]
+    [InlineData(1, false, 20, 0, 1)]
+    [InlineData(2, false, 40, 0, 1)]
+    [InlineData(3, true, 60, 1, 0)]
+    [InlineData(4, true, 80, 1, 0)]
+    [InlineData(5, true, 100, 1, 0)]
+    public void Direct_update_projects_quality_without_a_mixed_learning_rate(
         int quality,
         bool correct,
         double expectedScore,
@@ -322,7 +316,7 @@ public sealed class MasteryEvidenceUpdaterTests
     }
 
     [Fact]
-    public void Skips_inference_when_ancestor_has_newer_direct_review()
+    public void Unanswered_ancestor_state_is_never_emitted()
     {
         var graph = GraphFixture.CreateHubGraph();
         var requestedChapter = graph.Chapters.Single(

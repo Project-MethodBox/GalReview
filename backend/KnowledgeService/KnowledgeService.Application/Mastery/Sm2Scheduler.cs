@@ -14,12 +14,11 @@ internal static class Sm2Scheduler
         DateTimeOffset now,
         string purpose)
     {
-        var observedScore = quality / 5d * 100;
-        const double learningRate = 0.35;
-        var score = Math.Clamp(
-            current.Score + learningRate * (observedScore - current.Score),
-            0,
-            100);
+        // SM-2 already carries the longitudinal state in repetitions,
+        // interval and easiness. Score is only the latest direct observation
+        // shown to the learner; an uncalibrated exponential moving average
+        // would add a second, arbitrary memory model.
+        var score = quality / 5d * 100;
 
         var difference = 5 - quality;
         var easiness = Math.Max(

@@ -50,7 +50,7 @@ public sealed class AssessmentPlanner
             .Where(point => universe.Contains(point.PointId))
             .ToDictionary(
                 point => point.PointId,
-                point => ReviewNeedModel.ForgettingRisk(
+                point => ReviewNeedModel.DueNeed(
                     mastery.GetValueOrDefault(point.PointId),
                     now));
         var totalNeed = Math.Max(need.Values.Sum(), 1e-9);

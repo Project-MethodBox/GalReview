@@ -24,8 +24,8 @@ export default function AuthLayout({ children, page, storyCardVariant }: AuthLay
   const story = isAdmin
     ? {
         eyebrow: 'MOONSTONE ADMIN',
-        title: <>管理学习账户，<br />维护项目准入。</>,
-        description: '管理员可管理已注册用户、重置用户密码，并创建、复制或删除注册邀请码。',
+        title: <>管理学习账户，<br />维护研习用量。</>,
+        description: '管理员可管理已注册用户、重置用户密码，并生成、批量管理 credits 兑换码。',
       }
     : isPasswordRecovery
     ? {
@@ -34,9 +34,9 @@ export default function AuthLayout({ children, page, storyCardVariant }: AuthLay
         description: '提交登录邮箱后，系统会发送验证码。重设密码后，旧登录会话将自动失效。',
       }
     : {
-        eyebrow: '知识图谱驱动的互动复习',
-        title: <>知识有图谱，<br />复习有剧情。</>,
-        description: '上传资料、梳理知识、进入剧情，在每一次选择中完成更有记忆点的复习。',
+        eyebrow: '智能解析与循序复习',
+        title: <>一卷成册，<br />循知而习。</>,
+        description: '收录资料、梳理识网、生成题笺，再由 SM-2 安排每一次恰到其时的温习。',
       }
   const cardVariant = storyCardVariant ?? (page === 'login' || isAdmin ? 'blue' : 'black')
 
@@ -57,19 +57,19 @@ export default function AuthLayout({ children, page, storyCardVariant }: AuthLay
 
           <div className="auth-entry-card-stack" aria-hidden="true">
             <div className={`auth-entry-card auth-entry-card--${cardVariant} auth-entry-card--one`}>
-              <small>{isAdmin ? '项目准入管理' : cardVariant === 'blue' ? '下一段复习剧情' : '一次真实复习闭环'}</small>
-              <strong>{isAdmin ? '邀请码按规则生成' : cardVariant === 'blue' ? '发现薄弱点，再做出选择' : '资料 → 图谱 → 剧情 → 掌握度'}</strong>
-              <span>{isAdmin ? '支持一次性、多次与限时邀请码。' : cardVariant === 'blue' ? '让每一次复习都有继续探索的理由。' : '在每一个选择中巩固知识点。'}</span>
+              <small>{isAdmin ? '研习用量管理' : cardVariant === 'blue' ? '今天应当温习' : '一次完整复习闭环'}</small>
+              <strong>{isAdmin ? '兑换码按批次生成' : cardVariant === 'blue' ? '循着遗忘风险，重访薄弱处' : '资料 → 立册 → 识网 → 题笺'}</strong>
+              <span>{isAdmin ? '支持批量生成、查询与状态管理。' : cardVariant === 'blue' ? '由知识关系补足前置与相邻概念。' : '普通答题与故事回响共用同一份记录。'}</span>
             </div>
             <div className={`auth-entry-card auth-entry-card--${cardVariant === 'blue' ? 'black' : 'blue'} auth-entry-card--two`}>
-              <small>{cardVariant === 'blue' ? '一次真实复习闭环' : '下一段复习剧情'}</small>
-              <strong>{cardVariant === 'blue' ? '资料 → 图谱 → 剧情 → 掌握度' : '发现薄弱点，再做出选择'}</strong>
-              <span>{cardVariant === 'blue' ? '在每一个选择中巩固知识点。' : '让每一次复习都有继续探索的理由。'}</span>
+              <small>{cardVariant === 'blue' ? '一次完整复习闭环' : '今天应当温习'}</small>
+              <strong>{cardVariant === 'blue' ? '资料 → 立册 → 识网 → 题笺' : '循着遗忘风险，重访薄弱处'}</strong>
+              <span>{cardVariant === 'blue' ? '普通答题与故事回响共用同一份记录。' : '由知识关系补足前置与相邻概念。'}</span>
             </div>
             <div className="auth-entry-card auth-entry-card--three">
               <small>今天的复习目标</small>
-              <strong>从一个知识点，走进一段剧情</strong>
-              <span>把理解、选择与记忆串成属于你的学习路径。</span>
+              <strong>从一册题笺，重访今日所学</strong>
+              <span>故事回响始终是研习册内可选择的复习方式。</span>
             </div>
           </div>
         </aside>

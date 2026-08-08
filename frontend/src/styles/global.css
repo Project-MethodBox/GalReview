@@ -78,7 +78,8 @@ input[type="password"]::-webkit-credentials-auto-fill-button { visibility: hidde
 .app-shell .page-header__actions .button.button--quiet { min-height: auto; padding: 4px 2px; border: 0; border-radius: 0; color: #7a838e; background: transparent; font-size: 12px; font-weight: 600; }
 .app-shell .page-header__actions .button.button--quiet:hover:not(:disabled) { border: 0; color: #3f4852; background: transparent; text-decoration: underline; text-underline-offset: 3px; transform: none; }
 .quiet-action-divider { width: 1px; height: 14px; background: #d9dde2; }
-.button:disabled { cursor: wait; opacity: .56; }
+.button:disabled { cursor: not-allowed; opacity: .56; }
+.button[aria-busy="true"]:disabled { cursor: wait; }
 .status-line { margin: 24px 0 0; padding: 13px 15px; border-left: 3px solid var(--surface-strong); color: var(--muted); background: color-mix(in srgb, var(--surface-soft) 62%, transparent); line-height: 1.5; }
 .status-line--error { border-left-color: var(--danger); color: var(--danger); }
 .empty-state { display: grid; justify-items: start; width: min(660px, 100%); margin-top: 12vh; padding: 34px 0; row-gap: 28px; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
@@ -3160,6 +3161,11 @@ input[type="password"]::-webkit-credentials-auto-fill-button { visibility: hidde
 .practice-mode-grid h2, .practice-tools h2 { margin: 0; }
 .practice-mode-grid p { min-height: 72px; margin: 0; color: var(--muted); line-height: 1.65; }
 .practice-tools { margin-bottom: 20px; }
+.practice-readiness-note { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 20px; padding: 18px 22px; border: 1px solid var(--rule); border-left: 3px solid var(--surface-strong); background: var(--surface-soft); }
+.practice-readiness-note > div { display: grid; gap: 6px; }
+.practice-readiness-note strong { font-size: 17px; }
+.practice-readiness-note p { max-width: 760px; margin: 0; color: var(--muted); line-height: 1.65; }
+.practice-readiness-note .button { flex: 0 0 auto; }
 .practice-tools > div { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-top: 18px; }
 .practice-tools label { display: grid; gap: 6px; min-width: 210px; color: var(--muted); font-size: 12px; }
 .practice-tools select, .practice-tools input, .practice-resource-search input { min-height: 42px; padding: 8px 12px; border: 1px solid var(--rule); border-radius: 12px; color: var(--ink); background: var(--field); }
@@ -3168,7 +3174,8 @@ input[type="password"]::-webkit-credentials-auto-fill-button { visibility: hidde
 .practice-project-list > a:hover { color: #0D72D9; }
 .practice-project-list > a > span:first-child { display: grid; gap: 5px; }
 .practice-project-list small, .practice-question-list small { color: var(--muted); }
-.practice-project-create, .practice-question-create { position: sticky; top: 112px; }
+.practice-project-create { position: static; }
+.practice-question-create { position: sticky; top: 112px; }
 .practice-question-create textarea, .practice-written-answer textarea { width: 100%; padding: 12px 14px; resize: vertical; border: 1px solid var(--rule); border-radius: 16px; color: var(--ink); background: var(--field); line-height: 1.6; }
 .practice-question-list article { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 16px 4px; border-bottom: 1px solid var(--rule); }
 .practice-question-list article > span { color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -3209,6 +3216,8 @@ input[type="password"]::-webkit-credentials-auto-fill-button { visibility: hidde
 @media (max-width: 620px) {
   .practice-mode-grid { grid-template-columns: 1fr; }
   .practice-mode-grid article { min-height: 0; }
+  .practice-readiness-note { align-items: stretch; flex-direction: column; }
+  .practice-readiness-note .button { align-self: start; }
   .practice-resource-search { align-items: stretch; flex-direction: column; }
 }
 
@@ -3311,4 +3320,42 @@ input[type="password"]::-webkit-credentials-auto-fill-button { visibility: hidde
     margin-top: 12px;
     text-align: center;
   }
+}
+.landing-app-mock__stage--review {
+  display: grid;
+  place-items: center;
+  padding: clamp(18px, 3vw, 34px);
+  background: var(--surface-soft);
+}
+
+.landing-review-mock {
+  width: min(100%, 660px);
+  padding: clamp(18px, 3vw, 30px);
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 18px;
+  box-shadow: 0 18px 50px rgb(37 50 78 / 10%);
+}
+
+.landing-review-mock > header { display: grid; gap: 5px; }
+.landing-review-mock > header span { color: #0d72d9; font-size: 12px; letter-spacing: .14em; }
+.landing-review-mock > header strong { font-size: clamp(20px, 2.4vw, 30px); font-weight: 650; }
+.landing-review-mock > header small { color: var(--muted); }
+.landing-review-mock__stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 22px 0 16px; }
+.landing-review-mock__stats span { display: grid; gap: 5px; padding: 13px; background: var(--surface-soft); border: 1px solid var(--rule); border-radius: 12px; }
+.landing-review-mock__stats small { color: var(--muted); }
+.landing-review-mock__stats strong { font-size: 20px; }
+.landing-review-mock__list { display: grid; gap: 8px; }
+.landing-review-mock__list > span { display: grid; grid-template-columns: 30px 1fr auto; align-items: center; gap: 10px; padding: 11px 12px; border-bottom: 1px solid var(--rule); }
+.landing-review-mock__list i { color: var(--muted); font-style: normal; font-variant-numeric: tabular-nums; }
+.landing-review-mock__list b { font-weight: 600; }
+.landing-review-mock__list small { color: var(--muted); }
+.landing-review-mock__actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 18px; }
+.landing-review-mock__actions span { padding: 9px 13px; color: #0d72d9; background: color-mix(in srgb, #0d72d9 9%, var(--surface)); border: 1px solid color-mix(in srgb, #0d72d9 22%, var(--rule)); border-radius: 9px; font-size: 13px; }
+
+@media (max-width: 640px) {
+  .landing-review-mock__stats { grid-template-columns: 1fr; }
+  .landing-review-mock__list > span { grid-template-columns: 26px 1fr; }
+  .landing-review-mock__list small { grid-column: 2; }
 }

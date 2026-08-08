@@ -16,4 +16,5 @@ public sealed record KnowledgeGraph(
     IReadOnlyList<Chapter> Chapters,
     IReadOnlyList<KnowledgePoint> Points,
     IReadOnlyList<KnowledgeRelation> Relations,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    Guid? StudyProjectId = null);

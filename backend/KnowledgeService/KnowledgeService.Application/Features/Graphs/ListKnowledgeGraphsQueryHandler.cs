@@ -18,7 +18,7 @@ public sealed class ListKnowledgeGraphsQueryHandler
         ListKnowledgeGraphsQuery request,
         CancellationToken cancellationToken) =>
         _repository.ListGraphsAsync(
-            request.MaterialId,
+            request.StudyProjectId,
             request.OwnerUserId,
             cancellationToken);
 }

@@ -4,6 +4,7 @@ namespace KnowledgeService.API.Contracts;
 
 public sealed record GraphBuildRequest(
     Guid MaterialId,
+    Guid StudyProjectId,
     string? SubjectHint,
     SegmentationMode? SegmentationMode,
     string? Delimiter,

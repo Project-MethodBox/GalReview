@@ -34,7 +34,8 @@ internal static class GraphBuildEndpoints
                         request.MaxChapterCharacters ?? 60_000,
                         request.FixedWindowCharacters ?? 8_000),
                     request.ExtractorVersion,
-                    RequestIdentity.IdempotencyKey(context));
+                    RequestIdentity.IdempotencyKey(context),
+                    request.StudyProjectId);
                 var result = await sender.Send(command, cancellationToken);
                 if (result.Created ||
                     result.Job.Status == Domain.Builds.GraphBuildStatus.Queued)

@@ -91,7 +91,8 @@ public sealed class ProcessGraphBuildCommandHandler
                 material.TextChecksum,
                 job.SubjectHint ?? "GENERAL",
                 segments,
-                _clock.UtcNow);
+                _clock.UtcNow,
+                job.StudyProjectId);
             graph = SourceReferenceLocator.Apply(
                 graph,
                 material.SourceMap,

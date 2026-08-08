@@ -1,10 +1,10 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 import AppShell, { PageHeader } from '../components/AppShell'
 import LoadingIndicator from '../components/LoadingIndicator'
 import { api } from '../lib/api'
 import { readWorkflow, updateWorkflow } from '../lib/workflow'
-import type { Chapter, KnowledgeGraphSummary, KnowledgePoint, KnowledgeRelation } from '../types/api'
+import type { Chapter, KnowledgeGraphSummary, KnowledgePoint, KnowledgeRelation, StudyProject } from '../types/api'
 
 const KnowledgeDag = lazy(() => import('../components/KnowledgeDag'))
 
@@ -47,6 +47,9 @@ function findChapterRoot(points: KnowledgePoint[], relations: KnowledgeRelation[
 
 export default function KnowledgeGraphPage() {
   const workflow = readWorkflow()
+  const [searchParams] = useSearchParams()
+  const [projects, setProjects] = useState<StudyProject[]>([])
+  const [projectId, setProjectId] = useState(searchParams.get('projectId') || workflow.projectId || '')
   const [graph, setGraph] = useState<KnowledgeGraphSummary | undefined>(workflow.graph)
   const [graphVersions, setGraphVersions] = useState<KnowledgeGraphSummary[]>(workflow.graph ? [workflow.graph] : [])
   const [chapters, setChapters] = useState<Chapter[]>(workflow.chapters || [])
@@ -62,13 +65,30 @@ export default function KnowledgeGraphPage() {
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false)
 
   useEffect(() => {
-    if (!workflow.material) return
     let active = true
-    void api.getAllKnowledgeGraphs(workflow.material.materialId).then((items) => {
-      if (active) setGraphVersions(items.filter((item) => item.status !== 'DRAFT').sort((left, right) => right.version - left.version))
-    }).catch(() => undefined)
+    void api.listPracticeProjects().then((page) => {
+      if (!active) return
+      const scoped = page.items.filter((project) => project.graphId)
+      setProjects(scoped)
+      setProjectId((current) => scoped.some((project) => project.projectId === current) ? current : scoped[0]?.projectId || '')
+    }).catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : '研习册读取失败。') })
     return () => { active = false }
-  }, [workflow.material?.materialId])
+  }, [])
+
+  useEffect(() => {
+    const project = projects.find((item) => item.projectId === projectId)
+    if (!project?.graphId) { setGraph(undefined); setGraphVersions([]); return }
+    let active = true
+    void Promise.all([api.getKnowledgeGraph(project.graphId), api.getAllKnowledgeGraphs(project.projectId)])
+      .then(([summary, versions]) => {
+        if (!active) return
+        setGraph(summary)
+        setGraphVersions((versions.length ? versions : [summary]).filter((item) => item.status !== 'DRAFT')
+          .sort((left, right) => right.version - left.version))
+        updateWorkflow({ projectId: project.projectId, graph: summary })
+      }).catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : '本册图谱读取失败。') })
+    return () => { active = false }
+  }, [projectId, projects])
 
   useEffect(() => {
     if (!graph) return
@@ -85,14 +105,14 @@ export default function KnowledgeGraphPage() {
       setPoints(pointList)
       setRelations(relationList)
       setSelectedPointId(pointList[0]?.pointId)
-      updateWorkflow({ graph, chapters: chapterList })
+      updateWorkflow({ projectId, graph, chapters: chapterList })
     }).catch((reason: unknown) => {
       if (active) setError(reason instanceof Error ? reason.message : '图谱读取失败。')
     }).finally(() => {
       if (active) setLoading(false)
     })
     return () => { active = false }
-  }, [graph?.graphId])
+  }, [graph?.graphId, projectId])
 
   async function switchGraph(graphId: string) {
     const nextGraph = graphVersions.find((item) => item.graphId === graphId)
@@ -118,6 +138,7 @@ export default function KnowledgeGraphPage() {
   }
 
   const sortedChapters = useMemo(() => [...chapters].sort((a, b) => b.depth - a.depth || a.ordinal - b.ordinal || a.title.localeCompare(b.title, 'zh-CN')), [chapters])
+  const selectedProject = projects.find((project) => project.projectId === projectId)
   const pointById = useMemo(() => new Map(points.map((point) => [point.pointId, point])), [points])
   const visiblePoints = useMemo(() => {
     const keyword = search.trim().toLowerCase()
@@ -169,8 +190,8 @@ export default function KnowledgeGraphPage() {
   return (
     <AppShell>
       <main className="page graph-page">
-        <PageHeader title="识网" description={workflow.material?.displayName} actions={<>{graphVersions.length > 1 ? <label className="graph-version-control"><span>图谱版本</span><select value={graph?.graphId || ''} onChange={(event) => void switchGraph(event.target.value)}>{graphVersions.map((item) => <option key={item.graphId} value={item.graphId}>v{item.version} · {item.status}</option>)}</select></label> : null}<Link className="button graph-create-plan-button" to="/materials">创建计划</Link></>} />
-        {!graph ? <section className="empty-state"><h2>还没有知识图谱</h2><Link className="button button--primary" to="/materials">上传资料</Link></section> : <>
+        <PageHeader title="识网" description={selectedProject?.name || '研习册知识脉络'} actions={<><label className="graph-version-control"><span>研习册</span><select value={projectId} onChange={(event) => setProjectId(event.target.value)}><option value="">选择研习册</option>{projects.map((project) => <option key={project.projectId} value={project.projectId}>{project.name}</option>)}</select></label>{graphVersions.length > 1 ? <label className="graph-version-control"><span>图谱版本</span><select value={graph?.graphId || ''} onChange={(event) => void switchGraph(event.target.value)}>{graphVersions.map((item) => <option key={item.graphId} value={item.graphId}>v{item.version} · {item.status}</option>)}</select></label> : null}{selectedProject ? <Link className="button graph-create-plan-button" to={`/projects/${selectedProject.projectId}`}>返回本册</Link> : null}</>} />
+        {!graph ? <section className="empty-state"><h2>还没有可查看的研习册图谱</h2><Link className="button button--primary" to="/projects">前往立册</Link></section> : <>
           <section className="data-strip" aria-label="图谱概况"><div><span>章节</span><strong>{chapters.length || graph.chapterCount}</strong></div><div><span>知识点</span><strong>{points.length || graph.pointCount}</strong></div><div><span>关系</span><strong>{relations.length || graph.relationCount}</strong></div></section>
           {error ? <p className="status-line status-line--error" role="alert">{error}</p> : null}
           <div className={`graph-workbench${inspectorCollapsed ? ' graph-workbench--inspector-collapsed' : ''}`}>

@@ -14,14 +14,14 @@ public sealed class GetReadinessHandler(IModelStatusReader models) : IRequestHan
 }
 
 public sealed record GenerateQuestionsCommand(Guid OwnerUserId, Guid ProjectId, Guid IdempotencyKey, Guid? ReviewPlanId,
-    string? SnapshotVersion, IReadOnlyList<PracticeQuestionKind> Kinds, int TargetCount, string GeneratorVersion) : IRequest<PracticeJob>;
+    string? SnapshotVersion, IReadOnlyList<PracticeQuestionKind> Kinds, int? TargetCount, string GeneratorVersion) : IRequest<PracticeJob>;
 public sealed record ImportExamCommand(Guid OwnerUserId, Guid ProjectId, Guid MaterialId, Guid IdempotencyKey) : IRequest<PracticeJob>;
 public sealed record GetPracticeJobQuery(Guid OwnerUserId, Guid JobId) : IRequest<PracticeJob>;
 public sealed record GetQuestionHelpQuery(Guid OwnerUserId, Guid QuestionId, bool GenerateExplanation) : IRequest<QuestionHelp>;
 public sealed record QuestionHelpMatch(Guid? KnowledgePointId, string Title, string Excerpt, SourceReference SourceReference, double Similarity);
 public sealed record QuestionHelp(Guid QuestionId, IReadOnlyList<QuestionHelpMatch> Matches, string? GeneratedExplanation, bool Grounded, string? GeneratorVersion);
 
-public sealed class ContentHandlers(IPracticeRepository repository, IPracticeGateway gateway, ICreditBilling billing) :
+public sealed class ContentHandlers(IPracticeRepository repository, IPracticeGateway gateway, ICreditBilling billing, IPracticeQuestionGenerator questionGenerator) :
     IRequestHandler<GenerateQuestionsCommand, PracticeJob>, IRequestHandler<ImportExamCommand, PracticeJob>,
     IRequestHandler<GetPracticeJobQuery, PracticeJob>, IRequestHandler<GetQuestionHelpQuery, QuestionHelp>
 {
@@ -29,16 +29,17 @@ public sealed class ContentHandlers(IPracticeRepository repository, IPracticeGat
     {
         var project = PracticeOwnership.Project(request.ProjectId, request.OwnerUserId, repository);
         ValidateJob(request.IdempotencyKey, request.TargetCount);
-        if (!string.Equals(request.GeneratorVersion, "recite-question-v1", StringComparison.Ordinal))
-            throw new PracticeDomainException(400, "GENERATOR_VERSION_UNSUPPORTED", "generatorVersion 当前只支持 recite-question-v1。");
         var payloadHash = PracticeRules.Sha256($"{request.ReviewPlanId}|{request.SnapshotVersion}|{string.Join(',', request.Kinds)}|{request.TargetCount}|{request.GeneratorVersion}");
         var existing = repository.FindJob(request.OwnerUserId, request.ProjectId, request.IdempotencyKey);
         if (existing is not null) return existing.PayloadHash == payloadHash ? existing : throw new PracticeDomainException(409, "IDEMPOTENCY_KEY_REUSED", "幂等键已用于不同生成请求。");
-        IReadOnlyList<PlanGraphPoint> points = [];
-        if (request.ReviewPlanId is Guid planId && !string.IsNullOrWhiteSpace(request.SnapshotVersion))
-            points = (await gateway.GetPlanAsync(planId, request.SnapshotVersion, ct)).Points;
-        else if (request.ReviewPlanId.HasValue || !string.IsNullOrWhiteSpace(request.SnapshotVersion))
-            throw new PracticeDomainException(400, "VALIDATION_ERROR", "reviewPlanId 与 snapshotVersion 必须同时提供。");
+        if (project.GraphId is null)
+            throw new PracticeDomainException(422, "PROJECT_GRAPH_REQUIRED", "从资料生成题目前必须先为复习项目绑定知识图谱。");
+        if (request.ReviewPlanId is not Guid planId || string.IsNullOrWhiteSpace(request.SnapshotVersion))
+            throw new PracticeDomainException(400, "PLAN_REQUIRED", "题目生成必须提供当前复习项目的 reviewPlanId 与 snapshotVersion。");
+        var plan = await gateway.GetPlanAsync(planId, request.SnapshotVersion, ct);
+        PracticePlanRules.Validate(project, request.OwnerUserId, plan);
+        if (plan.Points.Count == 0)
+            throw new PracticeDomainException(422, "PLAN_TARGETS_EMPTY", "复习计划没有可用于生成题目的目标知识点。");
         var materials = new List<MaterialText>();
         foreach (var materialId in project.MaterialIds)
         {
@@ -46,8 +47,9 @@ public sealed class ContentHandlers(IPracticeRepository repository, IPracticeGat
             if (material.OwnerUserId != request.OwnerUserId) throw PracticeOwnership.NotFound();
             materials.Add(material);
         }
-        var estimatedUnits = checked(Math.Max(1L, materials.Sum(x => (long)x.Text.Length) / 2L + request.TargetCount * 512L));
-        await billing.ReserveAsync(request.OwnerUserId, request.IdempotencyKey, "PRACTICE_GENERATION", estimatedUnits, ct);
+        var generationInput = new QuestionGenerationInput(materials, request.Kinds, request.TargetCount, plan.Points, request.GeneratorVersion);
+        var estimate = questionGenerator.Estimate(generationInput);
+        await billing.ReserveAsync(request.OwnerUserId, request.IdempotencyKey, "PRACTICE_GENERATION", estimate.MaximumTokenUnits, ct);
         var now = DateTimeOffset.UtcNow;
         PracticeJob job;
         try
@@ -56,26 +58,20 @@ public sealed class ContentHandlers(IPracticeRepository repository, IPracticeGat
                 payloadHash, PracticeJobKind.QuestionGeneration, PracticeJobStatus.Running, 0, 0, [], now, now, null));
         }
         catch { await billing.ReleaseAsync(request.IdempotencyKey, CancellationToken.None); throw; }
-        var diagnostics = new List<PracticeJobDiagnostic>(); var created = 0; long generatedCharacters = 0;
+        var diagnostics = new List<PracticeJobDiagnostic>(); var created = 0;
         try
         {
-            var kinds = request.Kinds.Count == 0 ? Enum.GetValues<PracticeQuestionKind>() : request.Kinds.Distinct().ToArray();
-            foreach (var material in materials)
+            var batch = await questionGenerator.GenerateAsync(generationInput, ct);
+            diagnostics.AddRange(batch.Diagnostics);
+            foreach (var draft in batch.Drafts)
             {
                 try
                 {
-                    var remaining = request.TargetCount - created; if (remaining <= 0) break;
-                    foreach (var draft in GenerateDrafts(material, kinds, remaining, points, created))
-                    {
-                        var generatedQuestion = repository.CreateQuestion(PracticeRules.CreateQuestion(project, draft));
-                        generatedCharacters += generatedQuestion.Prompt.Length
-                            + (generatedQuestion.Explanation?.Length ?? 0)
-                            + generatedQuestion.CorrectAnswers.Sum(answer => answer.Length);
-                        created++;
-                    }
+                    var generatedQuestion = repository.CreateQuestion(PracticeRules.CreateQuestion(project, draft));
+                    created++;
                 }
                 catch (Exception error) when (error is not OperationCanceledException)
-                { diagnostics.Add(new(material.MaterialId, error is PracticeDomainException domain ? domain.Code : "MATERIAL_GENERATION_FAILED", error.Message, true)); }
+                { diagnostics.Add(new(draft.SourceReferences.FirstOrDefault()?.MaterialId, error is PracticeDomainException domain ? domain.Code : "QUESTION_GENERATION_FAILED", error.Message, true)); }
             }
             var status = created == 0 ? PracticeJobStatus.Failed : diagnostics.Count == 0 ? PracticeJobStatus.Succeeded : PracticeJobStatus.PartiallySucceeded;
             job = job with { Status = status, Progress = 1, CreatedCount = created, Diagnostics = diagnostics, FinishedAt = DateTimeOffset.UtcNow };
@@ -83,8 +79,7 @@ public sealed class ContentHandlers(IPracticeRepository repository, IPracticeGat
             if (created == 0) await billing.ReleaseAsync(request.IdempotencyKey, CancellationToken.None);
             else
             {
-                var actualUnits = Math.Max(1L, materials.Sum(x => (long)x.Text.Length) / 4L + generatedCharacters / 3L);
-                await billing.SettleAsync(request.IdempotencyKey, actualUnits, CancellationToken.None);
+                await billing.SettleAsync(request.IdempotencyKey, batch.ActualTokenUnits, CancellationToken.None);
             }
             return job;
         }
@@ -149,28 +144,6 @@ public sealed class ContentHandlers(IPracticeRepository repository, IPracticeGat
         return new(question.QuestionId, ranked, explanation, ranked.Length > 0, explanation is null ? null : "grounded-template-v1");
     }
 
-    private static IEnumerable<QuestionDraft> GenerateDrafts(MaterialText material, IReadOnlyList<PracticeQuestionKind> kinds, int count, IReadOnlyList<PlanGraphPoint> points, int offset)
-    {
-        var sentences = Regex.Split(material.Text, @"(?<=[。！？!?])|\n+").Select(x => x.Trim()).Where(x => x.Length is >= 8 and <= 240).Distinct().Take(count * 3).ToArray();
-        var keywords = Regex.Matches(material.Text, @"[\p{L}\p{N}]{2,12}").Select(x => x.Value).Distinct().Take(80).ToArray();
-        for (var index = 0; index < Math.Min(count, sentences.Length); index++)
-        {
-            var sentence = sentences[index]; var kind = kinds[index % kinds.Count]; var keyword = keywords.FirstOrDefault(sentence.Contains) ?? sentence[..Math.Min(6, sentence.Length)];
-            Guid? pointId = points.Count == 0 ? null : points[(offset + index) % points.Count].KnowledgePointId;
-            var start = material.Text.IndexOf(sentence, StringComparison.Ordinal); var source = new SourceReference(material.MaterialId, Math.Max(0, start), Math.Max(0, start) + sentence.Length, material.SourceMapVersion, PracticeRules.Sha256(sentence));
-            yield return kind switch
-            {
-                PracticeQuestionKind.SingleChoice when keywords.Length >= 4 => new(kind, sentence.Replace(keyword, "____", StringComparison.Ordinal),
-                    keywords.Where(x => x != keyword).OrderBy(x => PracticeRules.Sha256($"{index}:{x}")).Take(3).Prepend(keyword).Select((x, i) => new QuestionOption(((char)('A' + i)).ToString(), x)).ToArray(),
-                    ["A"], "依据资料原句补全。", 3, 3, pointId, [source], QuestionStatus.Draft),
-                PracticeQuestionKind.FillBlank => new(kind, sentence.Replace(keyword, "____", StringComparison.Ordinal), [], [keyword], "依据资料原句补全。", 2, 2, pointId, [source], QuestionStatus.Draft),
-                PracticeQuestionKind.TrueFalse => new(kind, $"判断下述表述是否正确：{sentence}", [], ["true"], "该表述直接来自资料。", 1, 2, pointId, [source], QuestionStatus.Draft),
-                PracticeQuestionKind.TermDefinition => new(kind, $"请根据资料解释“{keyword}”。", [], [sentence], "答案以资料原句为评分基准。", 4, 3, pointId, [source], QuestionStatus.Draft),
-                _ => new(PracticeQuestionKind.Essay, $"请概括下述内容的要点：{sentence}", [], [sentence], "答案以资料原句为评分基准。", 5, 3, pointId, [source], QuestionStatus.Draft)
-            };
-        }
-    }
-
     private static IEnumerable<QuestionDraft> ParseExam(MaterialText material)
     {
         var blocks = Regex.Split(material.Text.Replace("\r", ""), @"(?m)(?=^\s*\d{1,4}[.、)]\s*)");
@@ -185,7 +158,11 @@ public sealed class ContentHandlers(IPracticeRepository repository, IPracticeGat
             yield return new(kind, prompt, options, [normalizedAnswer], null, kind == PracticeQuestionKind.SingleChoice ? 3 : 5, 3, null, [source], QuestionStatus.Draft);
         }
     }
-    private static void ValidateJob(Guid key, int count) { if (key == Guid.Empty) throw new PracticeDomainException(400, "VALIDATION_ERROR", "idempotencyKey 必填。"); if (count is < 1 or > 200) throw new PracticeDomainException(400, "VALIDATION_ERROR", "targetCount 必须在 1-200 范围内。"); }
+    private static void ValidateJob(Guid key, int? count)
+    {
+        if (key == Guid.Empty) throw new PracticeDomainException(400, "VALIDATION_ERROR", "idempotencyKey 必填。");
+        if (count is < 1 or > 1000) throw new PracticeDomainException(400, "VALIDATION_ERROR", "targetCount 必须在 1-1000 范围内，或省略以自动建库。");
+    }
 }
 
 public sealed record QuestionInput(
@@ -197,15 +174,20 @@ public sealed record CreateProjectCommand(Guid OwnerUserId, string Name, string?
 public sealed record ListProjectsQuery(Guid OwnerUserId) : IRequest<IReadOnlyList<StudyProject>>;
 public sealed record GetProjectQuery(Guid OwnerUserId, Guid ProjectId) : IRequest<ProjectDetails>;
 public sealed record ProjectDetails(StudyProject Project, IReadOnlyDictionary<PracticeQuestionKind, int> QuestionCounts, int ReadyQuestionCount);
+public sealed record ValidateProjectGraphScopeQuery(Guid OwnerUserId, Guid ProjectId, Guid MaterialId) : IRequest<ProjectGraphScope>;
+public sealed record ProjectGraphScope(Guid StudyProjectId, Guid OwnerUserId, IReadOnlyList<Guid> MaterialIds);
 public sealed record UpdateProjectCommand(Guid OwnerUserId, Guid ProjectId, string? Name, string? SubjectCode, IReadOnlyList<Guid>? MaterialIds, Guid? GraphId, int Version) : IRequest<StudyProject>;
 public sealed record ArchiveProjectCommand(Guid OwnerUserId, Guid ProjectId) : IRequest;
 
 public sealed class ProjectHandlers(IPracticeRepository repository, IPracticeGateway gateway) :
     IRequestHandler<CreateProjectCommand, StudyProject>, IRequestHandler<ListProjectsQuery, IReadOnlyList<StudyProject>>,
-    IRequestHandler<GetProjectQuery, ProjectDetails>, IRequestHandler<UpdateProjectCommand, StudyProject>, IRequestHandler<ArchiveProjectCommand>
+    IRequestHandler<GetProjectQuery, ProjectDetails>, IRequestHandler<ValidateProjectGraphScopeQuery, ProjectGraphScope>,
+    IRequestHandler<UpdateProjectCommand, StudyProject>, IRequestHandler<ArchiveProjectCommand>
 {
     public async Task<StudyProject> Handle(CreateProjectCommand request, CancellationToken ct)
     {
+        if (request.GraphId is not null)
+            throw new PracticeDomainException(409, "PROJECT_GRAPH_MUST_BE_CREATED_IN_PROJECT", "新研习册的知识图谱必须在立册后以本册为作用域建立。");
         var name = ValidateName(request.Name); var materials = ValidateMaterials(request.MaterialIds); await ValidateMaterialOwnership(materials, request.OwnerUserId, ct); var now = DateTimeOffset.UtcNow;
         var project = new StudyProject(Guid.NewGuid(), request.OwnerUserId, name, NormalizeSubject(request.SubjectCode), materials,
             request.GraphId, Guid.NewGuid(), ProjectStatus.Active, 1, now, now);
@@ -217,7 +199,16 @@ public sealed class ProjectHandlers(IPracticeRepository repository, IPracticeGat
     {
         var project = PracticeOwnership.Project(request.ProjectId, request.OwnerUserId, repository);
         var questions = repository.ListQuestions(project.ProjectId).Where(x => x.Status != QuestionStatus.Deleted).ToArray();
-        return Task.FromResult(new ProjectDetails(project, questions.GroupBy(x => x.Kind).ToDictionary(x => x.Key, x => x.Count()), questions.Count(x => x.Status == QuestionStatus.Ready)));
+        var readyCount = questions.Count(question => question.Status == QuestionStatus.Ready &&
+            (!project.GraphId.HasValue || question.KnowledgePointId.HasValue));
+        return Task.FromResult(new ProjectDetails(project, questions.GroupBy(x => x.Kind).ToDictionary(x => x.Key, x => x.Count()), readyCount));
+    }
+    public Task<ProjectGraphScope> Handle(ValidateProjectGraphScopeQuery request, CancellationToken ct)
+    {
+        var project = PracticeOwnership.Project(request.ProjectId, request.OwnerUserId, repository);
+        if (request.MaterialId == Guid.Empty || !project.MaterialIds.Contains(request.MaterialId))
+            throw new PracticeDomainException(409, "MATERIAL_OUTSIDE_PROJECT_SCOPE", "该资料不属于目标研习册，不能用于建立本册图谱。");
+        return Task.FromResult(new ProjectGraphScope(project.ProjectId, project.OwnerUserId, project.MaterialIds));
     }
     public async Task<StudyProject> Handle(UpdateProjectCommand request, CancellationToken ct)
     {
@@ -225,6 +216,12 @@ public sealed class ProjectHandlers(IPracticeRepository repository, IPracticeGat
         if (request.Version != current.Version) throw new PracticeDomainException(409, "VERSION_CONFLICT", "项目版本已经变化，请刷新后重试。");
         var materials = request.MaterialIds is null ? current.MaterialIds : ValidateMaterials(request.MaterialIds);
         if (request.MaterialIds is not null) await ValidateMaterialOwnership(materials, request.OwnerUserId, ct);
+        if (request.GraphId is { } graphId && graphId != current.GraphId)
+        {
+            var scope = await gateway.GetGraphScopeAsync(graphId, request.OwnerUserId, ct);
+            if (scope.StudyProjectId != current.ProjectId || !materials.Contains(scope.MaterialId))
+                throw new PracticeDomainException(409, "GRAPH_OUTSIDE_PROJECT_SCOPE", "知识图谱不属于本研习册或其资料范围。");
+        }
         var updated = current with { Name = request.Name is null ? current.Name : ValidateName(request.Name),
             SubjectCode = request.SubjectCode is null ? current.SubjectCode : NormalizeSubject(request.SubjectCode),
             MaterialIds = materials,
@@ -285,16 +282,24 @@ public sealed class QuestionHandlers(IPracticeRepository repository) :
     private static QuestionDraft Draft(QuestionInput x) => new(x.Kind, x.Prompt, x.Options, x.CorrectAnswers, x.Explanation, x.Score, x.Difficulty, x.KnowledgePointId, x.SourceReferences, x.Status);
 }
 
-public sealed record CreateExamPaperCommand(Guid OwnerUserId, Guid ProjectId, string? Title, int QuestionCount, int DurationSeconds, int? Seed, IReadOnlyDictionary<PracticeQuestionKind, int>? KindCounts) : IRequest<ExamPaper>;
-public sealed class CreateExamPaperHandler(IPracticeRepository repository) : IRequestHandler<CreateExamPaperCommand, ExamPaper>
+public sealed record CreateExamPaperCommand(Guid OwnerUserId, Guid ProjectId, string? Title, int QuestionCount, int DurationSeconds, int? Seed,
+    IReadOnlyDictionary<PracticeQuestionKind, int>? KindCounts, Guid? ReviewPlanId, string? SnapshotVersion) : IRequest<ExamPaper>;
+public sealed class CreateExamPaperHandler(IPracticeRepository repository, IPracticeGateway gateway) : IRequestHandler<CreateExamPaperCommand, ExamPaper>
 {
-    public Task<ExamPaper> Handle(CreateExamPaperCommand request, CancellationToken ct)
+    public async Task<ExamPaper> Handle(CreateExamPaperCommand request, CancellationToken ct)
     {
         var project = PracticeOwnership.Project(request.ProjectId, request.OwnerUserId, repository); var seed = request.Seed ?? RandomNumberGenerator.GetInt32(int.MaxValue);
-        var selected = PracticeRules.GenerateExam(repository.ListQuestions(project.ProjectId), request.QuestionCount, seed, request.KindCounts);
-        return Task.FromResult(repository.CreateExamPaper(new ExamPaper(Guid.NewGuid(), request.OwnerUserId, project.ProjectId,
-            string.IsNullOrWhiteSpace(request.Title) ? $"{project.Name} · 随机试卷" : request.Title.Trim(), selected.Select(x => x.QuestionId).ToArray(),
-            Math.Clamp(request.DurationSeconds, 60, 86400), seed, selected.Sum(x => x.Score), DateTimeOffset.UtcNow)));
+        if (request.ReviewPlanId is not Guid planId || string.IsNullOrWhiteSpace(request.SnapshotVersion))
+            throw new PracticeDomainException(400, "PLAN_REQUIRED", "模拟试卷必须提供当前研习册的 reviewPlanId 与 snapshotVersion，才能回写掌握度。");
+        var plan = await gateway.GetPlanAsync(planId, request.SnapshotVersion, ct);
+        PracticePlanRules.Validate(project, request.OwnerUserId, plan);
+        if (request.KindCounts is { Count: > 0 })
+            throw new PracticeDomainException(400, "VALIDATION_ERROR", "图谱试卷暂不接受固定题型配额；题型由各目标知识点已有题目决定。");
+        var selected = PracticeRules.SelectSmartQuestions(repository.ListQuestions(project.ProjectId), request.QuestionCount, seed, plan.Points)
+            .OrderBy(question => (int)question.Kind).ToArray();
+        return repository.CreateExamPaper(new ExamPaper(Guid.NewGuid(), request.OwnerUserId, project.ProjectId,
+            string.IsNullOrWhiteSpace(request.Title) ? $"{project.Name} · 模拟试卷" : request.Title.Trim(), selected.Select(x => x.QuestionId).ToArray(),
+            Math.Clamp(request.DurationSeconds, 60, 86400), seed, selected.Sum(x => x.Score), DateTimeOffset.UtcNow));
     }
 }
 
@@ -306,6 +311,18 @@ public sealed record SessionDetails(PracticeSession Session, IReadOnlyList<Pract
 public sealed record AnswerOutcome(PracticeAnswer Answer, bool Duplicate, bool Degraded);
 public sealed record CompletionOutcome(PracticeSession Session, object Evidence, bool Duplicate);
 
+internal static class PracticePlanRules
+{
+    public static void Validate(StudyProject project, Guid ownerUserId, PlanGraphSnapshot plan)
+    {
+        if (plan.OwnerUserId != ownerUserId) throw PracticeOwnership.NotFound();
+        if (project.GraphId != plan.GraphId)
+            throw new PracticeDomainException(409, "PROJECT_PLAN_GRAPH_MISMATCH", "复习计划不属于当前项目绑定的知识图谱。");
+        if (!string.Equals(plan.Status, "OPEN", StringComparison.OrdinalIgnoreCase))
+            throw new PracticeDomainException(409, "REVIEW_PLAN_NOT_OPEN", "复习计划已经完成或过期，请创建新计划。");
+    }
+}
+
 public sealed class SessionHandlers(IPracticeRepository repository, IPracticeGateway gateway, IAnswerScorer scorer) :
     IRequestHandler<CreateSessionCommand, SessionDetails>, IRequestHandler<GetSessionQuery, SessionDetails>,
     IRequestHandler<SaveAnswerCommand, AnswerOutcome>, IRequestHandler<CompleteSessionCommand, CompletionOutcome>
@@ -315,9 +332,12 @@ public sealed class SessionHandlers(IPracticeRepository repository, IPracticeGat
         var project = PracticeOwnership.Project(request.ProjectId, request.OwnerUserId, repository);
         if (request.Mode == PracticeSessionMode.SmartReview && (request.ReviewPlanId is null || string.IsNullOrWhiteSpace(request.SnapshotVersion)))
             throw new PracticeDomainException(400, "PLAN_REQUIRED", "SMART_REVIEW 必须提供 reviewPlanId 与 snapshotVersion。");
-        IReadOnlySet<Guid>? points = null;
+        PlanGraphSnapshot? plan = null;
         if (request.ReviewPlanId is Guid planId && !string.IsNullOrWhiteSpace(request.SnapshotVersion))
-            points = (await gateway.GetPlanAsync(planId, request.SnapshotVersion, ct)).Points.Select(x => x.KnowledgePointId).ToHashSet();
+        {
+            plan = await gateway.GetPlanAsync(planId, request.SnapshotVersion, ct);
+            PracticePlanRules.Validate(project, request.OwnerUserId, plan);
+        }
         var seed = request.Seed ?? RandomNumberGenerator.GetInt32(int.MaxValue); IReadOnlyList<PracticeQuestion> selected;
         if (request.Mode == PracticeSessionMode.Exam)
         {
@@ -326,9 +346,18 @@ public sealed class SessionHandlers(IPracticeRepository repository, IPracticeGat
             if (paper is null || paper.OwnerUserId != request.OwnerUserId || paper.ProjectId != project.ProjectId) throw PracticeOwnership.NotFound();
             selected = paper.QuestionIds.Select(repository.GetQuestion).Where(x => x is not null).Cast<PracticeQuestion>().ToArray();
         }
-        else selected = PracticeRules.SelectQuestions(repository.ListQuestions(project.ProjectId), request.QuestionCount, seed, request.Kinds, points);
+        else if (request.Mode == PracticeSessionMode.SmartReview)
+            selected = PracticeRules.SelectSmartQuestions(repository.ListQuestions(project.ProjectId), request.QuestionCount, seed, plan!.Points, request.Kinds);
+        else selected = PracticeRules.SelectQuestions(repository.ListQuestions(project.ProjectId), request.QuestionCount, seed, request.Kinds);
         if (selected.Count == 0) throw new PracticeDomainException(422, "NOT_ENOUGH_QUESTIONS", "当前范围内没有 READY 题目。");
-        if (request.ReviewPlanId is not null && selected.Any(x => x.KnowledgePointId is null)) throw new PracticeDomainException(422, "QUESTION_BINDING_REQUIRED", "带 PlanGraph 的会话只能包含已绑定知识点的题目。");
+        if (plan is not null)
+        {
+            var allowedPointIds = plan.Points.Select(point => point.KnowledgePointId).ToHashSet();
+            if (selected.Any(question => question.KnowledgePointId is not Guid pointId || !allowedPointIds.Contains(pointId)))
+                throw new PracticeDomainException(422, "QUESTION_BINDING_REQUIRED", "带 PlanGraph 的会话只能包含已绑定到计划目标的题目。");
+            if (selected.Select(question => question.KnowledgePointId).Distinct().Count() != selected.Count)
+                throw new PracticeDomainException(422, "DUPLICATE_KNOWLEDGE_POINT", "同一次计分复习中一个知识点只能出现一道题。");
+        }
         var now = DateTimeOffset.UtcNow;
         var session = repository.CreateSession(new PracticeSession(Guid.NewGuid(), request.OwnerUserId, project.ProjectId, project.QuestionBankId,
             request.Mode, request.ReviewPlanId, request.SnapshotVersion, request.ExamPaperId, selected.Select(x => x.QuestionId).ToArray(), [], request.DurationSeconds,

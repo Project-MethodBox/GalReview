@@ -662,7 +662,7 @@ FileService 必须在最新 `IngestionJob.status="SUCCEEDED"` 后，将 `Materia
 - `textChecksum` 对上述规范化结果的精确 UTF-8 字节计算 SHA-256；`textLength` 与所有 offset 均按规范化字符串的 UTF-16 code unit 计数，与 JavaScript/.NET `string.length` 一致。FileService 若使用 Python/Go 等 Unicode 标量索引实现，必须在边界处显式转换。
 - `ownerUserId` 必须是资料真实所有者。`sourceMap` 必须非空、按 `startOffset` 升序、不得重叠或越界；页码若存在须大于 0，段落索引若存在须不小于 0。
 - `blocks` 必须非空并按来源区间有序；每个 `source` 必须与 `sourceMap` 中的一项完全相同，`text` 必须与该半开区间的原文逐字相同。解析器无法恢复页码、段落或标题级别时使用 `null`，不得虚构位置。
-- FileService 对同一资料、同一 `parserVersion` 的非强制重试必须产生相同文本、`textChecksum` 和来源映射。KnowledgeService 创建构图任务的请求幂等键固定为 `(ownerUserId, Idempotency-Key)`，并校验重复 key 的 `materialId`、切分模式、抽取器版本和学科提示均一致；读取文本后，`textChecksum` 会进入构建结果与持久化图谱指纹，`parserVersion`、`sourceMapVersion` 只作为受校验的来源契约字段，不得误称为创建任务的幂等键。
+- FileService 对同一资料、同一 `parserVersion` 的非强制重试必须产生相同文本、`textChecksum` 和来源映射。KnowledgeService 创建构图任务的请求幂等键固定为 `(ownerUserId, Idempotency-Key)`，并校验重复 key 的 `studyProjectId`、`materialId`、切分模式、抽取器版本和学科提示均一致；读取文本后，`studyProjectId` 与 `textChecksum` 都进入持久化图谱指纹，`parserVersion`、`sourceMapVersion` 只作为受校验的来源契约字段，不得误称为创建任务的幂等键。
 - 资料尚未 `READY` 时返回 `409 MATERIAL_TEXT_NOT_READY`；最新解析明确失败时返回 `422 MATERIAL_TEXT_EXTRACTION_FAILED`；调用身份不是经 Gateway 注入的受信服务身份时返回 `403 FORBIDDEN`。
 - `/internal/v1/materials/{materialId}/extracted-text` 除目标服务 `X-Gateway-Key` 外，还必须要求单值 `X-Service-Name` 命中大小写不敏感的精确 allowlist；当前默认只允许 `KnowledgeService`，FileService 配置项为 `InternalAccess:ExtractedTextAllowedServices`。仅“非空服务名”不构成授权。
 - 响应可使用统一 JSON 成功信封；无论传输包装为何，`text` 字段本身只能是上述纯文本。
@@ -717,7 +717,7 @@ FileService 必须在最新 `IngestionJob.status="SUCCEEDED"` 后，将 `Materia
 
 ### 6.0 边界与 Neo4j 分层模型（BASELINE）
 
-KnowledgeService 只接收 FileService 已规范化的纯文本，先建立章节层级，再在章节内抽取知识点和依赖。首版 Neo4j 逻辑模型固定为：
+KnowledgeService 只接收 FileService 已规范化的纯文本，先建立章节层级，再在章节内抽取知识点和依赖。`Material` 是来源，不是图谱聚合根；每个图谱版本必须归属于一个 `StudyProject`。同一资料被两本研习册引用时，必须生成两套独立的 graph/chapter/point/mastery 身份，禁止按 `materialId` 复用。首版 Neo4j 逻辑模型固定为：
 
 ```text
 (:KnowledgeGraph)-[:HAS_CHAPTER]->(:Chapter)
@@ -730,6 +730,7 @@ KnowledgeService 只接收 FileService 已规范化的纯文本，先建立章�
 (:ReviewPlanNode)-[:PLAN_EDGE]->(:ReviewPlanNode)
 ```
 
+- `KnowledgeGraph.studyProjectId` 是所有权作用域，`materialId` 只指向构图来源。图谱版本序列、指纹去重和 `READY -> SUPERSEDED` 均按 `(ownerUserId, studyProjectId)` 隔离；旧图缺少 `studyProjectId` 时只允许按既有 `graphId` 兼容读取，不能绑定给新册。
 - `KnowledgeGraph`、`Chapter` 和 `KnowledgePoint` 均属于一个不可变图谱版本；READY 图的内容不得原地改写，唯一允许的生命周期变化是 `READY -> SUPERSEDED` 状态迁移。
 - `Chapter` 是上层层级节点，允许父子章节；`KnowledgePoint` 是下层叶级知识节点，并且必须有且只有一个主 `chapterId`。
 - `MASTERY` 关系按 `(userId, pointId)` 唯一，不能作为所有用户共享的 `KnowledgePoint` 属性。API 中 `KnowledgePoint.mastery` 是针对当前受信用户投影出的值。
@@ -749,7 +750,7 @@ KnowledgeService 只接收 FileService 已规范化的纯文本，先建立章�
 |---|---|---|---|---|---|
 | `POST` | `/api/v1/knowledge-graph-builds` | 创建图谱构建任务 | `GraphBuildRequest` | `GraphBuildJob` | `202/400/409/422` |
 | `GET` | `/api/v1/knowledge-graph-builds/{buildId}` | 查询构建任务 | - | `GraphBuildJob` | `200/404` |
-| `GET` | `/api/v1/knowledge-graphs?materialId=...` | 查询资料的图谱版本 | Query | `KnowledgeGraphPage` | `200/400` |
+| `GET` | `/api/v1/knowledge-graphs?studyProjectId=...` | 查询研习册的图谱版本 | Query | `KnowledgeGraphPage` | `200/400` |
 | `GET` | `/api/v1/knowledge-graphs/{graphId}` | 读取图谱摘要 | - | `KnowledgeGraphSummary` | `200/404` |
 | `GET` | `/api/v1/knowledge-graphs/{graphId}/chapters` | 读取有序章节树 | - | `Chapter[]` | `200/404` |
 | `GET` | `/api/v1/knowledge-graphs/{graphId}/points` | 分页读取知识点 | Query | `KnowledgePointPage` | `200/400/404` |
@@ -761,6 +762,8 @@ KnowledgeService 只接收 FileService 已规范化的纯文本，先建立章�
 | `GET` | `/internal/v1/review-plans/{reviewPlanId}/graph` | 仅 GalGameService 读取不可变计划图 | `snapshotVersion` Query | `PlanGraph` | `200/400/403/404/409` |
 | `PUT` | `/internal/v1/review-evidence/{resultId}` | 仅 RenderService 幂等提交学习证据并更新掌握度 | `ReviewEvidenceSubmission` | `MasteryUpdateReceipt` | `200/400/403/404/409/422` |
 | `GET` | `/api/v1/mastery-records` | 查询当前用户掌握度 | `MasteryListQuery` | `MasteryPage` | `200/400` |
+| `GET` | `/internal/v1/knowledge-graphs/{graphId}/scope` | 仅 PracticeService 核验图谱归属 | `ownerUserId` Query | `graphId, materialId, studyProjectId, ownerUserId` | `200/403/404` |
+| `GET` | `/internal/v1/practice-projects/{projectId}/graph-scope` | 仅 KnowledgeService 核验项目与资料成员关系 | `ownerUserId, materialId` Query | `studyProjectId, ownerUserId, materialIds` | `200/403/404/409` |
 
 `PATCH /api/v1/knowledge-points/{pointId}` 人工修正属于 **P1（KnowledgeService，
 未实现、未映射、未测试）**，不属于上表当前可执行接口。未来实现前必须冻结
@@ -797,6 +800,7 @@ interface MasteryListQuery {
 
 interface GraphBuildRequest {
   materialId: Uuid;
+  studyProjectId: Uuid;                    // 必填；图谱所有权作用域
   subjectHint?: SubjectCode;
   segmentationMode?: ChapterSegmentationMode; // 默认 AUTO
   delimiter?: string;                          // DELIMITER 模式必填
@@ -811,6 +815,7 @@ type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED";
 interface GraphBuildJob {
   buildId: Uuid;
   materialId: Uuid;
+  studyProjectId: Uuid;
   status: JobStatus;
   progress: number; // int32, 0-100
   graphId: Uuid | null;
@@ -828,7 +833,8 @@ type KnowledgeGraphStatus = "DRAFT" | "READY" | "SUPERSEDED";
 interface KnowledgeGraphSummary {
   graphId: Uuid;
   materialId: Uuid;
-  version: number; // int32，单调递增
+  studyProjectId: Uuid | null; // null 只表示升级前的兼容图谱
+  version: number; // int32，在研习册内单调递增
   subjectCode: SubjectCode;
   chapterCount: number;
   pointCount: number;
@@ -1041,7 +1047,7 @@ interface MasteryUpdateReceipt {
   updatedPointIds: Uuid[];
   changes: AppliedMasteryChange[];
   ignoredEvidenceCount: number;
-  algorithmVersion: "sm2-graph-v1";
+  algorithmVersion: "sm2-graph-v2";
   processedAt: DateTime;
 }
 
@@ -1072,11 +1078,11 @@ reason="INITIAL", version=0
 即使新版本中的 `conceptKey` 与旧版本相同，也必须从 0 开始；首版禁止静默继承或合并旧图 mastery。
 图谱进入 READY 的同一事务必须为 `ownerUserId` 的每个知识点建立上述初始 `MASTERY` 关系；读取时若因修复或历史数据缺少状态，仍按同一默认值投影，禁止返回 `null`，持久化补建由独立修复任务完成。
 
-`sm2-graph-v1` 对直接作答知识点执行：
+`sm2-graph-v2` 对直接作答知识点执行：
 
 ```text
 observedScore = quality / 5 * 100
-score' = round(clamp(0, 100, score * 0.65 + observedScore * 0.35))
+score' = observedScore
 
 easinessFactor' =
   max(1.3, easinessFactor + 0.1 - (5-quality) * (0.08 + (5-quality) * 0.02))
@@ -1094,14 +1100,19 @@ quality >= 3 and repetitions>=2:
 nextReviewAt = completedAt + intervalDays'
 ```
 
+`score` 只是供界面解释“最近一次直接作答质量”的投影，不再承担第二套记忆模型；纵向调度状态只有
+SM-2 的 `repetitions/easinessFactor/intervalDays/nextReviewAt/lapses`。禁止把旧分与本次分按
+`65/35`、`60/40` 或其他未经标注集校准的学习率平滑。SM-2 间隔与 easiness 公式沿用
+[Wozniak 的原始 SM-2 说明](https://super-memory.org/archive/english/ol/sm2.htm)。
+
 质量映射固定为：完全错误 `0`；错误但有有效部分证据 `1-2`；正确但使用提示、重试或明显不流畅 `3`；首次正确但较慢 `4`；首次正确且无提示、流畅完成 `5`。KnowledgeService 校验 `correct=false` 时 `quality` 不得高于 2、`correct=true` 时不得低于 3；`scoreDelta` 属于游戏计分，不参与 mastery。
 
-依赖推断规则：
+证据边界规则：
 
-- 直接作答只强更新被测试的 `knowledgePointId`，并只对该点推进 SM-2 调度。
-- 只有 ASSESSMENT 计划中 `quality>=4`、正确且未使用提示的正证据可给最多 3 跳内的前置祖先增加弱推断分。令 `pathInfluence(a,q)` 使用 6.6 的最大乘积路径，`observedScore=quality/5*100`，则 `inferredDelta(a)=min(5, max(0, observedScore-score(a))*pathInfluence(a,q))`。同一会话有多道题、多条路径指向同一祖先时只取最大的**实际增量**，禁止求和；推断不改变祖先的 repetitions、interval 或 nextReviewAt。LEARNING 计划只更新上游明确提交直接证据的计划节点，不因“完成学习路径”自动推断祖先。
-- 回答基础点正确不得自动提高任何依赖它的上层点；回答上层点错误不得批量降低其所有前置点。负证据只更新直接作答点，后续由 ASSESSMENT 计划下钻诊断。
-- 若祖先已有晚于本次 `completedAt` 的直接复习记录，本次较旧的间接正证据对该祖先直接跳过；若直接作答点已有更晚记录，则整次提交按 `409 STALE_REVIEW_EVIDENCE` 拒绝。
+- 每条直接作答只更新其明确绑定的 `knowledgePointId`，并只对该点推进 SM-2 调度。
+- 知识图谱的前置关系只参与第 6.6 节的复习目标检索与覆盖，不把“答对上层点”转换为前置点掌握分，也不把“答对基础点”转换为上层点掌握分。
+- 正确、错误、使用提示与否都不得批量更新未作答知识点；否则任何推断增量或衰减上限都会成为未经真实作答校准的第二套掌握模型。
+- 若直接作答点已有晚于本次 `completedAt` 的记录，则整次提交按 `409 STALE_REVIEW_EVIDENCE` 拒绝。
 
 结果幂等规则：
 
@@ -1140,17 +1151,17 @@ interface MasteryPage {
 
 算法版本固定为 `assessment-planner-v1`、`learning-planner-v1` 和公共权重核 `graph-weight-v1`。首版禁止把“个人薄弱、到期程度、中心性、标签多样性”等异质量任意线性混合。所有计划只使用以下同一套可解释量。
 
-遗忘风险：
+SM-2 到期需要：
 
 ```text
-lastReviewedAt=null or score=0:
-  risk(v)=1
+lastReviewedAt=null or repetitions=0 or now>=nextReviewAt(v):
+  need(v)=1
 otherwise:
-  elapsed=max(0, now-lastReviewedAt(v)) in days
-  stability=max(1, intervalDays(v))
-  retention(v)=score(v)/100 * exp(log(0.9)*elapsed/stability)
-  risk(v)=clamp(0,1,1-retention(v))
+  need(v)=0
 ```
+
+这是对 SM-2 日程的直接投影，不假设额外遗忘曲线、目标保持率或混合系数。若当前作用域没有到期点，
+ASSESSMENT 仍按稳定顺序返回一个探测题，而不能伪造非零风险。下文统一使用 `need`。
 
 依赖影响使用最大乘积半环。对前置边 `a -> b`：
 
@@ -1169,15 +1180,16 @@ influence(v,t) =
 ASSESSMENT 的候选题集合为 `S`，覆盖宇宙为目标知识点及其有限深度前置闭包：
 
 ```text
-F(S) = Σ_v risk(v) * max_{q in S} influence(v,q)
+F(S) = Σ_v need(v) * max_{q in S} influence(v,q)
 ```
 
-`F` 是归一化、单调、次模函数。在题目成本相同且执行固定 `k` 轮时，按真实边际收益贪心相对最优 `k` 题集合具有经典 `1-1/e` 近似保证。若达到 `coverageTarget` 后提前停止，这一保证只相对实际已选题数的最优集合成立，不能冒充相对原 `maxQuestions` 预算最优解的保证。`max` 使重复题及共享前置点自然产生递减收益；同一 hub 无论连接多少候选，在每个被覆盖知识点上都不会被重复求和。
+`F` 是归一化、单调、次模函数。在题目成本相同且执行固定 `k` 轮时，按真实边际收益贪心相对最优 `k` 题集合具有经典 `1-1/e` 近似保证；依据为
+[Nemhauser、Wolsey 与 Fisher 的基数约束次模最大化结果](https://pubsonline.informs.org/doi/abs/10.1287/moor.3.3.177)。若达到 `coverageTarget` 后提前停止，这一保证只相对实际已选题数的最优集合成立，不能冒充相对原 `maxQuestions` 预算最优解的保证。`max` 使重复题及共享前置点自然产生递减收益；同一 hub 无论连接多少候选，在每个被覆盖知识点上都不会被重复求和。
 
 LEARNING 对请求章节目标集合 `T` 定义唯一的原始优先级：
 
 ```text
-priority(v) = max_{t in T} risk(t) * influence(v,t)
+priority(v) = max_{t in T} need(t) * influence(v,t)
 ```
 
 因此 `0 <= priority(v) <= 1`，并且给 hub 新增更多上游目标只能改变 `max` 的取值，不能按出度线性放大。完整 path bundle 只有在整条路径同时满足 `maxPoints` 与外部节点数量约束时才可加入；选择过程使用下述独立覆盖目标，而 `priority(v)` 只作为入选节点的最终权重先验。这里不声称该带路径闭包问题的贪心达到全局最优，只保证以下可机械验证的不变量：节点上限、外部节点数量上限、每个外部节点到至少一个已选目标有有向路径、相同输入稳定输出。
@@ -1186,7 +1198,7 @@ priority(v) = max_{t in T} risk(t) * influence(v,t)
 
 ```text
 g_b(v) =
-  risk(t_b) * influence(v,t_b)  if v is on b
+  need(t_b) * influence(v,t_b)  if v is on b
   0                             otherwise
 
 G(B) = Σ_v max_{b in B} g_b(v)
@@ -1317,7 +1329,7 @@ subject to:
 - API 关系类型固定为 `PREREQUISITE`、`RELATED`、`CONTRASTS`；Neo4j 物理关系分别为 `PREREQUISITE_OF`、`RELATED_TO`、`CONTRASTS_WITH`，章节归属使用 `Chapter-[:HAS_POINT]->KnowledgePoint`。
 - 长度上限：Chapter title 160、KnowledgePoint title 120、summary 4000、tags 最多 20 个且每个 1-40、SourceRef quote 240。超限抽取结果必须拒绝或确定性截断并记录 warning。
 - 当前 `knowledge-extractor-v2` 为确定性规则抽取器，只接收已切分章节文本，并增加内联题库条目读取与通用版权页眉清理。未来若接入外部模型，也只能传当前章节、必要父标题和有限相邻上下文，不得发送其他用户资料；输出必须通过结构化 schema、offset、pointId 唯一性和 DAG 校验后才能入库。
-- 当前算法版本冻结为：`chapter-segmenter-v2`、`knowledge-extractor-v2`、`graph-weight-v1`、`assessment-planner-v1`、`learning-planner-v1`、`sm2-graph-v1`、`PlanGraph schema 1.0`。
+- 当前算法版本冻结为：`chapter-segmenter-v2`、`knowledge-extractor-v2`、`graph-weight-v1`、`assessment-planner-v1`、`learning-planner-v1`、`sm2-graph-v2`、`PlanGraph schema 1.0`。
 - READY 图内容不可变。P1 的 `PATCH /knowledge-points/{pointId}` 只允许修改 DRAFT 图并依赖 `expectedUpdatedAt` 乐观并发；READY/SUPERSEDED 图返回 `409 GRAPH_IMMUTABLE`，修正需构建新版本。READY 仅可在新版本就绪后把生命周期状态迁移为 SUPERSEDED。
 - 所有知识点必须至少有一个可回到 `ExtractedTextDocument` offset 的 `SourceRef`；章节自身保存规范化文本的半开 offset 区间。来源不完整时构建失败，不以模型幻觉补齐。
 - 新图版本不得覆盖旧版本，且 mastery 固定从 0 开始。游戏包使用的内容严格以 `PlanGraph.snapshotVersion` 为边界。
@@ -2033,7 +2045,7 @@ interface EventEnvelope<T> {
 |---|---|---|---|
 | `MaterialUploaded v1` | FileService | Gateway 通知 / 审计；**KnowledgeService 明确不消费** | `materialId, ownerUserId, mediaType, checksum, contentRef` |
 | `MaterialTextReady v1` | FileService | KnowledgeService | **URGENT（跨服务阻塞项）** `materialId, ownerUserId, textChecksum, textLength, parserVersion, sourceMapVersion, contentRef` |
-| `KnowledgeGraphReady v1` | KnowledgeService | Gateway 通知 / GalGameService | `graphId, materialId, version, subjectCode, chapterCount, pointCount` |
+| `KnowledgeGraphReady v1` | KnowledgeService | Gateway 通知 / GalGameService | `graphId, studyProjectId, materialId, version, subjectCode, chapterCount, pointCount` |
 | `GamePackageReady v1` | GalGameService | RenderService / Gateway 通知 | `packageId, schemaVersion, reviewPlanId, snapshotVersion, contentRef, checksum` |
 | `ReviewCompleted v2` | RenderService | KnowledgeService | **URGENT（跨服务阻塞项）** `resultId, idempotencyKey, reviewPlanId, snapshotVersion, userId, answerResults, completedAt` |
 
@@ -2062,6 +2074,7 @@ interface MaterialTextReadyData {
 
 interface KnowledgeGraphReadyData {
   graphId: Uuid;
+  studyProjectId: Uuid;
   materialId: Uuid;
   version: number;
   subjectCode: SubjectCode;
@@ -2319,7 +2332,7 @@ Neo4j 计数一致，先修子图无环，初始 mastery 全为 0，同请求构
 
 ## 14. PracticeService（ReciteHelper 迁移，BASELINE）
 
-PracticeService 承载产品默认主线的 ReciteHelper 复习资料库聚合。KnowledgeService 的图谱/SM-2 与 GalGameService/RenderService 的视觉小说链路是 StudyProject 下的计划复习和故事复习能力；不得把 ReciteHelper 表达成 GalReview 故事产品的附属功能。该产品主从关系不改变下述单一事实所有者和跨服务权限边界。
+PracticeService 承载产品唯一顶层的 ReciteHelper 经典复习项目聚合。用户所见的项目不是 GalGame 项目：资料、章节、题库、章节练习、智能复习、模拟试卷、知识点学习、项目包与复习历史组成同一 `StudyProject`；KnowledgeService 的图谱/SM-2 是该项目的知识组织与调度能力，GalGameService/RenderService 的视觉小说链路只是项目内的“故事回响”复习方式。不得把 ReciteHelper 表达成 GalReview 故事产品的附属功能，也不得把资料页留下的全局 PlanGraph 当成项目。该产品主从关系不改变下述单一事实所有者和跨服务权限边界。
 
 PracticeService 的迁移决策、来源差异、UI 原则和逐项变更状态见
 `docs/recitehelper-migration.md`。服务内部固定采用与 KnowledgeService 相同的
@@ -2330,7 +2343,7 @@ API/Application/Domain/Persistence 四层项目；API 通过 MediatR Command/Que
 
 | 方法 | 路径 | 鉴权 | 用途 |
 |---|---|---|---|
-| `POST` | `/api/v1/practice-projects` | 用户 | 创建引用一个或多个资料的学习项目 |
+| `POST` | `/api/v1/practice-projects` | 用户 | 先创建引用一个或多个 READY 资料、尚未绑定图谱的经典复习项目 |
 | `GET` | `/api/v1/practice-projects` | 用户 | 游标分页查询自己的项目 |
 | `GET` | `/api/v1/practice-projects/{projectId}` | 用户 | 查询项目详情和统计 |
 | `PATCH` | `/api/v1/practice-projects/{projectId}` | 用户 | 修改名称、科目和图谱引用 |
@@ -2375,7 +2388,7 @@ type StudyProject = {
   name: string;                 // 1-120
   subjectCode: string | null;   // 与 FileService SubjectCode 规则一致
   materialIds: UUID[];          // 1-20；仅保存引用
-  graphId: UUID | null;         // 仅保存引用
+  graphId: UUID | null;         // 新立册编排的中间态也为 null；绑定后必须是本 project 的图谱
   questionBankId: UUID;
   status: "ACTIVE" | "ARCHIVED";
   questionCounts: Partial<Record<PracticeQuestionKind, number>>;
@@ -2422,7 +2435,7 @@ POST /api/v1/practice-projects
   "name": "数据结构期末复习",
   "subjectCode": "CS_DS",
   "materialIds": ["62456508-30dd-4284-8144-6ffdc0116e55"],
-  "graphId": "7be31db3-b662-4ec3-a8c4-49a1343513c8"
+  "graphId": null
 }
 ```
 
@@ -2438,10 +2451,45 @@ POST /api/v1/practice-projects/{projectId}/question-generations
 }
 ```
 
-`reviewPlanId` 和 `snapshotVersion` 必须同时出现或同时省略。出现时 PracticeService 必须以
-`X-Service-Name: PracticeService` 经 Gateway 读取现有 PlanGraph，并只绑定快照内的知识点；
-省略时可生成未绑定题目。`targetCount` 范围 1-200。相同所有者、项目和
+浏览器新建经典复习项目时禁止提交既有 `graphId`，避免把资料级或他册图谱冒充本册图谱。
+创建响应中的 `projectId` 随后作为 `GraphBuildRequest.studyProjectId`；KnowledgeService 必须经受信
+INTERNAL 接口核验项目所有者与 `materialId` 成员关系。构图成功后，客户端以项目当前 `version`
+PATCH `graphId`，PracticeService 再反查图谱的 `studyProjectId` 和来源资料。任一校验不一致均返回
+`409`，不得进入成题。旧 `.rhproj/.rhp` 或中断流程仍可保留 `graphId=null`，并从本册恢复识网。
+
+“立册”不是只写入空 `StudyProject` 的结束动作，而是 ReciteHelper 经典创建流程的产品级编排：客户端
+先用 READY material 创建 `StudyProject`，再按该 `projectId` 建图并绑定；随后读取本册图谱全部章节，
+创建一次覆盖全部章节的 OPEN assessment plan，再调用同册题目生成接口，最后进入该册。藏书阁
+只负责资料上传、OCR、规范化文本与预览，不创建或选择图谱。首次自动成题固定请求
+`SINGLE_CHOICE | FILL_BLANK | TERM_DEFINITION | ESSAY`。当 `targetCount` 不少于请求题型数时，
+生成器必须先轮转覆盖每种请求题型，再重复任一题型；知识点也同步轮换，不能因知识点数先达到
+`targetCount` 而把首批题全部生成为第一种题型。`TRUE_FALSE` 沿用 ReciteHelper 规则，
+只从整卷导入或人工题录产生。独立“成题”入口只用于追加或失败重试，不得成为首次建册的正常必经步骤。
+若 credits 不足、网络中断或没有任何知识点能与原文精确绑定，已经成功持久化的册必须保留并显示
+可恢复状态，不能谎报完整成功，也不能重复创建第二册。
+
+题目生成时 `reviewPlanId` 和 `snapshotVersion` 均必填。PracticeService 必须以
+`X-Service-Name: PracticeService` 经 Gateway 读取现有 PlanGraph，并校验 `ownerUserId`、
+`graphId`、`status=OPEN` 和不可变 snapshot 均与当前项目一致。服务直接复用 PlanGraph 已有的
+`title/summary/tags/weight/coversPointIds`，不新增另一套选点接口，也不得只保留 point ID 后猜测语义。
+`targetCount` 范围 1-200。相同所有者、项目和
 `idempotencyKey` 必须返回同一任务；载荷不同则返回 `409 IDEMPOTENCY_KEY_REUSED`。
+
+自动绑定采用“知识点先行、原文后成题”，禁止按数组下标、题目序号或随机数轮换贴标签：
+
+1. 按 PlanGraph 已冻结的目标顺序处理 `questionTarget=true` 的知识点；
+2. 在项目规范化原文中先查找知识点标题的规范化精确命中；没有标题命中时，只允许使用当前
+   PlanGraph 中唯一且长度足够的精确标签；
+3. 题目由命中的知识点与原文片段共同生成，保存对应 `knowledgePointId` 与 `SourceReference`；
+4. 没有可信原文时不生成、不贴签，并记录 `KNOWLEDGE_POINT_SOURCE_NOT_FOUND`；不得为了凑足
+   `targetCount` 把无关段落绑定到该点；
+5. 当前 `recite-question-v1` 是确定性原文模板生成器：只有题目、答案、唯一主知识点和精确
+   `SourceReference` 同时成立才创建，成功结果直接为 `READY`，以恢复 ReciteHelper “立册即有题”
+   的业务语义。未来接入不能满足上述机械校验的模型输出必须先为 `DRAFT`，经用户核对后才能
+   `READY`。图谱项目中的 `READY` 题目必须有且只有一个主知识点；多知识点复合题应拆题或人工选择主知识点。
+
+本版本在没有经过标注集校准前，不使用 SBERT 模糊匹配自动写入标签。将来若启用，接受阈值与
+第一/第二候选间隔必须由带真值的标注集给出，并冻结算法版本；不能拍脑袋设置混合权重或阈值。
 
 ```ts
 type PracticeJob = {
@@ -2483,7 +2531,17 @@ POST /api/v1/practice-sessions
 ```
 
 `mode` 为 `RANDOM | SMART_REVIEW | EXAM`。`SMART_REVIEW` 必须提供 plan 和 snapshot；
-`EXAM` 还必须提供 `examPaperId`。服务端保存最终题目 ID 与顺序，重取会话不得重新随机。
+`EXAM` 还必须提供 `examPaperId`，且组卷和会话均须携带同一个 plan/snapshot。产品 UI 暴露的
+章节练习、智能复习和模拟试卷全部使用带计划的计分会话，完成后均写回 mastery；`RANDOM` 只为
+无图谱旧项目兼容保留，不得在 UI 中宣称会更新掌握度。服务端保存最终题目 ID 与顺序，重取会话
+不得重新随机。
+
+PracticeService 不重新实现“SM-2 多少百分比 + 图谱多少百分比”的混合分。知识点选择完整复用
+第 6.6 节 `assessment-planner-v1`：SM-2 的 `nextReviewAt` 先形成到期集合，图谱最大乘积路径形成覆盖关系，
+再由单调次模覆盖的真实边际收益选出目标点。题目层严格按 PlanGraph 目标顺序取题；每个目标点
+在一次会话中最多取一道 READY 题，同点多题只用 seed 做可重放的确定性择一。任一目标点没有
+READY 题时返回 `422 QUESTION_COVERAGE_GAP` 并列出缺失 point ID，不得换成计划外题目。这样既
+避免重复知识点证据，也满足 KnowledgeService 对单次提交 `knowledgePointId` 唯一性的校验。
 
 ```ts
 type PracticeAnswerResult = {
@@ -2579,6 +2637,13 @@ type QuestionHelp = {
 | `QUESTION_KIND_UNSUPPORTED` | 400 | 未知题型 |
 | `QUESTION_ANSWER_INVALID` | 422 | 答案形状与题型不匹配 |
 | `PLAN_REQUIRED` | 400 | 智能复习缺 plan/snapshot |
+| `PROJECT_GRAPH_REQUIRED` | 422 | 项目未绑定图谱却请求自动成题或图谱复习 |
+| `PROJECT_PLAN_GRAPH_MISMATCH` | 409 | PlanGraph 与项目绑定图谱不一致 |
+| `PLAN_TARGETS_EMPTY` | 422 | PlanGraph 没有可出题目标 |
+| `KNOWLEDGE_POINT_SOURCE_NOT_FOUND` | 任务诊断 | 知识点没有可信原文，拒绝自动出题/贴签 |
+| `QUESTION_BINDING_REQUIRED` | 422 | 图谱项目的正式题目缺少主知识点 |
+| `QUESTION_COVERAGE_GAP` | 422 | 计划目标知识点在正式题库中缺题 |
+| `DUPLICATE_KNOWLEDGE_POINT` | 422 | 同一计分会话重复选择同一知识点 |
 | `SESSION_NOT_ACTIVE` | 409 | 向非活动会话作答 |
 | `SESSION_ALREADY_COMPLETED` | 409 | 完成状态冲突但幂等键不匹配 |
 | `MODEL_UNAVAILABLE` | 503 | 调用方明确要求模型且不能降级 |

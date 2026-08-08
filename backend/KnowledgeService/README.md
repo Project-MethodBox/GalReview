@@ -46,6 +46,10 @@ Compose 默认宿主地址：
 - 图谱构建还要求非空 UUID D 格式的 `Idempotency-Key`；服务会规范化为
   小写连字符形式后持久化。同键同请求返回既有任务，同键不同请求返回
   `409 IDEMPOTENCY_KEY_REUSED`。
+- 图谱归 `StudyProject` 而不是归 `Material`。构图请求必须同时携带
+  `studyProjectId` 与作为来源的 `materialId`；KnowledgeService 会经 Gateway 调用
+  PracticeService 核验项目所有者和资料成员关系。图谱版本、指纹与 READY/SUPERSEDED
+  生命周期均以项目为作用域，同一资料用于两本研习册时不会复用图谱或 mastery。
 - 读取 FileService 纯文本时会验证 `ownerUserId` 与构图任务用户相同，并校验
   `sourceMapVersion=1`、UTF-16 `sourceMap` 和 `blocks` 的范围与文本一致性。
 - FileService 的来源标签、页码或段落会投影为知识点的可读来源位置。
@@ -65,13 +69,14 @@ Compose 默认宿主地址：
 
 ## Gateway → 构图 → Neo4j 联调
 
-FileService 完成上传和文本提取、获得用户 Access Token 与 `materialId` 后，可运行：
+FileService 完成上传和文本提取、并已建立引用该资料的空 `StudyProject` 后，可运行：
 
 ```powershell
 $env:GALREVIEW_ACCESS_TOKEN = "<access-token>"
 $env:NEO4J_PASSWORD = "<neo4j-password>"
 .\scripts\Test-KnowledgeFlow.ps1 `
   -MaterialId "<material-id>" `
+  -StudyProjectId "<study-project-id>" `
   -VerifyNeo4j `
   -ReportPath ".\TestResults\knowledge-flow.json"
 ```
@@ -79,7 +84,7 @@ $env:NEO4J_PASSWORD = "<neo4j-password>"
 脚本只通过 Gateway 创建并轮询构图任务，随后校验章节、知识点、关系端点、
 初始掌握度、来源位置和 `PREREQUISITE` DAG；启用 `-VerifyNeo4j` 时还会通过
 Neo4j 事务 HTTP 接口交叉核对实际节点和关系数量。它不会测试或调用 OCR，
-可由仓库级“注册 → 登录 → 上传 → 提取”测试在取得 `materialId` 后直接调用。
+可由仓库级“注册 → 登录 → 上传 → 提取 → 创建 StudyProject”测试取得两个 ID 后调用。
 
 ## 算法约束
 
@@ -87,13 +92,12 @@ Neo4j 事务 HTTP 接口交叉核对实际节点和关系数量。它不会测�
   `knowledge-extractor-v2` 可在题库型章节中连续解析编号题项。章节响应的
   `segmentationMode` 固定使用
   `AUTO/HEADING_RULES/MARKDOWN/DELIMITER/FIXED_WINDOW`。
-- 图谱指纹覆盖最终 `subjectCode`，以及构图 API 已暴露的 mode、delimiter、
+- 图谱指纹首先覆盖 `studyProjectId`，并覆盖最终 `subjectCode`，以及构图 API 已暴露的 mode、delimiter、
   min/max chapter characters 和 fixed-window characters；这些输入变化不会
   错误复用旧学科或旧切分结果。
-- 测试选题优化单调次模覆盖函数，使用最大未覆盖依赖影响做贪心选择。
-- 学习节点的原始优先级固定为
-  `max_target(forgettingRisk(target) * maxProductInfluence(node,target))`；
+- 测试选题先由 SM-2 的 `nextReviewAt` 形成到期集合，再以最大乘积依赖路径和单调次模边际收益覆盖目标；
   不混合多个经验权重，也不按 hub 出度求和。
+- 学习节点的优先级同样复用 SM-2 到期状态与图谱路径覆盖，不额外假定遗忘保持率曲线。
 - 学习依赖按完整路径包选择；章节外节点数量与总权重均不超过 30%。
 - 权重通过带单点上限和外部组上限的约束投影归一化。
-- 直接证据使用 SM-2 调度；共享祖先在一次提交内只采用最大实际正向增量。
+- 直接证据使用 SM-2 调度；mastery 只更新明确作答的知识点，不给未作答前置点或后继点推断加分。

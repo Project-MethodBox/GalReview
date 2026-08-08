@@ -1,6 +1,6 @@
 import { api, ApiClientError } from './api'
 import { readWorkflow, updateWorkflow, type StudyWorkflow } from './workflow'
-import type { KnowledgeGraphSummary, Material } from '../types/api'
+import type { KnowledgeGraphSummary } from '../types/api'
 
 let recoveryPromise: Promise<StudyWorkflow> | null = null
 let lastRecoveryAt = 0
@@ -12,25 +12,27 @@ export function newestGraph(graphs: KnowledgeGraphSummary[]) {
     .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime() || right.version - left.version)[0]
 }
 
-async function loadLatestGraph(materials: Material[]) {
-  const results = await Promise.allSettled(materials.map((material) => api.getAllKnowledgeGraphs(material.materialId)))
-  const graphs = results.flatMap((result) => result.status === 'fulfilled' ? result.value : [])
-  return newestGraph(graphs)
-}
-
 export async function recoverWorkflow(): Promise<StudyWorkflow> {
   const current = readWorkflow()
   if (Date.now() - lastRecoveryAt < RECOVERY_CACHE_MS) return current
   if (recoveryPromise) return recoveryPromise
 
   recoveryPromise = (async () => {
-    const materials = (await api.getAllMaterials()).filter((material) => material.status !== 'DELETED')
+    const [materials, projectPage] = await Promise.all([api.getAllMaterials(), api.listPracticeProjects()])
+    const availableMaterials = materials.filter((material) => material.status !== 'DELETED')
+    const projects = projectPage.items.filter((project) => project.graphId)
+    const project = projects.find((item) => item.projectId === current.projectId) || projects[0]
+    if (!project?.graphId) {
+      return updateWorkflow({ projectId: undefined, material: undefined, graph: undefined, chapters: undefined, plan: undefined,
+        gameGeneration: undefined, gameManifest: undefined, gamePackage: undefined, reviewSession: undefined,
+        visitedSceneIds: undefined, answerResults: undefined })
+    }
     const currentMaterial = current.material
-      ? materials.find((item) => item.materialId === current.material?.materialId)
+      ? availableMaterials.find((item) => item.materialId === current.material?.materialId && project.materialIds.includes(item.materialId))
       : undefined
-    const graph = current.graph && materials.some((item) => item.materialId === current.graph?.materialId)
+    const graph = current.graph?.graphId === project.graphId
       ? current.graph
-      : await loadLatestGraph(materials)
+      : await api.getKnowledgeGraph(project.graphId)
 
     if (!graph) {
       return updateWorkflow({
@@ -49,7 +51,7 @@ export async function recoverWorkflow(): Promise<StudyWorkflow> {
 
     const material = currentMaterial?.materialId === graph.materialId
       ? currentMaterial
-      : materials.find((item) => item.materialId === graph.materialId)
+      : availableMaterials.find((item) => item.materialId === graph.materialId && project.materialIds.includes(item.materialId))
     const chapters = current.chapters?.length && current.chapters.every((chapter) => chapter.graphId === graph.graphId)
       ? current.chapters
       : await api.getChapters(graph.graphId)
@@ -94,7 +96,7 @@ export async function recoverWorkflow(): Promise<StudyWorkflow> {
       visitedSceneIds = undefined
     }
 
-    return updateWorkflow({ material, graph, chapters, plan, gameGeneration, gameManifest, gamePackage, reviewSession, visitedSceneIds })
+    return updateWorkflow({ projectId: project.projectId, material, graph, chapters, plan, gameGeneration, gameManifest, gamePackage, reviewSession, visitedSceneIds })
   })().then((workflow) => {
     lastRecoveryAt = Date.now()
     return workflow

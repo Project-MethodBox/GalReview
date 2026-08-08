@@ -18,7 +18,8 @@ public sealed partial class Neo4jKnowledgeRepository
             MATCH (job:GraphBuildJob {
                 buildId: $buildId,
                 ownerUserId: $ownerUserId,
-                materialId: $materialId
+                materialId: $materialId,
+                studyProjectId: $studyProjectId
             })
             RETURN job
             """,
@@ -27,6 +28,7 @@ public sealed partial class Neo4jKnowledgeRepository
                 buildId = Neo4jParameterMapper.Id(buildId),
                 ownerUserId = Neo4jParameterMapper.Id(graph.OwnerUserId),
                 materialId = Neo4jParameterMapper.Id(graph.MaterialId)
+                ,studyProjectId = graph.StudyProjectId is null ? null : Neo4jParameterMapper.Id(graph.StudyProjectId.Value)
             });
         var records = await cursor.ToListAsync();
         if (records.Count == 0)
@@ -69,6 +71,7 @@ public sealed partial class Neo4jKnowledgeRepository
                 fingerprint.graphId = $graphId,
                 fingerprint.ownerUserId = $ownerUserId,
                 fingerprint.materialId = $materialId,
+                fingerprint.studyProjectId = $studyProjectId,
                 fingerprint.textChecksum = $textChecksum,
                 fingerprint.segmenterVersion = $segmenterVersion,
                 fingerprint.extractorVersion = $extractorVersion,
@@ -98,6 +101,7 @@ public sealed partial class Neo4jKnowledgeRepository
                 graphId = Neo4jParameterMapper.Id(graph.GraphId),
                 ownerUserId = Neo4jParameterMapper.Id(graph.OwnerUserId),
                 materialId = Neo4jParameterMapper.Id(graph.MaterialId),
+                studyProjectId = graph.StudyProjectId is null ? null : Neo4jParameterMapper.Id(graph.StudyProjectId.Value),
                 textChecksum = graph.TextChecksum,
                 segmenterVersion = graph.SegmenterVersion,
                 extractorVersion = graph.ExtractorVersion,
@@ -124,7 +128,8 @@ public sealed partial class Neo4jKnowledgeRepository
         IAsyncQueryRunner transaction,
         Guid graphId,
         Guid ownerUserId,
-        Guid materialId)
+        Guid materialId,
+        Guid? studyProjectId)
     {
         var cursor = await transaction.RunAsync(
             """
@@ -133,6 +138,7 @@ public sealed partial class Neo4jKnowledgeRepository
                 ownerUserId: $ownerUserId,
                 materialId: $materialId
             })
+            WHERE graph.studyProjectId = $studyProjectId
             RETURN count(graph) = 1 AS exists
             """,
             new
@@ -140,6 +146,7 @@ public sealed partial class Neo4jKnowledgeRepository
                 graphId = Neo4jParameterMapper.Id(graphId),
                 ownerUserId = Neo4jParameterMapper.Id(ownerUserId),
                 materialId = Neo4jParameterMapper.Id(materialId)
+                ,studyProjectId = studyProjectId is null ? null : Neo4jParameterMapper.Id(studyProjectId.Value)
             });
         var record = await cursor.SingleAsync();
         return record["exists"].As<bool>();
@@ -148,11 +155,11 @@ public sealed partial class Neo4jKnowledgeRepository
     private static async Task<int> NextGraphVersionAsync(
         IAsyncQueryRunner transaction,
         Guid ownerUserId,
-        Guid materialId)
+        Guid materialId,
+        Guid? studyProjectId)
     {
-        var sequenceKey =
-            $"{Neo4jParameterMapper.Id(ownerUserId)}:" +
-            Neo4jParameterMapper.Id(materialId);
+        var scopeId = studyProjectId ?? materialId;
+        var sequenceKey = $"{Neo4jParameterMapper.Id(ownerUserId)}:{Neo4jParameterMapper.Id(scopeId)}";
         var cursor = await transaction.RunAsync(
             """
             MERGE (sequence:GraphSequence {sequenceKey: $sequenceKey})
@@ -168,21 +175,21 @@ public sealed partial class Neo4jKnowledgeRepository
     private static async Task SupersedeReadyGraphsAsync(
         IAsyncQueryRunner transaction,
         Guid ownerUserId,
-        Guid materialId)
+        Guid materialId,
+        Guid? studyProjectId)
     {
         var cursor = await transaction.RunAsync(
             """
-            MATCH (graph:KnowledgeGraph {
-                ownerUserId: $ownerUserId,
-                materialId: $materialId,
-                status: 'Ready'
-            })
+            MATCH (graph:KnowledgeGraph {ownerUserId: $ownerUserId, status: 'Ready'})
+            WHERE ($studyProjectId IS NOT NULL AND graph.studyProjectId = $studyProjectId)
+               OR ($studyProjectId IS NULL AND graph.studyProjectId IS NULL AND graph.materialId = $materialId)
             SET graph.status = 'Superseded'
             """,
             new
             {
                 ownerUserId = Neo4jParameterMapper.Id(ownerUserId),
-                materialId = Neo4jParameterMapper.Id(materialId)
+                materialId = Neo4jParameterMapper.Id(materialId),
+                studyProjectId = studyProjectId is null ? null : Neo4jParameterMapper.Id(studyProjectId.Value)
             });
         await cursor.ConsumeAsync();
     }

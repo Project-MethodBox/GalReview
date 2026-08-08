@@ -8,8 +8,8 @@ import { BookIcon, GraphIcon, HomeIcon, LogoutIcon, MaterialsIcon, SettingsIcon 
 
 const navigation = [
   { to: '/home', label: '起点', icon: HomeIcon },
-  { to: '/projects', label: '学习项目', icon: BookIcon },
   { to: '/materials', label: '藏书阁', icon: MaterialsIcon },
+  { to: '/projects', label: '研习册', icon: BookIcon },
   { to: '/knowledge-graph', label: '识网', icon: GraphIcon },
   { to: '/settings', label: '我的', icon: SettingsIcon },
 ]
@@ -20,7 +20,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const profile = readProfile()
   const session = readSession()
   const avatarInitial = Array.from(profile?.displayName.trim() || '学')[0]
-  const currentNavigation = navigation.find((item) => item.to === location.pathname)
+  const currentNavigation = navigation.find((item) => item.to === location.pathname || (item.to !== '/home' && location.pathname.startsWith(`${item.to}/`)))
 
   async function logout() {
     try {

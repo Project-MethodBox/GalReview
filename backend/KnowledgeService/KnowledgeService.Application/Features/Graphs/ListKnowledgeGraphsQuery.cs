@@ -4,5 +4,5 @@ using MediatR;
 namespace KnowledgeService.Application.Features.Graphs;
 
 public sealed record ListKnowledgeGraphsQuery(
-    Guid MaterialId,
+    Guid StudyProjectId,
     Guid OwnerUserId) : IRequest<IReadOnlyList<KnowledgeGraphSummary>>;

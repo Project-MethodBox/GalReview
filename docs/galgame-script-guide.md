@@ -12,7 +12,7 @@ GalGame 脚本的本质是一份 **JSON 游戏包（GamePackage）**，包含若
 ### 核心数据流
 
 ```
-用户上传资料 → OCRService 识别 → KnowledgeService 构建知识图谱(PlanGraph)
+用户上传资料 → OCRService/FileService 解析 → 创建 StudyProject → KnowledgeService 为该册构建知识图谱与 PlanGraph
   → GalGameService 从 PlanGraph 生成游戏包(JSON)
   → RenderService 加载游戏包 → 玩家在浏览器中体验剧情+答题
   → 作答结果回传 KnowledgeService → 更新知识点掌握度

@@ -1,5 +1,4 @@
 using KnowledgeService.Application.Exceptions;
-using KnowledgeService.Application.Planning;
 using KnowledgeService.Domain.Graphs;
 using KnowledgeService.Domain.Mastery;
 using KnowledgeService.Domain.Reviews;
@@ -8,8 +7,6 @@ namespace KnowledgeService.Application.Mastery;
 
 public sealed class MasteryEvidenceUpdater
 {
-    private const int MaximumPositiveInferenceDepth = 3;
-    private const double MaximumInferredScoreIncrease = 5;
     private static readonly TimeSpan AllowedClockSkew = TimeSpan.FromMinutes(5);
 
     public MasteryUpdateBatch Calculate(
@@ -34,9 +31,6 @@ public sealed class MasteryEvidenceUpdater
                 "结果包含不属于该计划可作答范围的知识点。");
         }
 
-        var directPointIds = submission.Answers
-            .Select(answer => answer.KnowledgePointId)
-            .ToHashSet();
         var states = new Dictionary<Guid, MasteryState>();
         var changes = new List<AppliedMasteryChange>();
 
@@ -63,121 +57,7 @@ public sealed class MasteryEvidenceUpdater
                 updated.Reason));
         }
 
-        if (plan.Purpose == ReviewPlanPurpose.Assessment)
-        {
-            // Ancestor inference is deliberately assessment-only and is
-            // bounded by MaximumPositiveInferenceDepth.
-            AddPositivePrerequisiteEvidence(
-                graph,
-                plan,
-                submission,
-                existing,
-                directPointIds,
-                states,
-                changes,
-                submission.CompletedAt);
-        }
-
         return new MasteryUpdateBatch(states.Values.ToArray(), changes);
-    }
-
-    private static void AddPositivePrerequisiteEvidence(
-        KnowledgeGraph graph,
-        ReviewPlanGraph plan,
-        ReviewResultSubmission submission,
-        IReadOnlyDictionary<Guid, MasteryState> existing,
-        IReadOnlySet<Guid> directPointIds,
-        IDictionary<Guid, MasteryState> states,
-        ICollection<AppliedMasteryChange> changes,
-        DateTimeOffset completedAt)
-    {
-        var analyzer = new DependencyPathAnalyzer(graph);
-        var bestEvidence = new Dictionary<Guid, InferredEvidence>();
-
-        foreach (var answer in submission.Answers.Where(answer =>
-                     answer.Correct &&
-                     answer.Quality >= 4 &&
-                     !answer.UsedHint))
-        {
-            foreach (var ancestor in analyzer.BestPrerequisiteEvidence(
-                         answer.KnowledgePointId,
-                         MaximumPositiveInferenceDepth,
-                         depthDecay: 1))
-            {
-                if (directPointIds.Contains(ancestor.Key) ||
-                    plan.Nodes.All(node => node.PointId != ancestor.Key))
-                {
-                    continue;
-                }
-
-                var baseline = existing.GetValueOrDefault(ancestor.Key) ??
-                               MasteryState.Initial(
-                                   plan.OwnerUserId,
-                                   ancestor.Key,
-                                   graph.CreatedAt);
-                if (baseline.LastReviewedAt > completedAt)
-                {
-                    // Old indirect evidence must never change an ancestor that
-                    // has since received newer direct evidence.
-                    continue;
-                }
-
-                var observedScore = answer.Quality / 5d * 100;
-                var actualIncrease = Math.Min(
-                    MaximumInferredScoreIncrease,
-                    Math.Max(
-                        0,
-                        (observedScore - baseline.Score) *
-                        ancestor.Value.Strength));
-                var evidence = new InferredEvidence(
-                    actualIncrease,
-                    ancestor.Value.Strength,
-                    ancestor.Value.Depth);
-                if (!bestEvidence.TryGetValue(ancestor.Key, out var current) ||
-                    evidence.ActualIncrease > current.ActualIncrease ||
-                    (Math.Abs(
-                         evidence.ActualIncrease -
-                         current.ActualIncrease) < 1e-12 &&
-                     evidence.PathStrength > current.PathStrength))
-                {
-                    // A shared prerequisite receives the strongest path once.
-                    // Multiple upstream paths are deliberately not summed.
-                    bestEvidence[ancestor.Key] = evidence;
-                }
-            }
-        }
-
-        foreach (var pair in bestEvidence)
-        {
-            var current = existing.GetValueOrDefault(pair.Key) ??
-                          MasteryState.Initial(
-                              plan.OwnerUserId,
-                              pair.Key,
-                              graph.CreatedAt);
-            var increase = pair.Value.ActualIncrease;
-            if (increase <= 0)
-            {
-                continue;
-            }
-
-            var updated = current with
-            {
-                Score = Math.Round(
-                    Math.Clamp(current.Score + increase, 0, 100),
-                    2),
-                Reason =
-                    $"INFERRED_POSITIVE:depth={pair.Value.Depth};" +
-                    $"strength={pair.Value.PathStrength:F6}",
-                Version = current.Version + 1
-            };
-            states[pair.Key] = updated;
-            changes.Add(new AppliedMasteryChange(
-                pair.Key,
-                current.Score,
-                updated.Score,
-                false,
-                updated.Reason));
-        }
     }
 
     private static void Validate(
@@ -283,9 +163,4 @@ public sealed class MasteryEvidenceUpdater
                 "该结果早于知识点现有的直接复习记录，不能倒序覆盖掌握度。");
         }
     }
-
-    private sealed record InferredEvidence(
-        double ActualIncrease,
-        double PathStrength,
-        int Depth);
 }

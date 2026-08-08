@@ -19,6 +19,7 @@ internal static class GraphFingerprint
         string?[] fields =
         [
             Neo4jParameterMapper.Id(graph.OwnerUserId),
+            graph.StudyProjectId is null ? null : Neo4jParameterMapper.Id(graph.StudyProjectId.Value),
             Neo4jParameterMapper.Id(graph.MaterialId),
             graph.TextChecksum.ToUpperInvariant(),
             graph.SegmenterVersion,

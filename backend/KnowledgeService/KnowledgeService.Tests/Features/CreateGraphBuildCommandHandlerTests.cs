@@ -1,6 +1,8 @@
 using KnowledgeService.Application.Exceptions;
 using KnowledgeService.Application.Features.Builds;
 using KnowledgeService.Application.Time;
+using KnowledgeService.Application.Projects;
+using KnowledgeService.Application.Persistence;
 using KnowledgeService.Domain.Builds;
 using KnowledgeService.Domain.Segmentation;
 using KnowledgeService.Tests.Fixtures;
@@ -13,6 +15,8 @@ public sealed class CreateGraphBuildCommandHandlerTests
         Guid.Parse("10000000-0000-0000-0000-000000000001");
     private static readonly Guid OwnerUserId =
         Guid.Parse("10000000-0000-0000-0000-000000000002");
+    private static readonly Guid StudyProjectId =
+        Guid.Parse("10000000-0000-0000-0000-000000000004");
 
     [Fact]
     public async Task Normalizes_uuid_d_idempotency_key_before_storage()
@@ -28,9 +32,7 @@ public sealed class CreateGraphBuildCommandHandlerTests
                 return (job, true);
             }
         };
-        var handler = new CreateGraphBuildCommandHandler(
-            repository,
-            new SystemClock());
+        var handler = Handler(repository);
 
         var result = await handler.Handle(
             Command($"  {expectedKey.ToUpperInvariant()}  "),
@@ -52,9 +54,7 @@ public sealed class CreateGraphBuildCommandHandlerTests
         {
             CreateBuildJob = job => (job, true)
         };
-        var handler = new CreateGraphBuildCommandHandler(
-            repository,
-            new SystemClock());
+        var handler = Handler(repository);
 
         var exception = await Assert.ThrowsAsync<KnowledgeServiceException>(
             () => handler.Handle(
@@ -81,9 +81,7 @@ public sealed class CreateGraphBuildCommandHandlerTests
                 },
                 false)
         };
-        var handler = new CreateGraphBuildCommandHandler(
-            repository,
-            new SystemClock());
+        var handler = Handler(repository);
 
         var result = await handler.Handle(
             Command("abcdef01-2345-6789-abcd-ef0123456789"),
@@ -103,9 +101,7 @@ public sealed class CreateGraphBuildCommandHandlerTests
                 job with { MaterialId = Guid.NewGuid() },
                 false)
         };
-        var handler = new CreateGraphBuildCommandHandler(
-            repository,
-            new SystemClock());
+        var handler = Handler(repository);
 
         var exception = await Assert.ThrowsAsync<KnowledgeServiceException>(
             () => handler.Handle(
@@ -144,9 +140,7 @@ public sealed class CreateGraphBuildCommandHandlerTests
                 return (job, true);
             }
         };
-        var handler = new CreateGraphBuildCommandHandler(
-            repository,
-            new SystemClock());
+        var handler = Handler(repository);
         var subject = $"a{new string('b', 31)}";
 
         await handler.Handle(
@@ -200,10 +194,11 @@ public sealed class CreateGraphBuildCommandHandlerTests
         {
             CreateBuildJob = job => (job, true)
         };
-        return new CreateGraphBuildCommandHandler(
-            repository,
-            new SystemClock());
+        return Handler(repository);
     }
+
+    private static CreateGraphBuildCommandHandler Handler(IKnowledgeRepository repository) =>
+        new(repository, new SystemClock(), new AllowProjectScopeClient());
 
     private static CreateGraphBuildCommand Command(
         string idempotencyKey,
@@ -215,5 +210,12 @@ public sealed class CreateGraphBuildCommandHandlerTests
             subjectHint,
             segmentation ?? new SegmentationOptions(),
             null,
-            idempotencyKey);
+            idempotencyKey,
+            StudyProjectId);
+
+    private sealed class AllowProjectScopeClient : IStudyProjectScopeClient
+    {
+        public Task ValidateMaterialScopeAsync(Guid studyProjectId, Guid materialId, Guid ownerUserId,
+            string correlationId, CancellationToken cancellationToken) => Task.CompletedTask;
+    }
 }

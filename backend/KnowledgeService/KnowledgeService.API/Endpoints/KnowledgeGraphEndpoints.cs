@@ -16,7 +16,7 @@ internal static class KnowledgeGraphEndpoints
         endpoints.MapGet(
             "/api/v1/knowledge-graphs",
             async (
-                Guid materialId,
+                Guid studyProjectId,
                 string? cursor,
                 int? limit,
                 HttpContext context,
@@ -25,7 +25,7 @@ internal static class KnowledgeGraphEndpoints
             {
                 var graphs = await sender.Send(
                     new ListKnowledgeGraphsQuery(
-                        materialId,
+                        studyProjectId,
                         RequestIdentity.RequireUserId(context)),
                     cancellationToken);
                 var page = CursorPagination.Page(graphs, cursor, limit ?? 20);
@@ -50,6 +50,27 @@ internal static class KnowledgeGraphEndpoints
                     sender,
                     cancellationToken);
                 return ApiResults.Success(context, ToSummary(graph));
+            });
+
+        endpoints.MapGet(
+            "/internal/v1/knowledge-graphs/{graphId:guid}/scope",
+            async (
+                Guid graphId,
+                Guid ownerUserId,
+                HttpContext context,
+                ISender sender,
+                CancellationToken cancellationToken) =>
+            {
+                if (!string.Equals(RequestIdentity.RequireServiceName(context), "PracticeService", StringComparison.Ordinal))
+                    throw new Application.Exceptions.KnowledgeServiceException(403, "FORBIDDEN", "该接口只允许 PracticeService 调用。");
+                var graph = await sender.Send(new GetKnowledgeGraphQuery(graphId, ownerUserId), cancellationToken);
+                return ApiResults.Success(context, new
+                {
+                    graph.GraphId,
+                    graph.MaterialId,
+                    graph.StudyProjectId,
+                    graph.OwnerUserId
+                });
             });
 
         endpoints.MapGet(
@@ -204,5 +225,6 @@ internal static class KnowledgeGraphEndpoints
             graph.Relations.Count,
             graph.Status,
             graph.TextChecksum,
-            graph.CreatedAt);
+            graph.CreatedAt,
+            graph.StudyProjectId);
 }

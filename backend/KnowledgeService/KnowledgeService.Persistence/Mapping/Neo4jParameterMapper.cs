@@ -14,6 +14,7 @@ internal static class Neo4jParameterMapper
         {
             ["buildId"] = Id(job.BuildId),
             ["materialId"] = Id(job.MaterialId),
+            ["studyProjectId"] = job.StudyProjectId is null ? null : Id(job.StudyProjectId.Value),
             ["ownerUserId"] = Id(job.OwnerUserId),
             ["status"] = job.Status.ToString(),
             ["progress"] = job.Progress,
@@ -41,6 +42,7 @@ internal static class Neo4jParameterMapper
         {
             ["graphId"] = Id(graph.GraphId),
             ["materialId"] = Id(graph.MaterialId),
+            ["studyProjectId"] = graph.StudyProjectId is null ? null : Id(graph.StudyProjectId.Value),
             ["ownerUserId"] = Id(graph.OwnerUserId),
             ["version"] = version,
             ["textChecksum"] = graph.TextChecksum,

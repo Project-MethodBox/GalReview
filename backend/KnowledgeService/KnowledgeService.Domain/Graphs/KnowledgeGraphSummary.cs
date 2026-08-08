@@ -10,4 +10,5 @@ public sealed record KnowledgeGraphSummary(
     int RelationCount,
     KnowledgeGraphStatus Status,
     string TextChecksum,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    Guid? StudyProjectId = null);
