@@ -1,6 +1,6 @@
 #  AuthService
 
-AuthService 是 千知万理 的认证与账户治理服务。本地开发时默认监听 `http://localhost:5102`；生产环境应通过 `ASPNETCORE_URLS` 或宿主服务器配置监听地址。采用的数据库是 **MySQL**，负责凭证、密码哈希、会话、访问令牌、刷新令牌、密码恢复、管理员会话、邀请码和管理员审计记录。
+AuthService 是 千知万理 的认证与账户治理服务。本地开发时默认监听 `http://localhost:5102`；生产环境应通过 `ASPNETCORE_URLS` 或宿主服务器配置监听地址。采用的数据库是 **MySQL**，负责凭证、密码哈希、会话、访问令牌、刷新令牌、密码恢复、管理员会话和管理员审计记录。注册不再使用邀请码。
 
 浏览器不得直接访问本服务。所有浏览器请求必须先到 API Gateway，再由 Gateway 转发并注入受信任的身份头。用户展示资料和学习偏好由 UserService 管理；AuthService 不得直接访问 UserService 的数据表。
 
@@ -10,7 +10,7 @@ AuthService 是 千知万理 的认证与账户治理服务。本地开发时默
 | --- | --- |
 | 注册、登录、退出、会话读取与刷新令牌轮换 | 用户展示资料、头像、地区和学习偏好 |
 | 密码哈希、修改密码、邮件验证码重置密码 | 知识图谱、文件、剧情、复习记录 |
-| 管理员登录、用户认证账户治理、邀请码 | 直接读写 UserService 的 MySQL 表 |
+| 管理员登录、用户认证账户治理 | 直接读写 UserService 或 CreditService 的数据库 |
 | 管理员高风险操作审计 | 浏览器鉴权头的最终可信判定（由 Gateway 注入） |
 
 
@@ -20,6 +20,7 @@ AuthService 是 千知万理 的认证与账户治理服务。本地开发时默
 - MySQL 8.x
 - Gateway：默认 `http://localhost:5000`
 - UserService：注册、管理员用户查询与删除资料时需要经 Gateway 调用
+- CreditService：注册时经 Gateway 幂等创建初始 credits 账户
 - 可选：SMTP 服务。仅密码恢复邮件需要。
 
 本地启动：
@@ -94,8 +95,8 @@ AuthService 在 `moonstone_auth` 中拥有以下表：
 | `auth_credentials` | 用户 ID、邮箱和 PBKDF2 密码哈希 |
 | `auth_sessions` | 会话、Access/Refresh Token 的 SHA-256 哈希、过期与撤销状态 |
 | `auth_password_resets` | 六位验证码的哈希、过期时间和已使用状态 |
-| `admin_invitations` | 邀请码类型、次数和有效期 |
-| `admin_audit_logs` | 管理员删除用户、重置密码、创建/删除邀请码的审计记录 |
+| `admin_invitations` | 遗留迁移兼容表；不再提供公开接口，也不参与注册 |
+| `admin_audit_logs` | 管理员删除用户、重置密码等高风险操作的审计记录 |
 | `admin_user_overrides` | 兼容保留的管理员用户覆盖数据 |
 
 服务启动时会确保 AuthService 所拥有的数据表存在
@@ -106,7 +107,7 @@ AuthService 在 `moonstone_auth` 中拥有以下表：
 
 | 方法 | 地址 | 鉴权 | 用途 | 常见状态 |
 | --- | --- | --- | --- | --- |
-| `POST` | `/api/v1/auth/registrations` | 公开 | 注册、创建资料和初始会话 | `201/400/409/422/503` |
+| `POST` | `/api/v1/auth/registrations` | 公开 | 注册、创建资料、初始 credits 账户和会话 | `201/400/409/503` |
 | `POST` | `/api/v1/auth/sessions` | 公开 | 邮箱密码登录 | `201/400/401` |
 | `GET` | `/api/v1/auth/sessions/{sessionId}` | Bearer | 读取自己的会话 | `200/401/404` |
 | `DELETE` | `/api/v1/auth/sessions/{sessionId}` | Bearer | 撤销自己的会话，即退出登录 | `204/401/404` |
@@ -117,23 +118,19 @@ AuthService 在 `moonstone_auth` 中拥有以下表：
 
 ### 注册
 
-邀请码是注册的必填项。服务会将邀请码统一去除首尾空白并转换为大写后校验。
-
 ```json
 {
   "email": "student@example.com",
   "password": "at-least-8-characters",
   "displayName": "学习者",
-  "invitationCode": "MS-ABCDE12345",
   "deviceName": "Chrome on Windows"
 }
 ```
 
 - 邮箱最大 320 字符，必须包含 `@`；显示名去除首尾空白后为 1–64 字符；密码至少 8 个字符。
-- 创建凭证、锁定邀请码、校验有效期/使用次数、递增 `usedCount` 在同一 MySQL 事务中完成。
-- `single-use` 仅能使用一次；`multi-use` 不得超过 `maxUses`；`time-window` 仅在 `validFrom` 至 `validTo`（含边界）有效。
-- 重复邮箱返回 `409 STATE_CONFLICT`；无效、过期或用尽的邀请码返回 `422 BUSINESS_RULE_VIOLATION`。
-- 资料创建或初始会话创建失败时，会删除刚创建的凭证并归还邀请码次数。
+- 重复邮箱返回 `409 STATE_CONFLICT`。
+- AuthService 创建凭证后，经 Gateway 创建 UserService 资料和 CreditService 初始账户；任一步失败都会补偿已经创建的资料、credits 账户和凭证，不发放半成品会话。
+- 每个用户初始 credits 数值与后续兑换、扣费均由 CreditService 管理；AuthService 不保存余额。
 
 ### 登录、会话与令牌
 
@@ -242,27 +239,9 @@ POST /api/v1/admin/sessions
 | `GET` | `/api/v1/admin/users` | 列出注册用户和显示名 | `200/403/503` |
 | `DELETE` | `/api/v1/admin/users/{userId}` | 删除资料与认证数据 | `204/403/404/503` |
 | `POST` | `/api/v1/admin/users/{userId}/password` | 重置密码并撤销该用户会话 | `204/400/403/404` |
-| `GET` | `/api/v1/admin/invitations` | 列出邀请码 | `200/403` |
-| `POST` | `/api/v1/admin/invitations` | 创建邀请码 | `201/400/403` |
-| `DELETE` | `/api/v1/admin/invitations/{code}` | 删除邀请码 | `204/403/404` |
+credits 兑换码管理位于 CreditService 的 `/api/v1/admin/credit-codes`，不属于 AuthService。
 
-创建多次邀请码示例：
-
-```json
-{ "type": "multi-use", "maxUses": 10, "validFrom": null, "validTo": null }
-```
-
-创建限时邀请码示例：
-
-```json
-{
-  "type": "time-window",
-  "validFrom": "2026-08-01T00:00:00Z",
-  "validTo": "2026-08-31T23:59:59Z"
-}
-```
-
-用户删除时，AuthService 经 Gateway 调用 UserService 的内部删除接口，再删除认证凭证与会话；它不会直连 UserService 数据表。用户删除、密码重置、邀请码创建和邀请码删除会写入 `admin_audit_logs`，记录操作者、目标、结果、时间和 `traceId`。
+用户删除时，AuthService 经 Gateway 调用 UserService 的内部删除接口，再删除认证凭证与会话；它不会直连 UserService 数据表。已发生的 credits 账本为财务审计事实，由 CreditService 按契约保留。用户删除和密码重置会写入 `admin_audit_logs`，记录操作者、目标、结果、时间和 `traceId`。
 
 ## 8. 内部接口与信任模型
 
@@ -279,7 +258,7 @@ Gateway 调用内部接口时使用 `X-Gateway-Key`；服务间调用 Gateway �
 - 生产环境中的 Gateway、AuthService、UserService 必须使用同一个高强度随机 `Gateway__ServiceKey`，且只监听内网或回环地址。
 - 生产数据库使用专用低权限账号，不使用 MySQL `root`。
 - 管理员账号不得写入前端资源或版本库中的生产配置。
-- 发布前执行 `dotnet build .\AuthService\GalGame.AuthService.csproj`，并至少验证 `/healthz`、`/readyz`、注册、登录、密码恢复和管理员邀请码流程。
+- 发布前执行 `dotnet build .\AuthService\GalGame.AuthService.csproj`，并至少验证 `/healthz`、`/readyz`、无邀请码注册、初始 credits 账户、登录、密码恢复和管理员账户治理流程。
 
 ## 10. 账户注销
 
@@ -348,4 +327,4 @@ $env:MOONSTONE_MODE = "Mock"
 dotnet run --project .\AuthService\GalGame.AuthService.csproj
 ```
 
-预置测试账户为 `student@example.com` / `mock114514`，预置邀请码为 `MS-MOCK2026`。密码恢复请求不发送邮件，使用验证码 `123456`。Mock 模式仅用于本地前端联调与演示，禁止用于生产环境。
+预置测试账户为 `student@example.com` / `mock114514`。注册无需邀请码；密码恢复请求不发送邮件，使用验证码 `123456`。Mock 模式仅用于本地前端联调与演示，禁止用于生产环境。

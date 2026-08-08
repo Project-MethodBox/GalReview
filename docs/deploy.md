@@ -2,7 +2,7 @@
 
 本文说明如何使用仓库根目录的 `compose.integration.yaml` 在本机或 Linux 服务器启动 GalReview。接口、鉴权头和跨服务调用以 [`contract.md`](contract.md) 为准；本文只记录部署方式，不另行定义接口。
 
-当前 Compose 是联调与单机部署基线，不是高可用集群方案。AuthService、UserService 已分别接入独立 MySQL 容器；仓库本地默认值仍是 `Mock`，服务器 `.env` 模板则使用 `MySql`。GalGameService 的任务与游戏包使用 MongoDB。宿主发布端口的调整不改变接口路径、鉴权头、请求/响应结构或容器内部协议。
+当前 Compose 是联调与单机部署基线，不是高可用集群方案。AuthService、UserService 和 CreditService 分别接入独立 MySQL 容器；仓库本地 Auth/User 默认值仍是 `Mock`，服务器 `.env` 模板则使用 `MySql`，CreditService 始终使用 MySQL。File、GalGame 与 PracticeService 使用同一 MongoDB 实例中的独立数据库。宿主发布端口的调整不改变接口路径、鉴权头、请求/响应结构或容器内部协议。
 
 ## 1. 部署范围
 
@@ -16,11 +16,14 @@
 | FileService | `file-service` | `5103` | 不暴露 | MongoDB / GridFS |
 | KnowledgeService | `knowledge-service` | `8080` | `5104`（`KNOWLEDGE_HOST_PORT`），仅诊断 | Neo4j |
 | GalGameService | `galgame-service` | `5105` | 不暴露 | MongoDB；可选 DeepSeek 叙事生成 |
-| RenderService | `render-service` | `5106` | 不暴露 | C++ / JS 基础工具链壳；无会话存储 |
+| RenderService | `render-service` | `5106` | 不暴露 | C++/WASM runtime 与 TypeScript 会话/证据服务 |
+| PracticeService | `practice-service` | `5107` | 不暴露 | MongoDB `qzwl_practice`；本地 SBERT/XGBoost 资产 |
+| CreditService | `credit-service` | `5108` | 不暴露 | 独立 MySQL `qzwl_credit`；credits、兑换码、预授权与账本 |
 | Frontend | `frontend` | `8080` | `5120`（`FRONTEND_HOST_PORT`） | Node 静态站点；同源代理 `/api` 到 Gateway |
 | User MySQL | `user-mysql` | `3306` | 不暴露 | `user-mysql-data` 卷 |
 | Auth MySQL | `auth-mysql` | `3306` | 不暴露 | `auth-mysql-data` 卷 |
-| MongoDB | `mongo` | `27017` | 不暴露 | `file-mongo-data` 卷 |
+| Credit MySQL | `credit-mysql` | `3306` | 不暴露 | `credit-mysql-data` 卷 |
+| MongoDB | `mongo` | `27017` | 不暴露 | `file-mongo-data` 卷；承载 `qzwl_file`、`qzwl_galgame`、`qzwl_practice` 独立数据库 |
 | Neo4j | `neo4j` | Browser `7474` / Bolt `7687` | `5254/5255`（`NEO4J_*_HOST_PORT`），仅诊断 | `knowledge-neo4j-data` 卷 |
 
 OCRService 使用 `ocr` profile，可按需加入：
@@ -95,6 +98,8 @@ Copy-Item .\.env.deploy.example .\.env
 | `KNOWLEDGE_SERVICE_KEY` | Gateway、KnowledgeService 及其回调 Gateway 的服务密钥 |
 | `GALGAME_SERVICE_KEY` | Gateway、GalGameService 及其回调 Gateway 的服务密钥 |
 | `RENDER_SERVICE_KEY` | Gateway 转发到 RenderService 的目标密钥；未来 INTERNAL 回调继续复用该身份 |
+| `PRACTICE_SERVICE_KEY` | Gateway 与 PracticeService 的目标密钥；Practice 经 Gateway 读取资料/PlanGraph 与提交证据时复用该身份 |
+| `CREDIT_SERVICE_KEY` | Gateway 与 CreditService 的目标密钥；Auth、Practice、GalGame 经 Gateway 调用 credits INTERNAL 接口时分别使用自己的调用方密钥 |
 | `DSAPI` | GalGameService 的 DeepSeek API key；只注入该容器，不得写入日志或镜像 |
 | `GALGAME_NARRATIVE_ENABLED` | 是否启用模型叙事；关闭或 key 缺失时使用确定性回退 |
 | `GALGAME_NARRATIVE_ENDPOINT` | DeepSeek Chat Completions HTTPS endpoint |
@@ -104,6 +109,8 @@ Copy-Item .\.env.deploy.example .\.env
 | `USER_MYSQL_PASSWORD` | UserService 连接其 MySQL 的应用用户密码 |
 | `AUTH_MYSQL_ROOT_PASSWORD` | AuthService 专用 MySQL 实例的 root 密码，仅数据库容器使用 |
 | `AUTH_MYSQL_PASSWORD` | AuthService 连接其 MySQL 的应用用户密码 |
+| `CREDIT_MYSQL_ROOT_PASSWORD` | CreditService 专用 MySQL 实例的 root 密码，仅数据库容器使用 |
+| `CREDIT_MYSQL_PASSWORD` | CreditService 连接 `qzwl_credit` 的应用用户密码 |
 | `GALREVIEW_ADMIN_USERNAME` | 初始管理员用户名 |
 | `GALREVIEW_ADMIN_PASSWORD` | 初始管理员密码 |
 | `SMTP_HOST`、`SMTP_PORT`、`SMTP_USE_SSL` | AuthService 密码重置邮件的 SMTP 连接配置 |
@@ -125,7 +132,7 @@ Copy-Item .\.env.deploy.example .\.env
 
 建议服务器只把 Frontend 或现有反向代理暴露给外部。Frontend 在容器网络内把 `/api` 转发到 Gateway；KnowledgeService 与 Neo4j 的诊断端口应保持 `127.0.0.1`，不应开放到公网。
 
-Compose 内的两套 MySQL 连接使用 `caching_sha2_password`，并在隔离的容器网络中启用
+Compose 内的三套 MySQL 连接使用 `caching_sha2_password`，并在隔离的容器网络中启用
 `AllowPublicKeyRetrieval=True`；MySQL 端口不得映射到公网。若改接 Compose 网络之外的
 数据库，应改用受信 CA 的 TLS 连接串，不要沿用当前的 `SslMode=Disabled`。
 
@@ -143,6 +150,22 @@ docker compose --env-file .env -f compose.integration.yaml config --profiles
 ```
 
 ## 4. 本机启动
+
+### PracticeService 模型资产（首次构建前必做）
+
+PracticeService 镜像不从网络下载模型。首次构建或 ReciteHelper 资产更新后，在仓库根目录执行：
+
+```powershell
+.\scripts\import-recitehelper-assets.ps1 -ReciteHelperRoot D:\Projects\ReciteHelper
+```
+
+脚本从用户确认的完整运行时目录 `ReciteHelper.Wpf\bin\Debug\net10.0-windows7.0\Resources`
+导入模型、`vocab.txt`、tokenizer 和 Jieba 资源，校验 SBERT、XGBoost、vocab、tokenizer 的
+SHA-256，并复制原项目 AGPL-3.0 许可证。任一关键哈希不匹配会立即失败，不得通过关闭校验
+继续构建。Linux 构建机可先在受信 Windows 构建机执行脚本，再把已校验、受版本控制的
+`backend/PracticeService/Resources` 随仓库部署；不要临时从未知 URL 补模型。
+PracticeService publish 与容器镜像同时包含 `THIRD_PARTY_LICENSES/ReciteHelper.LICENSE` 和
+`NOTICE.md`；部署裁剪镜像时不得只复制 DLL/模型而移除许可证文件。
 
 ### 默认服务
 
@@ -199,7 +222,7 @@ Invoke-WebRequest http://127.0.0.1:5120/healthz
 
 `/healthz` 只表示进程存活；`/readyz` 才表示 Gateway 配置中的关键依赖可用。内部服务未映射到宿主机时，以容器的 `healthy` 状态为准，也可查看具体结果：
 
-当前 Compose 的 Gateway readiness 会检查 UserService、AuthService、FileService、KnowledgeService、GalGameService 和 RenderService；Frontend 自身通过容器 `/healthz` 检查。OCRService 是可选 profile，不进入 Gateway readiness。
+当前 Compose 的 Gateway readiness 会检查 UserService、AuthService、FileService、KnowledgeService、GalGameService、RenderService、PracticeService 和 CreditService；Frontend 自身通过容器 `/healthz` 检查。CreditService `/readyz` 必须报告 `storage=MySQL`，其镜像通过端口 `5108` 的 readiness healthcheck 后，Auth/Practice/GalGame 才启动。PracticeService `/readyz` 同时列出 `sbert.onnx`、`xgboost_qvalue.onnx` 和 `vocab.txt` 的 `READY/MISSING/HASH_MISMATCH/LOAD_FAILED` 状态；模型降级不冒充模型可用。OCRService 是可选 profile，不进入 Gateway readiness。
 
 ```bash
 docker inspect --format '{{json .State.Health}}' "$(docker compose --env-file .env -f compose.integration.yaml ps -q file-service)"
@@ -222,7 +245,7 @@ FRONTEND_BIND_ADDRESS=0.0.0.0
 外部反向代理转发时应保留请求体、`Authorization`、`Content-Type`、`X-Correlation-Id` 和 ETag 相关头，并把上传超时设置得不低于 Gateway 的 `UPLOAD_TIMEOUT_MS`。API 路径仍以 `contract.md` 为准。
 
 仓库提供了可直接调整的 Nginx 示例 `deploy/nginx/galreview.conf.example`。其中请求体上限为
-12 MiB（应用仍按契约限制单文件 10 MiB），并关闭上传请求缓冲、把读写超时设为 190 秒。
+52 MiB（Practice 项目包文件仍限制 50 MiB，资料文件仍限制 10 MiB），并关闭上传请求缓冲、把读写超时设为 190 秒。
 部署后先检查配置再重载：
 
 ```bash
@@ -233,7 +256,7 @@ sudo systemctl reload nginx
 
 若域名上传返回纯文本或 HTML 的 `413/502/504`，且请求没有出现在 Frontend、Gateway 或
 FileService 日志中，错误来自该仓库之外的云负载均衡或上一层代理；该层也必须使用不小于
-12 MiB 的请求体限制和不短于 190 秒的上传超时。
+52 MiB 的请求体限制和不短于 190 秒的上传超时。
 
 ### 6.2 构建并启动
 
@@ -274,22 +297,25 @@ docker compose --env-file .env -f compose.integration.yaml up -d --no-deps --wai
 |---|---|---|
 | `gateway` | `gateway/Dockerfile` | 依赖其 `READINESS_SERVICES` 中列出的服务；浏览器与服务间请求的唯一入口 |
 | `user-service` | `backend/UserService/Dockerfile` | 本地默认 Mock；服务器模板使用 `user-mysql`，权威用户资料只写入该实例 |
-| `auth-service` | `backend/AuthService/Dockerfile` | 本地默认 Mock；服务器模板使用 `auth-mysql`，注册时还需经 Gateway 访问 UserService |
+| `auth-service` | `backend/AuthService/Dockerfile` | 本地默认 Mock；服务器模板使用 `auth-mysql`，无邀请码注册时经 Gateway 访问 UserService 并幂等创建 CreditService 账户 |
 | `file-service` | `backend/FileService/Dockerfile` | 依赖 `mongo`；启用图片/扫描件识别时还依赖 `ocr-service` |
 | `knowledge-service` | `backend/KnowledgeService/KnowledgeService.API/Dockerfile` | 依赖 `neo4j`，构图时经 Gateway 读取 FileService 文本 |
-| `galgame-service` | `backend/GalGameService/Dockerfile` | 经 Gateway 读取 KnowledgeService PlanGraph；当前任务和包为临时内存数据 |
-| `render-service` | `backend/RenderService/Dockerfile` | 编译并自检 C++ 空壳，公开最小 WASM 与 JS Adapter；ReviewSession 返回 501 |
+| `galgame-service` | `backend/GalGameService/Dockerfile` | 经 Gateway 读取 KnowledgeService PlanGraph，并在生成前后调用 CreditService 预授权/结算；任务和包持久化到 `qzwl_galgame` |
+| `render-service` | `backend/RenderService/Dockerfile` | 编译并自检 `cpp-wasm-0.2.0` runtime，公开 WASM 与 JS Adapter，并提供 ReviewSession、进度快照、作答和同步证据提交 |
+| `practice-service` | `backend/PracticeService/Dockerfile` | 发布 `PracticeService.API`；内部为 API/Application/Domain/Persistence 四层并由 MediatR CQRS 解耦；依赖 `mongo`、Gateway、File/Knowledge/Credit 内部契约及本地模型资产；题库生成预授权并按实际内容结算；共享 `.qzwlp` 存 GridFS |
+| `credit-service` | `backend/CreditService/Dockerfile` | API/Application/Domain/Persistence 四层，Application 使用 MediatR CQRS；依赖 `credit-mysql`，内部端口 `5108`，不向宿主发布 |
 | `frontend` | `frontend/Dockerfile` | 生产静态构建；容器内 Node 服务通过 `GATEWAY_UPSTREAM` 同源代理 `/api` |
 | `ocr-service` | `backend/OCRService/Dockerfile` | `ocr` profile；只允许 FileService 在内部网络调用 |
 | `user-mysql` | `mysql:8.4` | 只供 UserService；使用独立数据卷，不映射宿主端口 |
 | `auth-mysql` | `mysql:8.4` | 只供 AuthService；使用独立数据卷，不映射宿主端口 |
-| `mongo` | `mongo:8.0` | 只供 FileService；保存元数据、解析结果和 GridFS 文件 |
+| `credit-mysql` | `mysql:8.4` | 只供 CreditService；`qzwl_credit` 及账本使用独立数据卷，不映射宿主端口 |
+| `mongo` | `mongo:8.0` | 供 FileService、GalGameService、PracticeService 使用；各自只访问 `qzwl_file`、`qzwl_galgame`、`qzwl_practice` 权威数据库 |
 | `neo4j` | `neo4j:2026.06.0` | 只由 KnowledgeService 写入；Browser/Bolt 宿主映射仅用于受限诊断 |
 
 基础设施可以单独恢复：
 
 ```bash
-docker compose --env-file .env -f compose.integration.yaml up -d --wait user-mysql auth-mysql mongo neo4j
+docker compose --env-file .env -f compose.integration.yaml up -d --wait user-mysql auth-mysql credit-mysql mongo neo4j
 ```
 
 查看单个服务日志：
@@ -306,7 +332,7 @@ docker compose --env-file .env -f compose.integration.yaml logs -f <service-name
 ### 更新
 
 1. 记录当前 Git commit 和镜像状态。
-2. 备份两套 MySQL、MongoDB 与 Neo4j。
+2. 备份三套 MySQL、MongoDB 与 Neo4j。
 3. 拉取或切换到待部署版本。
 4. 校验配置并重新构建。
 5. 只替换发生变化的容器，最后检查 `/readyz` 和全流程。
@@ -329,7 +355,7 @@ docker compose --env-file .env -f compose.integration.yaml build
 docker compose --env-file .env -f compose.integration.yaml up -d --remove-orphans --wait
 ```
 
-回滚不要删除卷。服务器模板中的 AuthService 与 UserService 数据分别保存在 MySQL 卷中，
+回滚不要删除卷。服务器模板中的 AuthService、UserService 与 CreditService 数据分别保存在 MySQL 卷中，
 FileService 与 GalGameService 数据保存在 MongoDB 卷中；仅显式使用 memory provider 时，
 GalGameService 的生成状态无法通过卷恢复。
 
@@ -337,9 +363,9 @@ GalGameService 的生成状态无法通过卷恢复。
 
 先创建仅管理员可读的备份目录，并确保磁盘空间充足。
 
-### AuthService / UserService MySQL
+### AuthService / UserService / CreditService MySQL
 
-两项服务使用不同的 MySQL 实例和数据卷，必须分别备份。下面的密码只在数据库容器内部从环境变量读取，不会被展开到宿主机的命令文本中；备份期间仍应限制对容器进程和日志的读取权限：
+三项服务使用不同的 MySQL 实例和数据卷，必须分别备份。credits 账本与兑换审计不可由 Auth/User 备份替代。下面的密码只在数据库容器内部从环境变量读取，不会被展开到宿主机的命令文本中；备份期间仍应限制对容器进程和日志的读取权限：
 
 ```bash
 mkdir -p backups
@@ -350,22 +376,34 @@ docker compose --env-file .env -f compose.integration.yaml exec -T auth-mysql \
 docker compose --env-file .env -f compose.integration.yaml exec -T user-mysql \
   sh -c 'exec mysqldump -ugalreview_user -p"$MYSQL_PASSWORD" --single-transaction --routines --triggers galreview_user' \
   > "backups/galreview_user-$(date -u +%Y%m%dT%H%M%SZ).sql"
+
+docker compose --env-file .env -f compose.integration.yaml exec -T credit-mysql \
+  sh -c 'exec mysqldump -uqzwl_credit -p"$MYSQL_PASSWORD" --single-transaction --routines --triggers qzwl_credit' \
+  > "backups/qzwl_credit-$(date -u +%Y%m%dT%H%M%SZ).sql"
 ```
 
 数据库 root 密码、应用密码和备份文件都属于敏感数据。恢复前应停止对应应用服务，并先在隔离环境确认 SQL 备份可导入。
 
-### MongoDB / FileService
+### MongoDB / FileService、GalGameService、PracticeService
 
-MongoDB 可以在线导出 FileService 的 `qzwl_file` 数据库：
+MongoDB 可以在线分别导出三个权威数据库；不能只备份文件库后声称学习项目和题库已备份：
 
 ```bash
 mkdir -p backups
 docker compose --env-file .env -f compose.integration.yaml exec -T mongo \
   mongodump --db qzwl_file --archive --gzip \
   > "backups/qzwl_file-$(date -u +%Y%m%dT%H%M%SZ).archive.gz"
+
+docker compose --env-file .env -f compose.integration.yaml exec -T mongo \
+  mongodump --db qzwl_galgame --archive --gzip \
+  > "backups/qzwl_galgame-$(date -u +%Y%m%dT%H%M%SZ).archive.gz"
+
+docker compose --env-file .env -f compose.integration.yaml exec -T mongo \
+  mongodump --db qzwl_practice --archive --gzip \
+  > "backups/qzwl_practice-$(date -u +%Y%m%dT%H%M%SZ).archive.gz"
 ```
 
-备份包含资料元数据、解析结果和 GridFS 文件。恢复会改写数据，应先停掉 FileService，并在隔离环境验证备份；不要直接对唯一生产副本试恢复。
+三个备份分别包含资料/解析/GridFS、剧情包，以及学习项目/题库/练习、考试会话与共享项目包 GridFS。恢复会改写数据，应先停止对应服务并在隔离环境验证；不要直接对唯一生产副本试恢复。
 
 ### Neo4j / KnowledgeService
 
@@ -420,9 +458,23 @@ docker compose --env-file .env -f compose.integration.yaml logs --tail=200 gatew
 
 检查 `neo4j` 健康状态、`NEO4J_PASSWORD` 是否一致以及卷权限。修改密码后，已有 Neo4j 数据卷不会自动重置旧密码；应使用原密码迁移或在确认数据可删除后重新初始化，不能直接删除未知卷。
 
+### PracticeService 模型显示降级
+
+先查看 `practice-service` 的 `/readyz` 或容器日志，区分 `MISSING`、`HASH_MISMATCH` 与
+`LOAD_FAILED`。重新执行 `scripts/import-recitehelper-assets.ps1`，确认来源仍是完整运行时目录，
+再重建镜像。不要把哈希检查改成警告，也不要用空模型占位。降级时客观题仍可确定性判分，
+主观题会明确使用 Levenshtein fallback；只有三项状态均为 `READY` 才能宣称本地模型启用。
+
 ### MySQL 密码修改后服务无法启动
 
-`MYSQL_ROOT_PASSWORD` 和 `MYSQL_PASSWORD` 只在空数据卷首次初始化时创建账号。直接修改 `.env` 不会更改已有卷中的数据库密码，还会让 AuthService 或 UserService 的连接串与数据库失配。应先使用现有凭据在数据库内修改账号密码，再同步 `.env` 并重启对应服务；不要通过删除数据卷来“重置”正式环境密码。
+`MYSQL_ROOT_PASSWORD` 和 `MYSQL_PASSWORD` 只在空数据卷首次初始化时创建账号。直接修改 `.env` 不会更改已有卷中的数据库密码，还会让 AuthService、UserService 或 CreditService 的连接串与数据库失配。应先使用现有凭据在数据库内修改账号密码，再同步 `.env` 并重启对应服务；不要通过删除数据卷来“重置”正式环境密码。
+
+### credits 不足或兑换失败
+
+- `402 CREDITS_INSUFFICIENT` 是正常业务结果：检查响应 details 的 credits 数值，前端应在用户确认后才打开购买页。
+- 兑换码明文只在管理员批量创建响应中返回一次；后续列表只有掩码，不能从数据库恢复明文。生成后应立即通过受控渠道交付。
+- 兑换码无效、已兑换、已撤销或过期统一返回 `422 REDEMPTION_CODE_UNAVAILABLE`，不要通过数据库直接改余额绕过账本。
+- 若生成任务失败，检查对应预授权是否为 `RELEASED`；成功任务应为 `SETTLED`。`CREDIT_ESTIMATE_EXCEEDED` 需要人工核对估算和模型 usage，不得手工制造负余额。
 
 ### OCR 启动慢或识别失败
 
@@ -432,12 +484,13 @@ OCR 镜像较大，首次加载模型也需要时间。检查容器资源、模�
 
 确认 `frontend` 容器的 `GATEWAY_UPSTREAM` 指向 Compose 网络内的 `http://gateway:5000`，并检查 Gateway 的 `/readyz`。生产构建的 API 基址应保持相对路径 `/api/v1`，不要把某台开发机的 `localhost` 编译进静态文件。`CORS_ORIGINS` 应包含用户实际访问页面的 Origin。
 
-### RenderService 就绪但显示 `wasmAbiComplete=false`
+### RenderService runtime 或证据提交异常
 
-这是当前预期状态：镜像只验证 C++ 工具链可编译、JS Adapter 与最小 WASM 可加载，
-`/readyz` 会如实报告 `runtimeMode=SHELL`、`executionEngine=cpp-js-shell`、
-`reviewSessionsAvailable=false` 和 `wasmAbiComplete=false`。ReviewSession 返回
-`501 RENDER_SESSION_NOT_IMPLEMENTED`，不得把浏览器本地体验描述成结果已经回传。
+当前 RenderService 已使用 `cpp-wasm-0.2.0` 完整 ABI、TypeScript 会话层和同步 evidence
+提交，不再是返回 501 的基础壳。检查 manifest 版本/checksum、WASM 自检、
+`Gateway__ServiceName=RenderService` 与独立密钥，并确认 KnowledgeService 只接受精确的
+`RenderService`/`PracticeService` evidence writer 身份。异步 `ReviewCompleted v2` 消息总线
+仍未实现，不能用同步提交成功冒充事件发布成功。
 
 ## 11. 发布后检查
 
@@ -446,10 +499,13 @@ OCR 镜像较大，首次加载模型也需要时间。检查容器资源、模�
 - `docker compose ps` 中所有本次启用的服务均为 running/healthy；
 - Gateway `/healthz` 与 `/readyz` 返回成功；
 - 前端只调用 Gateway，不出现后端服务直连地址；
-- 注册、登录、文件上传、文本提取、构图、计划生成和游戏包生成按 `contract.md` 返回；
-- 当前 RenderService 基础壳只检查 C++ 自检、manifest、WASM checksum、Adapter 加载和浏览器本地游玩；会话、结果与掌握度更新留待后续实现；
+- 无邀请码注册、初始 1 credit、余额查询、兑换码单次兑换、批量创建/撤销，以及登录、文件上传、文本提取、构图、计划生成按 `contract.md` 返回；
+- Practice 题目生成与 GalGame 游戏生成在开始前预授权，credits 不足时返回 402；成功按实际用量扣除，失败释放 held，页面不展示内部 token 换算；
+- PracticeService 四层项目构建和测试通过，`/readyz` 模型哈希状态与镜像内资产一致；
+- 普通 Practice 会话和 Render 视觉小说会话都只能经受信身份向 KnowledgeService 提交证据，重复提交不二次更新 mastery；
+- RenderService 检查 C++/WASM 自检、manifest、会话、同步证据与掌握度更新；异步消息总线未实现时明确标注未测；
 - 未启动 `ocr` profile 时，测试结论不包含 OCR；
 - 日志和配置输出不含密码、令牌、服务密钥或第三方 API key；
-- 两套 MySQL、MongoDB 与 Neo4j 备份文件可以在隔离环境读取。
+- 三套 MySQL（含 `qzwl_credit` 账本）、MongoDB 与 Neo4j 备份文件可以在隔离环境读取。
 
 具体测试结果记录在 [`test_report.md`](test_report.md)，不能用本部署文档代替实际测试。

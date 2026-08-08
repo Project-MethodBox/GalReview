@@ -197,6 +197,16 @@ function createConfig(
         url: 'http://127.0.0.1:5256',
         serviceKey: 'render-key',
       },
+      practiceService: {
+        name: 'PracticeService',
+        url: 'http://127.0.0.1:5257',
+        serviceKey: 'practice-key',
+      },
+      creditService: {
+        name: 'CreditService',
+        url: 'http://127.0.0.1:5258',
+        serviceKey: 'credit-key',
+      },
     },
     rateLimit: {
       anonymous: { windowMs: 60_000, max: 100 },

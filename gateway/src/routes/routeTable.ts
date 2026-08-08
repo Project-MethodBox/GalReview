@@ -52,6 +52,12 @@ export const ROUTE_TABLE: RouteEntry[] = [
     rateLimitCategory: 'general',
     methods: ['GET'],
   },
+  {
+    path: '/internal/v1/credits',
+    service: 'creditService',
+    auth: 'service',
+    rateLimitCategory: 'general',
+  },
 
   // ===== 浏览器公开路由（无需令牌，精确方法匹配） =====
   {
@@ -147,6 +153,12 @@ export const ROUTE_TABLE: RouteEntry[] = [
     rateLimitCategory: 'general',
   },
   {
+    path: '/api/v1/admin/credit-codes',
+    service: 'creditService',
+    auth: 'user',
+    rateLimitCategory: 'general',
+  },
+  {
     path: '/api/v1/admin',
     service: 'authService',
     auth: 'user',
@@ -164,6 +176,75 @@ export const ROUTE_TABLE: RouteEntry[] = [
     auth: 'user',
     rateLimitCategory: 'upload',
     methods: ['POST'],  // 仅上传需 upload 限流和长超时
+  },
+  {
+    path: '/api/v1/credits',
+    service: 'creditService',
+    auth: 'user',
+    rateLimitCategory: 'general',
+  },
+  {
+    path: '/api/v1/practice-projects/:projectId/question-generations',
+    service: 'practiceService',
+    auth: 'user',
+    rateLimitCategory: 'generation',
+    methods: ['POST'],
+  },
+  {
+    path: '/api/v1/exam-import-jobs',
+    service: 'practiceService',
+    auth: 'user',
+    rateLimitCategory: 'generation',
+    methods: ['POST'],
+  },
+  {
+    path: '/api/v1/practice-packages/imports',
+    service: 'practiceService',
+    auth: 'user',
+    rateLimitCategory: 'upload',
+    methods: ['POST'],
+  },
+  {
+    path: '/api/v1/practice-projects',
+    service: 'practiceService',
+    auth: 'user',
+    rateLimitCategory: 'general',
+  },
+  {
+    path: '/api/v1/practice-questions',
+    service: 'practiceService',
+    auth: 'user',
+    rateLimitCategory: 'general',
+  },
+  {
+    path: '/api/v1/practice-sessions',
+    service: 'practiceService',
+    auth: 'user',
+    rateLimitCategory: 'general',
+  },
+  {
+    path: '/api/v1/question-generation-jobs',
+    service: 'practiceService',
+    auth: 'user',
+    rateLimitCategory: 'general',
+  },
+  {
+    path: '/api/v1/exam-import-jobs',
+    service: 'practiceService',
+    auth: 'user',
+    rateLimitCategory: 'general',
+  },
+  {
+    path: '/api/v1/practice-packages',
+    service: 'practiceService',
+    auth: 'user',
+    rateLimitCategory: 'general',
+  },
+  {
+    path: '/api/v1/shared-practice-packages',
+    service: 'practiceService',
+    auth: 'user',
+    rateLimitCategory: 'general',
   },
   {
     path: '/api/v1/materials',

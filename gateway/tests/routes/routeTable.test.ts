@@ -24,6 +24,17 @@ describe('当前服务接口路由适配', () => {
     ['GET', '/api/v1/render-runtime/adapter.js', 'renderService', 'public'],
     ['GET', '/api/v1/render-runtime/stage.js', 'renderService', 'public'],
     ['GET', '/api/v1/render-runtime/stage-demo', 'renderService', 'public'],
+    ['POST', '/api/v1/practice-projects', 'practiceService', 'user'],
+    ['GET', '/api/v1/practice-projects/3a7f/questions', 'practiceService', 'user'],
+    ['POST', '/api/v1/practice-sessions', 'practiceService', 'user'],
+    ['PUT', '/api/v1/practice-sessions/3a7f/answers/6fa4', 'practiceService', 'user'],
+    ['POST', '/api/v1/practice-projects/3a7f/question-generations', 'practiceService', 'user'],
+    ['POST', '/api/v1/exam-import-jobs', 'practiceService', 'user'],
+    ['POST', '/api/v1/practice-packages/imports', 'practiceService', 'user'],
+    ['GET', '/api/v1/credits/balance', 'creditService', 'user'],
+    ['POST', '/api/v1/credits/redemptions', 'creditService', 'user'],
+    ['POST', '/api/v1/admin/credit-codes/batches', 'creditService', 'user'],
+    ['POST', '/internal/v1/credits/reservations', 'creditService', 'service'],
     [
       'POST',
       '/internal/v1/game-package-validations',
@@ -80,6 +91,12 @@ describe('当前服务接口路由适配', () => {
       resolveRoute('GET', '/api/v1/game-packages/3a7f/content')
         ?.rateLimitCategory,
     ).toBe('general');
+  });
+
+  it('题库生成和整卷导入使用 generation，项目包导入使用 upload', () => {
+    expect(resolveRoute('POST', '/api/v1/practice-projects/3a7f/question-generations')?.rateLimitCategory).toBe('generation');
+    expect(resolveRoute('POST', '/api/v1/exam-import-jobs')?.rateLimitCategory).toBe('generation');
+    expect(resolveRoute('POST', '/api/v1/practice-packages/imports')?.rateLimitCategory).toBe('upload');
   });
 });
 

@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="PracticeService.API/PracticeService.API.csproj" />
+  <Project Path="PracticeService.Application/PracticeService.Application.csproj" />
+  <Project Path="PracticeService.Domain/PracticeService.Domain.csproj" />
+  <Project Path="PracticeService.Persistence/PracticeService.Persistence.csproj" />
+  <Project Path="PracticeService.Tests/PracticeService.Tests.csproj" />
+</Solution>

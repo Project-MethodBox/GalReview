@@ -1,5 +1,6 @@
 public interface IAuthRepository
 {
+    RegistrationOutcome TryCreateCredential(Credential value);
     RegistrationOutcome TryCreateCredentialWithInvitation(Credential value, string invitationCode);
     void RollbackRegistration(string userId, string invitationCode);
     void DeleteCredential(string id);

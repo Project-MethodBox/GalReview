@@ -10,7 +10,7 @@ public interface IFileStore
     bool TryDelete(string materialId, string ownerUserId, out Material? material);
     IngestionJob? GetJob(string jobId);
     IngestionJob? GetLatestJob(string materialId);
-    IngestionJob CreateJob(string materialId, string parserVersion, bool enableOcr, string ocrMode);
+    IngestionJob? CreateJob(string materialId, string parserVersion, bool enableOcr, string ocrMode);
     Task ProcessJobAsync(string jobId, CancellationToken cancellationToken);
     Stream? OpenContent(string materialId);
     ExtractedTextDocument? GetExtractedText(string materialId);

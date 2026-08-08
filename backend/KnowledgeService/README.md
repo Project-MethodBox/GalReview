@@ -1,7 +1,7 @@
 # KnowledgeService
 
 本目录只实现 GalReview 的 KnowledgeService。FileService、Gateway、
-GalGameService 与 RenderService 的阻塞契约在
+GalGameService、RenderService 与 PracticeService 的阻塞契约在
 [`docs/contract.md`](../../docs/contract.md) 中以 **URGENT** 标注，不在本服务内实现。
 
 ## 本地运行
@@ -52,8 +52,8 @@ Compose 默认宿主地址：
 - KnowledgeService 只消费 FileService 已完成的纯文本结果，不调用
   OCRService，也不持有 OCR/API 模型密钥。
 - KnowledgeService 只选择测试/学习目标和依赖图，不生成题目或 GalGame 内容。
-- INTERNAL PlanGraph 只允许 `GalGameService` 读取；掌握度 evidence 只允许
-  `RenderService` 写入。两者均使用 Gateway 重新注入的精确服务名。
+- INTERNAL PlanGraph 只允许精确服务名 `GalGameService`、`PracticeService` 读取；掌握度 evidence 只允许
+  `RenderService`、`PracticeService` 写入。普通刷题与视觉小说因此共享 PlanGraph、mastery 和 SM-2，其他服务名及大小写变体均拒绝。
 
 关键入口：
 

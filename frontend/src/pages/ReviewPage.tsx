@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router'
 import AppShell, { PageHeader } from '../components/AppShell'
 import LoadingIndicator from '../components/LoadingIndicator'
 import { api } from '../lib/api'
+import { handleCreditsRequired } from '../lib/credits'
 import { pollUntil } from '../lib/poll'
 import { loadRuntime } from '../lib/runtime'
 import { readSession } from '../lib/session'
@@ -423,7 +424,7 @@ useEffect(() => {
       updateWorkflow({ gameGeneration: accepted, gameStyle: style, gameDifficulty: difficulty, gameManifest: undefined, gamePackage: undefined, reviewSession: undefined, answerResults: [], resultIdempotencyKey: undefined })
       await completeGeneration(accepted, workflow.plan)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '游戏准备失败。')
+      if (!handleCreditsRequired(reason)) setError(reason instanceof Error ? reason.message : '游戏准备失败。')
     } finally {
       setBusy(false)
     }

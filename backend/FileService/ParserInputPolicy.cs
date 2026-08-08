@@ -9,6 +9,9 @@ public static class ParserInputPolicy
             ".htm",
             ".pdf",
             ".docx",
+            ".pptx",
+            ".mhtml",
+            ".mht",
             ".jpg",
             ".jpeg",
             ".png"
@@ -20,7 +23,9 @@ public static class ParserInputPolicy
             "image/jpeg",
             "image/png",
             "application/pdf",
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "multipart/related"
         };
 
     public static bool IsSupported(Material material)
@@ -69,6 +74,9 @@ public static class ParserInputPolicy
             "application/pdf" => ParserInputKind.Pdf,
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 => ParserInputKind.Docx,
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                => ParserInputKind.Pptx,
+            "multipart/related" => ParserInputKind.Mhtml,
             "image/jpeg" or "image/png" => ParserInputKind.Image,
             "text/markdown" => ParserInputKind.Markdown,
             "text/html" => ParserInputKind.Html,
@@ -76,6 +84,8 @@ public static class ParserInputPolicy
             {
                 ".pdf" => ParserInputKind.Pdf,
                 ".docx" => ParserInputKind.Docx,
+                ".pptx" => ParserInputKind.Pptx,
+                ".mhtml" or ".mht" => ParserInputKind.Mhtml,
                 ".jpg" or ".jpeg" or ".png" => ParserInputKind.Image,
                 ".md" => ParserInputKind.Markdown,
                 ".html" or ".htm" => ParserInputKind.Html,
@@ -92,5 +102,7 @@ public enum ParserInputKind
     Html,
     Pdf,
     Docx,
+    Pptx,
+    Mhtml,
     Image
 }

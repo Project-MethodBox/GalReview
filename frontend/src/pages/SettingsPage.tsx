@@ -5,15 +5,16 @@ import { api } from '../lib/api'
 import { clearSession, readProfile, saveProfile } from '../lib/session'
 import { readReducedMotion, saveReducedMotion } from '../lib/theme'
 import { resetWorkflow } from '../lib/workflow'
-import type { ContentDifficulty, UserPreferencesInput, UserProfile } from '../types/api'
+import type { ContentDifficulty, CreditBalance, UserPreferencesInput, UserProfile } from '../types/api'
 
 const defaults: UserPreferencesInput = { dailyGoalMinutes: 30, contentDifficulty: 'STANDARD', reducedMotion: readReducedMotion() }
 
-type SettingsSection = 'profile' | 'learning' | 'security' | 'danger'
+type SettingsSection = 'profile' | 'credits' | 'learning' | 'security' | 'danger'
 type SupportedLocale = 'zh-CN' | 'en-US'
 
 const settingsSections: { id: SettingsSection; label: string }[] = [
   { id: 'profile', label: '个人资料' },
+  { id: 'credits', label: 'credits' },
   { id: 'learning', label: '学习偏好' },
   { id: 'security', label: '账户安全' },
   { id: 'danger', label: '账户注销' },
@@ -31,6 +32,8 @@ export default function SettingsPage() {
   const [locale, setLocale] = useState<SupportedLocale>(stored?.locale === 'en-US' ? 'en-US' : 'zh-CN')
   const [subjectText, setSubjectText] = useState(stored?.preferredSubjectCodes.join(', ') || '')
   const [preferences, setPreferences] = useState<UserPreferencesInput>(defaults)
+  const [creditBalance, setCreditBalance] = useState<CreditBalance | null>(null)
+  const [redemptionCode, setRedemptionCode] = useState('')
   const [passwords, setPasswords] = useState({ current: '', next: '', confirm: '' })
   const [deletion, setDeletion] = useState({ password: '', confirmation: '' })
   const [activeSection, setActiveSection] = useState<SettingsSection>('profile')
@@ -40,7 +43,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     let active = true
-    void Promise.all([api.getCurrentUser(), api.getUserPreferences()]).then(([nextProfile, nextPreferences]) => {
+    void Promise.all([api.getCurrentUser(), api.getUserPreferences(), api.getCreditBalance()]).then(([nextProfile, nextPreferences, nextCredits]) => {
       if (!active) return
       saveProfile(nextProfile)
       saveReducedMotion(nextPreferences.reducedMotion)
@@ -49,6 +52,7 @@ export default function SettingsPage() {
       setLocale(nextProfile.locale === 'en-US' ? 'en-US' : 'zh-CN')
       setSubjectText(nextProfile.preferredSubjectCodes.join(', '))
       setPreferences(nextPreferences)
+      setCreditBalance(nextCredits)
     }).catch((reason: unknown) => {
       if (active) setError(reason instanceof Error ? reason.message : '设置读取失败。')
     }).finally(() => { if (active) setBusy(null) })
@@ -56,6 +60,18 @@ export default function SettingsPage() {
   }, [])
 
   function start(section: string) { setBusy(section); setError(''); setMessage('') }
+
+  async function redeemCredits(event: FormEvent) {
+    event.preventDefault()
+    if (!redemptionCode.trim()) return setError('请输入兑换码。')
+    start('credits')
+    try { const next = await api.redeemCredits(redemptionCode.trim()); setCreditBalance(next); setRedemptionCode(''); setMessage('credits 已兑换。') }
+    catch (reason) { setError(reason instanceof Error ? reason.message : '兑换失败。') } finally { setBusy(null) }
+  }
+
+  function openPurchase() {
+    if (window.confirm('将前往购买页面。购买后请返回此处输入兑换码，是否继续？')) window.location.assign('https://pay.ldxp.cn/shop/7CX09W5E')
+  }
 
   async function submitProfile(event: FormEvent) {
     event.preventDefault()
@@ -141,6 +157,15 @@ export default function SettingsPage() {
               <label>内容难度<select value={preferences.contentDifficulty} onChange={(event) => setPreferences((current) => ({ ...current, contentDifficulty: event.target.value as ContentDifficulty }))}><option value="BASIC">基础</option><option value="STANDARD">标准</option><option value="ADVANCED">进阶</option></select></label>
               <label className="toggle-field"><span><strong>减少动态效果</strong><small>关闭页面位移和非必要过渡。</small></span><input type="checkbox" role="switch" aria-label="减少动态效果" checked={preferences.reducedMotion} onChange={(event) => setPreferences((current) => ({ ...current, reducedMotion: event.target.checked }))} /></label>
               <button className="button button--primary" disabled={busy !== null} type="submit">{busy === 'preferences' ? '正在保存' : '保存偏好'}</button>
+            </form>
+            ) : null}
+
+            {activeSection === 'credits' ? (
+            <form className="form-section" id="credits-settings" onSubmit={redeemCredits}>
+              <header><h2>credits</h2><p>用于生成复习题库和故事内容。生成开始前会检查预计所需 credits，完成后按实际消耗扣除。</p></header>
+              <div className="credit-balance"><span>可用 credits</span><strong>{creditBalance?.available.toFixed(5) ?? '读取中'}</strong>{creditBalance && creditBalance.held > 0 ? <small>{creditBalance.held.toFixed(5)} credits 正在生成任务中占用</small> : null}</div>
+              <label>兑换码<input autoComplete="off" value={redemptionCode} onChange={(event) => setRedemptionCode(event.target.value.toUpperCase())} /></label>
+              <div className="button-row"><button className="button button--primary" disabled={busy !== null || !redemptionCode.trim()} type="submit">兑换 credits</button><button className="button button--quiet" type="button" onClick={openPurchase}>购买 credits</button></div>
             </form>
             ) : null}
 

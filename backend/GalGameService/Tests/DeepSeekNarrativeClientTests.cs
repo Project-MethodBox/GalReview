@@ -18,8 +18,31 @@ public sealed class DeepSeekNarrativeClientTests
             new NarrativePrompt("return json", "json example: {}"),
             CancellationToken.None);
 
-        Assert.Equal("{\"promptVersion\":\"ok\",\"scenes\":[]}", result);
+        Assert.Equal("{\"promptVersion\":\"ok\",\"scenes\":[]}", result.Json);
+        Assert.Equal(246, result.TotalTokens);
         Assert.Equal(2, handler.CallCount);
+    }
+
+    [Fact]
+    public async Task GenerateJsonAsync_MissingUsage_FailsWithoutGuessingOrRetrying()
+    {
+        var body = JsonSerializer.Serialize(new
+        {
+            choices = new[] { new { finish_reason = "stop", message = new { content = "{}" } } },
+        });
+        var handler = new SequenceHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json"),
+        });
+        using var factory = new TestHttpClientFactory(handler);
+        var client = new DeepSeekNarrativeClient(factory, Options());
+
+        var exception = await Assert.ThrowsAnyAsync<Exception>(() => client.GenerateJsonAsync(
+            new NarrativePrompt("return json", "json example: {}"),
+            CancellationToken.None));
+
+        Assert.Contains("token usage", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(1, handler.CallCount);
     }
 
     [Fact]
@@ -75,6 +98,7 @@ public sealed class DeepSeekNarrativeClientTests
             {
                 new { finish_reason = "stop", message = new { content } },
             },
+            usage = new { total_tokens = 123 },
         });
         return new HttpResponseMessage(HttpStatusCode.OK)
         {

@@ -24,6 +24,8 @@ const baseConfig: GatewayConfig = {
     knowledgeService: { name: 'KnowledgeService', url: 'http://127.0.0.1:5254' },
     galGameService: { name: 'GalGameService', url: 'http://127.0.0.1:5255' },
     renderService: { name: 'RenderService', url: 'http://127.0.0.1:5256' },
+    practiceService: { name: 'PracticeService', url: 'http://127.0.0.1:5257' },
+    creditService: { name: 'CreditService', url: 'http://127.0.0.1:5258' },
   },
   rateLimit: {
     anonymous: { windowMs: 60_000, max: 100 },

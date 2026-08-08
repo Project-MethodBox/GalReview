@@ -20,15 +20,27 @@ pnpm start
 - KnowledgeService：`http://localhost:5104`
 - GalGameService：`http://localhost:5105`
 - RenderService：`http://localhost:5106`
+- PracticeService：`http://localhost:5107`
+- CreditService：`http://localhost:5108`
 
 完整配置见 [`.env.example`](./.env.example)。
 
 - `*_SERVICE_KEY` 用于验证该服务作为 INTERNAL 调用方时携带的
   `X-Service-Key`，也用于向该目标服务注入 `X-Gateway-Key`。
-- `UPLOAD_TIMEOUT_MS` 控制 `POST /api/v1/materials` 的代理超时。
+- `UPLOAD_TIMEOUT_MS` 控制资料上传和 Practice 项目包导入的代理超时。
 - `READINESS_SERVICES` 指定 `/readyz` 必须可达的核心服务。默认包含
-  注册、上传、提取、构图闭环所需的 User、Auth、File、Knowledge 四个服务；
-  尚未参与当前闭环的 GalGame 与 Render 不阻塞就绪。
+  默认配置可包含 User、Auth、File、Knowledge、GalGame、Render、Practice、Credit；
+  Compose 基线将八个领域服务全部列入就绪检查。
+
+Practice 路由按契约细分限流：题库生成与整卷导入使用 `generation`，项目包上传使用
+`upload`，项目/题目/会话/共享包读取使用 `general`。Gateway 不承载题目或判分规则。
+项目包文件上限为 50 MiB，Gateway 为 multipart 预留 1 MiB，因此只对
+`POST /api/v1/practice-packages/imports` 使用 51 MiB 请求体上限；资料上传仍维持原有
+10 MiB 文件和 11 MiB multipart 请求上限。
+
+`/api/v1/credits` 和 `/api/v1/admin/credit-codes` 以用户身份路由至 CreditService；
+`/internal/v1/credits` 以服务身份路由。管理员兑换码路由必须位于通用
+`/api/v1/admin` AuthService 路由之前，避免被前缀规则截获。
 
 Gateway 不读取 OCR 或模型供应商密钥。`DSAPI`、`BitchSDAU` 等密钥不得进入
 Gateway 配置、请求头或日志。

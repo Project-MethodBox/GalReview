@@ -13,6 +13,10 @@ import RegisterPage from './pages/RegisterPage'
 import ReviewPage from './pages/ReviewPage'
 import SettingsPage from './pages/SettingsPage'
 import StudyFlowPage from './pages/StudyFlowPage'
+import PracticeProjectsPage from './pages/PracticeProjectsPage'
+import PracticeProjectPage from './pages/PracticeProjectPage'
+import PracticeSessionPage from './pages/PracticeSessionPage'
+import SharedPracticePackagesPage from './pages/SharedPracticePackagesPage'
 import LoadingIndicator from './components/LoadingIndicator'
 import { api, ApiClientError } from './lib/api'
 import { clearSession, readSession } from './lib/session'
@@ -26,6 +30,8 @@ const routeDepth: Record<string, number> = {
   '/admin/login': 0,
   '/admin': 1,
   '/home': 2,
+  '/projects': 3,
+  '/shared-projects': 3,
   '/materials': 3,
   '/knowledge': 3,
   '/knowledge-graph': 3,
@@ -40,6 +46,8 @@ const pageTitles: Record<string, string> = {
   '/admin/login': '管理员登录',
   '/admin': '观测台',
   '/home': '起点',
+  '/projects': '学习项目',
+  '/shared-projects': '复习资源中心',
   '/materials': '藏书阁',
   '/knowledge': '拾知',
   '/knowledge-graph': '识网',
@@ -113,6 +121,10 @@ function AnimatedRoutes() {
         <Route path="/admin/login" element={<AdminLoginPage />} />
         <Route path="/admin" element={<AdminProtected><AdminPage /></AdminProtected>} />
         <Route path="/home" element={<Protected><HomePage /></Protected>} />
+        <Route path="/projects" element={<Protected><PracticeProjectsPage /></Protected>} />
+        <Route path="/projects/:projectId" element={<Protected><PracticeProjectPage /></Protected>} />
+        <Route path="/shared-projects" element={<Protected><SharedPracticePackagesPage /></Protected>} />
+        <Route path="/practice/:sessionId" element={<Protected><PracticeSessionPage /></Protected>} />
         <Route path="/materials" element={<Protected><StudyFlowPage /></Protected>} />
         <Route path="/knowledge" element={<Protected><KnowledgePointsPage /></Protected>} />
         <Route path="/knowledge-graph" element={<Protected><KnowledgeGraphPage /></Protected>} />

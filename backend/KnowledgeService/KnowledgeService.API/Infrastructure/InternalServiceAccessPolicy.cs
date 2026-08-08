@@ -6,22 +6,20 @@ internal static class InternalServiceAccessPolicy
 {
     private const string GalGameService = "GalGameService";
     private const string RenderService = "RenderService";
+    private const string PracticeService = "PracticeService";
 
     public static string RequirePlanGraphReader(HttpContext context) =>
-        RequireCaller(context, GalGameService);
+        RequireCaller(context, GalGameService, PracticeService);
 
     public static string RequireEvidenceWriter(HttpContext context) =>
-        RequireCaller(context, RenderService);
+        RequireCaller(context, RenderService, PracticeService);
 
     private static string RequireCaller(
         HttpContext context,
-        string allowedServiceName)
+        params string[] allowedServiceNames)
     {
         var serviceName = RequestIdentity.RequireServiceName(context);
-        if (!string.Equals(
-                serviceName,
-                allowedServiceName,
-                StringComparison.Ordinal))
+        if (!allowedServiceNames.Contains(serviceName, StringComparer.Ordinal))
         {
             throw new KnowledgeServiceException(
                 403,

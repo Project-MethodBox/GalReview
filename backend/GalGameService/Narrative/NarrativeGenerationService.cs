@@ -25,7 +25,7 @@ public sealed class NarrativeGenerationService
         _logger = logger;
     }
 
-    public async Task<GamePackage> GenerateAsync(
+    public async Task<NarrativeGenerationResult> GenerateAsync(
         PlanGraph plan,
         GameGenerationRequest request,
         string ownerUserId,
@@ -40,9 +40,10 @@ public sealed class NarrativeGenerationService
                 "Narrative provider is disabled; package {PackageId} uses deterministic fallback",
                 skeleton.PackageId);
             reportProgress?.Invoke(85);
-            return skeleton;
+            return new NarrativeGenerationResult(skeleton, 0);
         }
 
+        long totalTokens = 0;
         try
         {
             var originalPrompt = _promptBuilder.Build(skeleton, plan, request, _options.PromptVersion);
@@ -56,7 +57,9 @@ public sealed class NarrativeGenerationService
                     2 => 55,
                     _ => 70,
                 });
-                var rawJson = await _modelClient.GenerateJsonAsync(prompt, cancellationToken);
+                var modelResult = await _modelClient.GenerateJsonAsync(prompt, cancellationToken);
+                totalTokens = checked(totalTokens + modelResult.TotalTokens);
+                var rawJson = modelResult.Json;
                 reportProgress?.Invoke(attempt switch
                 {
                     1 => 50,
@@ -79,7 +82,7 @@ public sealed class NarrativeGenerationService
                         _modelClient.ModelName,
                         attempt);
                     reportProgress?.Invoke(85);
-                    return enhanced;
+                    return new NarrativeGenerationResult(enhanced, totalTokens);
                 }
 
                 if (attempt < maxAttempts)
@@ -117,6 +120,6 @@ public sealed class NarrativeGenerationService
         }
 
         reportProgress?.Invoke(85);
-        return skeleton;
+        return new NarrativeGenerationResult(skeleton, totalTokens);
     }
 }

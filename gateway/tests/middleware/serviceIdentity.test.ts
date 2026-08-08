@@ -17,6 +17,7 @@ const mockConfig: GatewayConfig = {
     knowledgeService: { name: 'KnowledgeService', url: 'http://localhost:5104' },
     galGameService: { name: 'GalGameService', url: 'http://localhost:5105' },
     renderService: { name: 'RenderService', url: 'http://localhost:5106' },
+    practiceService: { name: 'PracticeService', url: 'http://localhost:5107' },
   },
   rateLimit: {
     anonymous: { windowMs: 60000, max: 20 },

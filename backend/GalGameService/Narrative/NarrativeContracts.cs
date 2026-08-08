@@ -1,12 +1,14 @@
 using System.Text.Json.Serialization;
 
 public sealed record NarrativePrompt(string System, string User);
+public sealed record NarrativeModelResult(string Json, long TotalTokens);
+public sealed record NarrativeGenerationResult(GamePackage Package, long TotalTokens);
 
 public interface INarrativeModelClient
 {
     bool IsEnabled { get; }
     string ModelName { get; }
-    Task<string> GenerateJsonAsync(NarrativePrompt prompt, CancellationToken cancellationToken);
+    Task<NarrativeModelResult> GenerateJsonAsync(NarrativePrompt prompt, CancellationToken cancellationToken);
 }
 
 public sealed record NarrativeDraft(

@@ -171,6 +171,8 @@ $servicePorts = @(
     @{ Name = 'KnowledgeService'; Port = 5104 },
     @{ Name = 'GalGameService'; Port = 5105 },
     @{ Name = 'RenderService'; Port = 5106 },
+    @{ Name = 'PracticeService'; Port = 5107 },
+    @{ Name = 'CreditService'; Port = 5108 },
     @{ Name = 'OCRService'; Port = 5110 },
     @{ Name = 'Frontend'; Port = 5121 }
 )
