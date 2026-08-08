@@ -88,6 +88,10 @@ project.fragment.lock.json
 artifacts/
 .artifacts/
 
+# PracticeService runtime models and dictionaries are restored from OSCA S3.
+# Keep the hash manifest and scoped read/list downloader in Git, never the binary assets.
+backend/PracticeService/Resources/
+
 # ASP.NET Scaffolding
 ScaffoldingReadMe.txt
 

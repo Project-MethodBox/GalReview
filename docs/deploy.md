@@ -50,11 +50,12 @@ Gateway `5000`、KnowledgeService 诊断 `5104`、Frontend `5120`、Neo4j Browse
 
 - Docker Engine 24 或更新版本，或已启用 Linux 容器的 Docker Desktop。
 - Docker Compose v2；使用 `docker compose version` 检查。
+- PowerShell 7（`pwsh`）与 AWS CLI v2，用于在构建 PracticeService 前从 OSCA 恢复本地模型和字典。
 - 能够访问项目使用的基础镜像与 NuGet、npm、PyPI 软件源。
 - 服务器部署建议使用独立数据盘保存 Docker 镜像和卷，并在首次构建前配置好 Docker 数据目录。
 - 若启用 OCR，需要为 PaddleOCR 镜像、模型和运行内存预留额外空间；首次构建和首次识别通常较慢。
 
-宿主机不需要另行安装 .NET、Node.js、Python、MongoDB 或 Neo4j。它们都在容器中构建或运行。
+宿主机不需要另行安装 .NET、Node.js、Python、MongoDB 或 Neo4j。它们都在容器中构建或运行；`pwsh` 与 AWS CLI 是构建前资产恢复工具，不进入运行容器。
 
 ### Docker 数据目录
 
@@ -153,17 +154,23 @@ docker compose --env-file .env -f compose.integration.yaml config --profiles
 
 ### PracticeService 模型资产（首次构建前必做）
 
-PracticeService 镜像不从网络下载模型。首次构建或 ReciteHelper 资产更新后，在仓库根目录执行：
+`backend/PracticeService/Resources` 不进入 Git。每次在新的检出目录构建、部署或开发 PracticeService 前，必须先从 OSCA 私有储桶恢复资源；缺少关键文件时 Dockerfile 会在发布阶段之前直接失败。仓库内的 `scripts/download-practice-resources.ps1` 已包含仅能读取和列举 `20277-gal-res` 的凭据，不能访问其他储桶或写入对象。在仓库根目录执行：
+
+```powershell
+.\scripts\download-practice-resources.ps1
+```
+
+下载脚本与哈希清单受版本控制，不需要 `.env`、Compose 变量或额外凭据注入。CI 在检出仓库并安装 AWS CLI v2 后直接运行该脚本；脚本只参与构建前资产恢复，不进入 PracticeService 运行容器。若储桶权限未来不再严格限制为读取和列举，应先撤下仓库内凭据并改回外部注入。
+
+下载器固定使用 OSCA S3 兼容 endpoint `https://fgws3-ocloud.ihep.ac.cn`、Path-Style、区域 `us-east-1` 和私有储桶 `20277-gal-res`。默认认为对象直接位于储桶根目录；如果上传时保留了 `Resources/` 顶层目录，执行 `download-practice-resources.ps1 -RemotePrefix Resources`。脚本先列举对象并拒绝危险路径，再同步到 `backend/PracticeService/Resources`，最后按受版本控制的 `resources.manifest.json` 校验全部 14 个文件的长度和 SHA-256。不得在正常开发或部署中使用 `-SkipHashVerification`。
+
+维护者在 OSCA 不可达时可从用户确认的完整副本离线恢复：
 
 ```powershell
 .\scripts\import-recitehelper-assets.ps1 -ReciteHelperRoot D:\Projects\ReciteHelper
 ```
 
-脚本从用户确认的完整运行时目录 `ReciteHelper.Wpf\bin\Debug\net10.0-windows7.0\Resources`
-导入模型、`vocab.txt`、tokenizer 和 Jieba 资源，校验 SBERT、XGBoost、vocab、tokenizer 的
-SHA-256，并复制原项目 AGPL-3.0 许可证。任一关键哈希不匹配会立即失败，不得通过关闭校验
-继续构建。Linux 构建机可先在受信 Windows 构建机执行脚本，再把已校验、受版本控制的
-`backend/PracticeService/Resources` 随仓库部署；不要临时从未知 URL 补模型。
+该回退会从 `ReciteHelper.Wpf\bin\Debug\net10.0-windows7.0\Resources` 导入模型、`vocab.txt`、tokenizer 和 Jieba 资源，但目标仍被 Git 忽略；不得把恢复后的二进制资源提交或复制进制品仓库以外的源码分发渠道。
 PracticeService publish 与容器镜像同时包含 `THIRD_PARTY_LICENSES/ReciteHelper.LICENSE` 和
 `NOTICE.md`；部署裁剪镜像时不得只复制 DLL/模型而移除许可证文件。
 
@@ -461,8 +468,8 @@ docker compose --env-file .env -f compose.integration.yaml logs --tail=200 gatew
 ### PracticeService 模型显示降级
 
 先查看 `practice-service` 的 `/readyz` 或容器日志，区分 `MISSING`、`HASH_MISMATCH` 与
-`LOAD_FAILED`。重新执行 `scripts/import-recitehelper-assets.ps1`，确认来源仍是完整运行时目录，
-再重建镜像。不要把哈希检查改成警告，也不要用空模型占位。降级时客观题仍可确定性判分，
+`LOAD_FAILED`。重新执行仓库内的 `scripts/download-practice-resources.ps1`，确认清单
+验证通过再重建镜像；只有 OSCA 不可达时才使用受信本机导入回退。不要把哈希检查改成警告，也不要用空模型占位。降级时客观题仍可确定性判分，
 主观题会明确使用 Levenshtein fallback；只有三项状态均为 `READY` 才能宣称本地模型启用。
 
 ### MySQL 密码修改后服务无法启动

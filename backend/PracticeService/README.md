@@ -20,13 +20,25 @@ PracticeService 承载产品主线的 ReciteHelper 复习内核，负责学习�
 - `.rhproj`、`.rhp` 与 `.qzwlp` 导入要求映射到当前用户自己的 READY material；旧包不会变成脱离资料库的第二套聚合。
 - 题目生成在读取资料和 PlanGraph 后，通过 Gateway 向 CreditService 预授权；成功按实际输入与生成内容结算，失败或无产物释放 held。credits 不足的 `402` 与详情原样交给前端处理。
 
-## 本地资产
+## 本地资产（开发前必做）
+
+`Resources` 中的 ONNX 模型、tokenizer、词表和 Jieba 数据不进入 Git。新检出仓库后，开发、测试、发布或构建 PracticeService 镜像之前，必须先安装 AWS CLI v2，并直接运行仓库内的下载脚本。脚本顶部已配置仅能读取和列举 `20277-gal-res` 的凭据，不能访问其他储桶或写入对象：
 
 ```powershell
-.\scripts\import-recitehelper-assets.ps1
+.\scripts\download-practice-resources.ps1
 ```
 
-脚本默认从用户确认的完整运行时目录导入全部 `Resources`，并校验 SBERT、XGBoost、vocab 和 tokenizer 的 SHA-256。构建不联网下载模型。
+下载脚本和哈希清单受版本控制，开发者无需另行配置凭据。若云端权限策略发生扩大，必须先重新评估该凭据是否仍适合随仓库分发。
+
+下载脚本使用 OSCA 的 S3 兼容 endpoint、Path-Style 和 `us-east-1`，默认将 `20277-gal-res` 储桶根目录同步到 `backend\PracticeService\Resources`，不会删除目标目录中的额外文件。若云端保留了顶层 `Resources/` 目录，则加 `-RemotePrefix Resources`；若要下载到其他位置，则传 `-DestinationPath <目录>`。下载完成后会按 `resources.manifest.json` 对全部 14 个文件校验长度和 SHA-256，任一缺失或不一致都会失败。
+
+维护者可在没有云存储的受信本机使用下列离线回退，但它不是开发者默认流程：
+
+```powershell
+.\scripts\import-recitehelper-assets.ps1 -ReciteHelperRoot D:\Projects\ReciteHelper
+```
+
+只有资源目标目录被 Git 忽略；下载脚本必须随仓库保留。不得通过 `-SkipHashVerification` 为正常开发或部署绕过校验。
 
 ## 运行
 
