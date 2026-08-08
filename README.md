@@ -83,6 +83,8 @@ credits，成功后按实际使用扣除，失败不会占用额度。credits �
 
 ## 更多信息
 
+> 开发或部署 PracticeService 前，必须先运行仓库内的 `scripts/download-practice-resources.ps1` 并通过 14 文件哈希校验；下载得到的 `Resources` 仍禁止提交。
+
 - [开发与接口说明](./docs/contract.md)
 - [ReciteHelper 迁移架构与变更台账](./docs/recitehelper-migration.md)
 - [部署指南](./docs/deploy.md)

@@ -1055,3 +1055,34 @@ Practice 完成后真实 SM-2 变化、项目内故事模式端到端均不得�
 
 第 23.4 节关于 time-window 邀请码的待澄清记录已被本轮决策取代：邀请码接口已撤下且注册不
 再读取邀请码。遗留表和 repository 仅作迁移兼容，不是可调用能力。
+
+## 26. 2026-08-08 PracticeService OSCA 资源恢复验证
+
+本轮将 `backend/PracticeService/Resources` 从源码分发范围中移除。仓库保留单文件下载器及
+14 文件的路径、长度与 SHA-256 清单；下载器内置的凭据由所有者确认为只能读取和列举
+`20277-gal-res`，不能访问其他储桶或执行写入。PracticeService Dockerfile 在 publish 前检查
+关键模型、tokenizer 与词表是否已经恢复。
+
+| 验证项 | 结果 |
+|---|---:|
+| `download-practice-resources.ps1` PowerShell AST parser | PASS，0 syntax error |
+| 缺少 AWS CLI 的失败路径 | PASS，联网和文件同步前明确报错 |
+| `Resources` Git ignore | PASS，模型与 `vocab.txt` 均命中精确规则 |
+| 下载脚本可跟踪状态 | PASS，不命中 `.gitignore`，可随仓库提交 |
+| 下载凭据权限 | OWNER-CONFIRMED，仅 `20277-gal-res` 读取/列举；本轮未独立审计云端 IAM 策略 |
+| 仓库外恢复备份对 `resources.manifest.json` | PASS，14 / 14 路径、长度、SHA-256 一致 |
+| OSCA S3 真实列举、同步与下载后复验 | NOT RUN：当前环境未安装 AWS CLI v2 |
+| PracticeService 容器缺失门禁 | IMPLEMENTED；Docker daemon 未启动，镜像未重建 |
+| Git 中断恢复 | PASS，本地 `main` 纯 fast-forward 到远端 `feat: Integrate recite helper`，6 个 stash 冲突已逐项解决 |
+| Git 暂存与冲突状态 | PASS，unmerged 0、staged 0、冲突标记 0 |
+| 仓库工作树资源残留 | PASS，PracticeService 源目录与两个 Debug 输出目录共 21 个资源副本均已移出仓库 |
+
+未把“脚本语法通过”当作云端下载成功。开发者或部署人员必须安装 AWS CLI v2，运行仓库内
+下载脚本并看到 `manifest verification: passed` 后，才能继续开发、测试或执行
+`docker compose build`。默认储桶根目录与云端对象布局若不一致，应显式使用
+`-RemotePrefix Resources`，不得通过关闭哈希验证掩盖路径错误。
+
+中断恢复时还确认：Git 检出的 `vocab.txt` 因文本换行转换从清单要求的 109,540 字节变为
+130,668 字节，原始 SHA-256 随之变化；仓库外备份仍与清单一致。这进一步证明模型、词表和
+分词资源不能通过 Git 分发。当前提交历史仍包含此前误提交的资源 blob；普通删除提交只能从
+新版本工作树移除它们，若要从远端历史和仓库存储中彻底清除，必须另行确认历史重写与强制推送。

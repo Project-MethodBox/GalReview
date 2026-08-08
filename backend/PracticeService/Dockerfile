@@ -6,6 +6,10 @@ COPY PracticeService.Persistence/PracticeService.Persistence.csproj PracticeServ
 COPY PracticeService.API/PracticeService.API.csproj PracticeService.API/
 RUN dotnet restore PracticeService.API/PracticeService.API.csproj
 COPY . .
+RUN test -f Resources/Models/sbert.onnx \
+    && test -f Resources/Models/xgboost_qvalue.onnx \
+    && test -f Resources/tokenizer.json \
+    && test -f Resources/vocab.txt
 RUN dotnet publish PracticeService.API/PracticeService.API.csproj -c Release -o /app --no-restore
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime

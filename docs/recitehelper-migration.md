@@ -191,7 +191,7 @@ ReciteHelper 的功能信息架构迁移到 GalReview，而不是复刻 WPF 外�
 | `xgboost_qvalue.onnx` | `53b563e2df2c6026f7a996b4d8f63e83c63bbf64d1dde5e03a3c7f9dbf688ea0` | quality 估计 | 输入固定为 `[relativeRate, similarityPercent]`，输出类别 0-5 |
 | `vocab.txt` | `45bbac6b341c319adc98a532532882e91a9cefc0329aa57bac9ae761c27b291c` | SBERT WordPiece 词表（21,128 行） | 从完整运行时目录迁移；必须与 SBERT 一起进入镜像 |
 
-模型与词表来自 ReciteHelper 完整本机副本，其中 `vocab.txt` 由运行时输出目录补齐。构建不得静默从不受信 URL 下载模型；容器镜像内必须校验哈希。缺失或哈希不符时 `/readyz` 报告降级状态，服务仍可用确定性规则判分，但不能宣称 SBERT 已启用。
+模型与词表来自 ReciteHelper 完整本机副本，其中 `vocab.txt` 由运行时输出目录补齐。这些大文件不进入 Git，而是按原目录结构保存于 OSCA 私有储桶 `20277-gal-res`；开发和部署必须先运行仓库内的 `scripts/download-practice-resources.ps1`，再按受版本控制的 `backend/PracticeService/resources.manifest.json` 校验全部 14 个文件。下载器顶部凭据的权限由储桶策略限制为 `20277-gal-res` 的读取和列举，不能访问其他储桶或写入对象，因此下载器与清单一并进入仓库。构建不得静默从其他 URL 下载模型；缺失或哈希不符时 Docker 构建前置检查失败，运行时 `/readyz` 报告降级状态，服务仍可用确定性规则判分，但不能宣称 SBERT 已启用。
 
 ReciteHelper 使用 AGPL-3.0。迁移的源代码、提示词、模型和兼容格式必须保留来源、版权与许可证说明；本项目的分发方式需要由维护者确认整体许可证兼容性。本文记录事实，不替代法律意见。
 
@@ -218,6 +218,7 @@ ReciteHelper 使用 AGPL-3.0。迁移的源代码、提示词、模型和兼容�
 | 2026-08-08 | GalGame/Credit | 故事复习按 PlanGraph 和最大草稿估算，累计供应商实际 usage 后结算 | 故事生成作为复习功能共享同一 credits 账户 | GalGame 362/362 | VERIFIED |
 | 2026-08-08 | Frontend/Admin | 设置页增加余额、兑换与确认购买；管理员支持兑换码批量生成、状态与撤销；不足提示不展示内部换算 | 延续 GalReview 视觉与中性文案，禁止 AI 风格和 emoji | production build 通过 | VERIFIED |
 | 2026-08-08 | Gateway/Deploy | CreditService 路由、独立密钥、MySQL、healthcheck、readiness、备份与部署变量写入容器基线 | 新服务与现有服务变更必须可部署、可恢复 | Gateway 203/203；Compose config pass | VERIFIED |
+| 2026-08-08 | Practice/Deploy | `Resources` 改为 Git 忽略的 OSCA S3 构建前资产；仓库内单文件下载器配置仅限 `20277-gal-res` 读取/列举的凭据，并保留 14 文件哈希清单与 Docker 缺失门禁 | 避免约 105 MiB 模型和字典进入 Git，同时让任意开发环境一键、可重复恢复 | PowerShell parser、下载器可跟踪状态、资源 Git ignore、14/14 本地哈希校验通过；真实 OSCA 下载待安装 AWS CLI 后验证 | IMPLEMENTED |
 
 状态只使用 `SPECIFIED | IMPLEMENTED | VERIFIED | BLOCKED`。代码合入后必须逐项更新，测试未运行或失败时不得写 `VERIFIED`。
 
