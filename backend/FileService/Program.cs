@@ -138,6 +138,7 @@ app.MapPost("/api/v1/materials/{materialId}/ingestion-jobs", (string materialId,
     var ocrMode = string.IsNullOrWhiteSpace(request.OcrMode) ? "standard" : request.OcrMode.Trim().ToLowerInvariant();
     if (ocrMode is not ("quick" or "standard")) return Failure(c, 400, "VALIDATION_ERROR", "OCR mode must be quick or standard.");
     var job = store.CreateJob(materialId, string.IsNullOrWhiteSpace(request.ParserVersion) ? "files-text-v1" : request.ParserVersion, request.EnableOcr, ocrMode);
+    if (job is null) return Failure(c, 409, "STATE_CONFLICT", "The material state changed before the ingestion job was created.");
     _ = Task.Run(() => store.ProcessJobAsync(job.JobId, CancellationToken.None));
     return Results.Accepted($"/api/v1/ingestion-jobs/{job.JobId}", ApiSuccess.Create(job, c.TraceIdentifier));
 });

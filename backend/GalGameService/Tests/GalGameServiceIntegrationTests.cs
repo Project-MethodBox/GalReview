@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Xunit;
 
 // ============================================================================
@@ -43,8 +44,20 @@ public class GalGameServiceIntegrationTests : IClassFixture<WebApplicationFactor
             builder.UseSetting("GalGameStore:Provider", "Memory");
             // 覆盖 contentRoot 以找到 appsettings.json
             builder.UseSetting("contentRoot", AppContext.BaseDirectory);
+            builder.ConfigureServices(services =>
+            {
+                services.RemoveAll<IGameCreditBilling>();
+                services.AddSingleton<IGameCreditBilling, FakeGameCreditBilling>();
+            });
         });
         _client = _factory.CreateClient();
+    }
+
+    private sealed class FakeGameCreditBilling : IGameCreditBilling
+    {
+        public Task ReserveAsync(Guid userId, Guid operationId, long estimated, CancellationToken ct) => Task.CompletedTask;
+        public Task SettleAsync(Guid operationId, long actual, CancellationToken ct) => Task.CompletedTask;
+        public Task ReleaseAsync(Guid operationId, CancellationToken ct) => Task.CompletedTask;
     }
 
     private HttpClient CreateClientWithAuth(string? serviceName = null, string userId = UserId)

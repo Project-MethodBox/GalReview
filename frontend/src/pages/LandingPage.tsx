@@ -6,24 +6,24 @@ import { readSession } from '../lib/session'
 
 const features = [
   {
-    title: '让资料真正成为主角',
-    description: '从自己的课程内容出发，每一次复习都与眼前的学习目标有关。上传讲义、笔记或题库，系统自动梳理其中的章节与知识点。',
+    title: '从资料中提取可复习内容',
+    description: '上传讲义、笔记或题库后，系统先解析原文，再由 AI 辅助识别章节、概念与可出题内容。生成结果保留资料来源，便于核对。',
     icon: MaterialsIcon,
   },
   {
-    title: '让知识彼此连接',
-    description: '从章节到概念，逐步看清知识之间的来龙去脉。知识图谱帮你建立联系，不再孤立地记忆单个知识点。',
+    title: '把资料整理成自己的题库',
+    description: '围绕同一学习项目管理单选、多选、判断、填空与简答题。既可生成题目，也可导入旧题库，并在确认后进入复习。',
     icon: KnowledgeIcon,
   },
   {
-    title: '让复习拥有故事感',
-    description: '通过对白、选择与挑战推进剧情，让再看一遍变成继续下一幕。三位校园伙伴会以各自的方式参与其中。',
-    icon: ReviewIcon,
+    title: '让知识图谱参与复习安排',
+    description: '知识关系、练习结果与 SM-2 复习状态共同决定下一轮内容。系统优先安排薄弱、到期且与当前目标相关的知识。',
+    icon: GraphIcon,
   },
   {
-    title: '让进步有迹可循',
-    description: '保留每次作答与复习进度，方便回顾掌握情况并规划下一次学习。每一次复习都在为下一次积累线索。',
-    icon: GraphIcon,
+    title: '在需要时进入故事复习',
+    description: '视觉小说不再是独立流程，而是学习项目中的一种复习模式。题目与剧情仍基于同一份资料、同一张图谱和同一套掌握记录。',
+    icon: ReviewIcon,
   },
 ]
 
@@ -56,20 +56,24 @@ const characters = [
 ]
 
 const steps = [
-  { num: '01', title: '带上自己的资料', desc: '上传课程讲义、课堂笔记或复习题，选择想要巩固的章节与知识点。系统会为你梳理出清晰的知识脉络。' },
-  { num: '02', title: '梳理知识脉络', desc: '从章节到概念，逐步看清知识之间的来龙去脉。知识图谱会帮你建立联系，让复习不再孤立。' },
-  { num: '03', title: '进入互动剧情', desc: '选择本次故事的氛围和挑战强度，三位角色会以各自的方式参与其中。一次对话、一道问题、一个选择，都可能成为继续故事的线索。' },
-  { num: '04', title: '留下复习记录', desc: '每一轮结束后，复习记录会成为下一次出发的依据。故事可以告一段落，学习仍会接着向前。' },
+  { num: '01', title: '上传并解析资料', desc: '文件解析与文字识别先还原原文，AI 再辅助整理章节、概念和候选题目。关键结果都能回到资料来源核对。' },
+  { num: '02', title: '建立并确认题库', desc: '系统按资料生成五类题目，也支持导入既有题库。你可以编辑答案与解析，确认后再用于正式复习。' },
+  { num: '03', title: '开始智能复习', desc: '选择日常练习、智能复习或模拟考试。知识图谱与 SM-2 结合当前掌握度，安排更需要复习的内容。' },
+  { num: '04', title: '用结果驱动下一轮', desc: '作答结果回写掌握记录与复习间隔；需要换一种方式巩固时，还可以在同一项目中进入视觉小说复习。' },
 ]
 
 const faqs = [
   {
     q: '千知万理适合什么学科？',
-    a: '千知万理支持上传任意学科的讲义、笔记或题库。系统会自动梳理其中的章节与知识点，生成知识图谱。目前更适合有明确章节结构的学习资料。',
+    a: '千知万理支持上传不同学科的讲义、笔记或题库。目前更适合结构清楚、可以从原文核对答案的学习资料。',
   },
   {
-    q: '复习剧情是怎么生成的？',
-    a: '基于你上传的知识点，系统会生成一段校园风格的互动剧情。三位角色会以各自的方式参与其中，通过对白、选择与问题推进故事。',
+    q: 'AI 在解析和复习中做什么？',
+    a: 'AI 用于辅助识别资料结构、生成候选题目和解释作答结果；文件解析、答案判定与复习调度仍有明确规则和降级路径。重要内容保留来源引用，生成题目需经确认。',
+  },
+  {
+    q: '故事复习和普通练习是什么关系？',
+    a: '故事复习是学习项目中的可选模式。它与日常练习、智能复习和模拟考试共用资料、题库、知识图谱与复习记录，不会另建一套孤立数据。',
   },
   {
     q: '需要安装软件吗？',
@@ -82,15 +86,15 @@ const faqs = [
 ]
 
 const heroCards = [
-  { id: 'story', line1: '知识有图谱，', line2Prefix: '', line2Accent: '复习有剧情', line2Suffix: '。' },
+  { id: 'story', line1: '资料成题库，', line2Prefix: '', line2Accent: '复习有计划', line2Suffix: '。' },
   { id: 'mastery', line1: '千知万理，', line2Prefix: '让你', line2Accent: '真正学会', line2Suffix: '' },
 ] as const
 
 const heroMessages = [
-  { text: '让每个知识点相连', accentFrom: 3, tone: 'blue' },
-  { text: '让每份笔记变线索', accentFrom: 5, tone: 'violet' },
-  { text: '让复习走进剧情里', accentFrom: 3, tone: 'rose' },
-  { text: '知识有图谱，\n复习有剧情。', accentFrom: 7, tone: 'story' },
+  { text: '让每份资料可核对', accentFrom: 5, tone: 'blue' },
+  { text: '让每次练习更合适', accentFrom: 5, tone: 'violet' },
+  { text: '让薄弱知识准时再现', accentFrom: 4, tone: 'rose' },
+  { text: '资料成题库，\n复习有计划。', accentFrom: 7, tone: 'story' },
 ] as const
 
 const finalHeroMessageIndex = heroMessages.length - 1
@@ -291,7 +295,7 @@ export default function LandingPage() {
         <section className="landing-hero">
           <div className="landing-hero__inner">
             <p className="landing-hero__eyebrow">
-              <span className="landing-hero__eyebrow-dot" /> 知识图谱驱动的互动复习
+              <span className="landing-hero__eyebrow-dot" /> AI 辅助解析与智能复习
             </p>
             <h1
               className="landing-hero__title"
@@ -379,12 +383,12 @@ export default function LandingPage() {
               )}
             </h1>
             <p className="landing-hero__subtitle">
-              把熟悉的讲义与笔记，变成一场属于你的校园故事。
-              上传资料、梳理知识、进入剧情，在每一次选择中完成更有记忆点的复习。
+              千知万理围绕你的复习资料库工作：解析原文、建立题库，
+              再用知识图谱与 SM-2 安排练习；视觉小说是同一学习项目中的可选复习方式。
             </p>
             <div className="landing-hero__actions">
-              <Link className="button button--primary landing-hero__cta landing-glass-button" to="/register">开始你的复习剧情 →</Link>
-              <button className="button button--light landing-glass-button" onClick={() => scroll('#workflow')}>看看复习流程</button>
+              <Link className="button button--primary landing-hero__cta landing-glass-button" to="/register">建立第一个学习项目</Link>
+              <button className="button button--light landing-glass-button" onClick={() => scroll('#workflow')}>了解解析与复习流程</button>
             </div>
           </div>
           <div className="landing-hero__preview" aria-hidden="true">
@@ -414,10 +418,10 @@ export default function LandingPage() {
           <div className="landing-features__inner">
             <div className="landing-feature-split">
               <div className="landing-feature-split__copy">
-                <h2>把复习资料，<br />变成一场校园剧情。</h2>
+                <h2>让每份资料，<br />进入可持续的复习循环。</h2>
                 <p className="landing-features__intro">
-                  不是面对一张张知识清单，而是和熟悉的角色一起调查、推理、回顾。
-                  上传讲义、梳理图谱、进入剧情——在每一次选择中巩固知识点。
+                  资料、题库、知识图谱和复习记录属于同一个学习项目。
+                  AI 负责辅助理解与生成，明确规则负责判定与调度，你始终可以核对来源并确认内容。
                 </p>
                 <ul className="landing-feature-list">
                   {features.map((feature) => (
@@ -455,7 +459,7 @@ export default function LandingPage() {
             <h2>三位性格迥异的校园伙伴</h2>
             <p className="landing-characters__intro">
               有人善于看穿迷雾，有人总能追到第一手线索，也有人相信一切异常都可以被测量和验证。<br />
-              他们会陪你走进知识背后的故事。
+              当你选择故事复习模式时，他们会把同一份题库与知识关系带入互动剧情。
             </p>
             <div className="landing-characters__grid">
               {characters.map((char) => (
@@ -485,9 +489,9 @@ export default function LandingPage() {
 
         <section id="workflow" className="landing-workflow">
           <div className="landing-workflow__inner">
-            <h2>从一份资料，走进一段剧情</h2>
+            <h2>从一份资料，进入智能复习循环</h2>
             <p className="landing-workflow__intro">
-              没有漫无边界的目录，也没有塞满按钮的面板。一次复习只有四件事，按顺序发生。
+              解析、确认、复习与反馈按顺序衔接；每一步都围绕同一个学习项目，不拆散你的资料与进度。
             </p>
             <div className="landing-workflow__timeline">
               {steps.map((step) => (
@@ -521,11 +525,11 @@ export default function LandingPage() {
 
         <section className="landing-cta">
           <div className="landing-cta__inner">
-            <h2>准备好开始你的复习剧情了吗？</h2>
-            <p>上传第一份资料，让千知万理帮你把复习变成一场值得期待的冒险。</p>
+            <h2>从第一份资料开始建立复习系统</h2>
+            <p>让千知万理协助解析、出题和安排复习，同时保留你对资料与答案的最终确认。</p>
             <div className="landing-cta__actions">
-              <Link className="button button--primary landing-glass-button" to="/register">注册，开始第一课 →</Link>
-              <button className="button button--light landing-glass-button" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>再看看复习流程</button>
+              <Link className="button button--primary landing-glass-button" to="/register">注册并建立学习项目</Link>
+              <button className="button button--light landing-glass-button" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>返回顶部</button>
             </div>
           </div>
         </section>
@@ -537,7 +541,7 @@ export default function LandingPage() {
             <BrandMark compact />
             <div>
               <strong>千知万理</strong>
-              <p>把复习资料，变成一场校园故事。<br />让每一步都看得见。</p>
+              <p>AI 辅助解析，图谱连接知识，<br />让每一次复习都有依据。</p>
             </div>
           </div>
           <div className="landing-footer__columns">

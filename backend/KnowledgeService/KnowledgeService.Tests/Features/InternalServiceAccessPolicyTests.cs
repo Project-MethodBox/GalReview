@@ -6,19 +6,22 @@ namespace KnowledgeService.Tests.Features;
 
 public sealed class InternalServiceAccessPolicyTests
 {
-    [Fact]
-    public void Plan_graph_allows_gal_game_service()
+    [Theory]
+    [InlineData("GalGameService")]
+    [InlineData("PracticeService")]
+    public void Plan_graph_allows_exact_allowlisted_services(string serviceName)
     {
-        var context = ContextFor("GalGameService");
+        var context = ContextFor(serviceName);
 
         var caller =
             InternalServiceAccessPolicy.RequirePlanGraphReader(context);
 
-        Assert.Equal("GalGameService", caller);
+        Assert.Equal(serviceName, caller);
     }
 
     [Theory]
     [InlineData("RenderService")]
+    [InlineData("practiceservice")]
     [InlineData("galgameservice")]
     [InlineData("KnowledgeService")]
     public void Plan_graph_rejects_non_allowlisted_service(string serviceName)
@@ -31,20 +34,23 @@ public sealed class InternalServiceAccessPolicyTests
         Assert.Equal("FORBIDDEN", exception.Code);
     }
 
-    [Fact]
-    public void Review_evidence_allows_render_service()
+    [Theory]
+    [InlineData("RenderService")]
+    [InlineData("PracticeService")]
+    public void Review_evidence_allows_exact_allowlisted_services(string serviceName)
     {
-        var context = ContextFor("RenderService");
+        var context = ContextFor(serviceName);
 
         var caller =
             InternalServiceAccessPolicy.RequireEvidenceWriter(context);
 
-        Assert.Equal("RenderService", caller);
+        Assert.Equal(serviceName, caller);
     }
 
     [Theory]
     [InlineData("GalGameService")]
     [InlineData("renderservice")]
+    [InlineData("practiceservice")]
     [InlineData("KnowledgeService")]
     public void Review_evidence_rejects_non_allowlisted_service(
         string serviceName)

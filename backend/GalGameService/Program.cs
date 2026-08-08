@@ -112,6 +112,7 @@ builder.Services.AddSingleton<INarrativeModelClient>(sp => new DeepSeekNarrative
     sp.GetRequiredService<IHttpClientFactory>(),
     narrativeOptions));
 builder.Services.AddSingleton<NarrativeGenerationService>();
+builder.Services.AddSingleton<IGameCreditBilling, CreditBillingClient>();
 builder.Services.AddSingleton<ITtsClient>(sp => new MiMoTtsClient(
     sp.GetRequiredService<IHttpClientFactory>(),
     voiceOptions));
@@ -292,7 +293,7 @@ app.MapGet("/readyz", (HttpContext c, IGameStore store) =>
 //   - 校验通过 → 202 Accepted，后台异步生成
 // ============================================================================
 
-app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, HttpContext c, IGameStore store, PlanGraphClient planClient, NarrativeGenerationService narrativeService, PackageVoiceService voiceService) =>
+app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, HttpContext c, IGameStore store, PlanGraphClient planClient, NarrativeGenerationService narrativeService, PackageVoiceService voiceService, IGameCreditBilling billing) =>
 {
     var userId = GatewayUser(c, gatewayKey);
     if (userId is null) return Failure(c, 401, "AUTH_REQUIRED", "需要网关认证的用户身份。");
@@ -317,6 +318,7 @@ app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, Ht
         fetchResult = await planClient.GetGraphAsync(
             request.ReviewPlanId, request.SnapshotVersion, traceId, c.RequestAborted, mockOwnerUserId: ownerUserId);
     }
+
     catch (OperationCanceledException) when (c.RequestAborted.IsCancellationRequested)
     {
         return Failure(c, 499, "CLIENT_CLOSED_REQUEST", "客户端断开连接");
@@ -358,10 +360,35 @@ app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, Ht
         return Failure(c, 503, "SERVICE_UNAVAILABLE", "游戏生成任务暂时不可用");
     }
 
+    var estimatedUnits = narrativeEnabled
+        ? Math.Max(1L,
+            ((graph.Nodes ?? []).Sum(node => (long)((node.Title?.Length ?? 0) + (node.Summary?.Length ?? 0))) / 2L
+                + 2_048L
+                + Math.Clamp(narrativeOptions.MaxOutputTokens, 1_000, 32_000))
+            * Math.Clamp(narrativeOptions.MaxDraftAttempts, 1, 3)
+            * Math.Clamp(narrativeOptions.MaxProviderAttempts, 1, 4))
+        : 1L;
+    try
+    {
+        await billing.ReserveAsync(ownerUserId, job.GenerationId, estimatedUnits, c.RequestAborted);
+    }
+    catch (CreditBillingException credit)
+    {
+        store.TryTransitionJob(job.GenerationId, JobStatus.QUEUED, j => j with { Status = JobStatus.FAILED, Error = new ApiError(credit.Code, credit.Message, credit.Details) });
+        return Failure(c, credit.StatusCode, credit.Code, credit.Message, credit.Details);
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Unable to reserve credits. CorrelationId: {CorrelationId}", traceId);
+        store.TryTransitionJob(job.GenerationId, JobStatus.QUEUED, j => j with { Status = JobStatus.FAILED, Error = new ApiError("SERVICE_UNAVAILABLE", "credits 服务暂时不可用", new { }) });
+        return Failure(c, 503, "SERVICE_UNAVAILABLE", "credits 服务暂时不可用");
+    }
+
     // 后台异步生成（PlanGraph 已确认可用，不再重复获取）
     // 使用 _ = 丢弃 Task 但内部有完整异常处理，不会静默吞异常
     _ = Task.Run(async () =>
     {
+        var reservationSettled = false;
         try
         {
             // 原子状态转换：QUEUED → RUNNING
@@ -396,18 +423,22 @@ app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, Ht
             // 使包的溯源、任务查询和权限边界继续符合 §7.1 / §7.3.1。
             // 非 Mock 才执行真实的骨架生成与可选叙事模型重写。
             GamePackage package;
+            long actualTokenUnits;
             if (isMockMode)
             {
                 package = MockStoryPackageFactory.Create(request);
+                actualTokenUnits = 0;
                 ReportProgress(85);
             }
             else
             {
-                package = await narrativeService.GenerateAsync(
+                var generation = await narrativeService.GenerateAsync(
                     graph,
                     request,
                     userId,
                     ReportProgress);
+                package = generation.Package;
+                actualTokenUnits = generation.TotalTokens;
             }
 
             ReportProgress(86);
@@ -425,6 +456,9 @@ app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, Ht
                 $"/api/v1/game-packages/{package.PackageId}/content",
                 userId, DateTimeOffset.UtcNow);
 
+            await billing.SettleAsync(job.GenerationId, actualTokenUnits, CancellationToken.None);
+            reservationSettled = true;
+
             foreach (var audio in voiceResult.AudioAssets)
                 store.SaveAudio(audio);
             store.SavePackage(package, manifest, userId);
@@ -440,6 +474,11 @@ app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, Ht
         catch (Exception ex)
         {
             logger.LogError(ex, "Job {GenerationId} failed during generation", job.GenerationId);
+            if (!reservationSettled)
+            {
+                try { await billing.ReleaseAsync(job.GenerationId, CancellationToken.None); }
+                catch (Exception releaseError) { logger.LogError(releaseError, "Unable to release credits for failed job {GenerationId}", job.GenerationId); }
+            }
             store.TryTransitionJob(job.GenerationId, JobStatus.RUNNING,
                 j => j with { Status = JobStatus.FAILED, Error = new ApiError("INTERNAL_ERROR", ex.Message, new { }) });
         }
@@ -628,8 +667,8 @@ static string? GatewayUser(HttpContext context, string key)
     return userIdValues[0];
 }
 
-static IResult Failure(HttpContext context, int status, string code, string message)
-    => Results.Json(ApiFailure.Create(code, message, context.TraceIdentifier), statusCode: status);
+static IResult Failure(HttpContext context, int status, string code, string message, object? details = null)
+    => Results.Json(new ApiFailure(null, new ApiError(code, message, details ?? new { }), context.TraceIdentifier), statusCode: status);
 
 static bool TryParseUuidV4(string? value, out Guid id)
     => Guid.TryParse(value, out id) && IsUuidV4(id);

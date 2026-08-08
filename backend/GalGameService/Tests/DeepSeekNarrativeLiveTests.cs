@@ -34,7 +34,8 @@ public sealed class DeepSeekNarrativeLiveTests
         var prompt = new NarrativePromptBuilder().Build(
             skeleton, plan, request, options.PromptVersion);
 
-        var rawJson = await modelClient.GenerateJsonAsync(prompt, CancellationToken.None);
+        var modelResult = await modelClient.GenerateJsonAsync(prompt, CancellationToken.None);
+        var rawJson = modelResult.Json;
         var accepted = new NarrativeDraftValidator(new GamePackageValidator()).TryApply(
             rawJson,
             skeleton,

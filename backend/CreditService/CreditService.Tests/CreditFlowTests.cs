@@ -1,0 +1,15 @@
+using CreditService.Application;
+using CreditService.Domain;
+using CreditService.Persistence;
+using Xunit;
+
+namespace CreditService.Tests;
+public sealed class CreditFlowTests
+{
+    [Fact] public async Task New_account_gets_one_credit_once(){var repo=new MemoryCreditRepository();var h=new CreditHandlers(repo);var id=Guid.NewGuid();var first=await h.Handle(new ProvisionAccountCommand(id),default);var second=await h.Handle(new ProvisionAccountCommand(id),default);Assert.Equal(1m,first.Balance);Assert.Equal(1m,second.Balance);}
+    [Fact] public async Task Existing_user_is_lazily_provisioned_on_first_balance_or_reservation(){var repo=new MemoryCreditRepository();var h=new CreditHandlers(repo);var balanceUser=Guid.NewGuid();Assert.Equal(1m,(await h.Handle(new GetBalanceQuery(balanceUser),default)).Balance);var generationUser=Guid.NewGuid();await h.Handle(new ReserveCreditsCommand(generationUser,Guid.NewGuid(),"GAME_GENERATION",50_000),default);Assert.Equal(.5m,(await h.Handle(new GetBalanceQuery(generationUser),default)).Available);}
+    [Fact] public async Task Batch_codes_redeem_once(){var repo=new MemoryCreditRepository();var h=new CreditHandlers(repo);var user=Guid.NewGuid();await h.Handle(new ProvisionAccountCommand(user),default);var codes=await h.Handle(new CreateCodeBatchCommand(Guid.NewGuid(),2,2.5m,null),default);var balance=await h.Handle(new RedeemCodeCommand(user,codes[0].Code),default);Assert.Equal(3.5m,balance.Balance);await Assert.ThrowsAsync<CreditDomainException>(()=>h.Handle(new RedeemCodeCommand(user,codes[0].Code),default));}
+    [Fact] public async Task Reservation_holds_and_settles_actual(){var repo=new MemoryCreditRepository();var h=new CreditHandlers(repo);var user=Guid.NewGuid();await h.Handle(new ProvisionAccountCommand(user),default);var op=Guid.NewGuid();await h.Handle(new ReserveCreditsCommand(user,op,"GAME_GENERATION",60_000),default);var held=await h.Handle(new GetBalanceQuery(user),default);Assert.Equal(.4m,held.Available);await h.Handle(new SettleCreditsCommand(op,25_000),default);var settled=await h.Handle(new GetBalanceQuery(user),default);Assert.Equal(.75m,settled.Balance);Assert.Equal(.75m,settled.Available);}
+    [Fact] public async Task Insufficient_balance_returns_purchase_details(){var repo=new MemoryCreditRepository();var h=new CreditHandlers(repo);var user=Guid.NewGuid();await h.Handle(new ProvisionAccountCommand(user),default);var ex=await Assert.ThrowsAsync<CreditDomainException>(()=>h.Handle(new ReserveCreditsCommand(user,Guid.NewGuid(),"GAME_GENERATION",100_001),default));Assert.Equal("CREDITS_INSUFFICIENT",ex.Code);Assert.Equal(402,ex.StatusCode);}
+    [Fact] public async Task Released_reservation_restores_available_balance(){var repo=new MemoryCreditRepository();var h=new CreditHandlers(repo);var user=Guid.NewGuid();await h.Handle(new ProvisionAccountCommand(user),default);var op=Guid.NewGuid();await h.Handle(new ReserveCreditsCommand(user,op,"PRACTICE_GENERATION",30_000),default);await h.Handle(new ReleaseCreditsCommand(op),default);Assert.Equal(1m,(await h.Handle(new GetBalanceQuery(user),default)).Available);}
+}

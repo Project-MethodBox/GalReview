@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
+using A = DocumentFormat.OpenXml.Drawing;
 using HtmlAgilityPack;
 using MongoDB.Bson;
 using MongoDB.Driver;
@@ -363,6 +364,8 @@ public sealed class MongoFileStore : IFileStore
         ".txt" when string.IsNullOrWhiteSpace(submittedType) || submittedType.Equals("application/octet-stream", StringComparison.OrdinalIgnoreCase) => "text/plain",
         ".md" when string.IsNullOrWhiteSpace(submittedType) || submittedType.Equals("application/octet-stream", StringComparison.OrdinalIgnoreCase) => "text/markdown",
         ".html" or ".htm" when string.IsNullOrWhiteSpace(submittedType) || submittedType.Equals("application/octet-stream", StringComparison.OrdinalIgnoreCase) => "text/html",
+        ".mhtml" or ".mht" when string.IsNullOrWhiteSpace(submittedType) || submittedType.Equals("application/octet-stream", StringComparison.OrdinalIgnoreCase) => "multipart/related",
+        ".pptx" when string.IsNullOrWhiteSpace(submittedType) || submittedType.Equals("application/octet-stream", StringComparison.OrdinalIgnoreCase) => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         ".jpg" or ".jpeg" when string.IsNullOrWhiteSpace(submittedType) || submittedType.Equals("application/octet-stream", StringComparison.OrdinalIgnoreCase) => "image/jpeg",
         ".png" when string.IsNullOrWhiteSpace(submittedType) || submittedType.Equals("application/octet-stream", StringComparison.OrdinalIgnoreCase) => "image/png",
         _ => string.IsNullOrWhiteSpace(submittedType) ? "application/octet-stream" : submittedType
@@ -389,6 +392,8 @@ public sealed class MongoFileStore : IFileStore
         return parserKind switch
         {
             ParserInputKind.Docx => ExtractStructuredDocx(content),
+            ParserInputKind.Pptx => ExtractStructuredPptx(content),
+            ParserInputKind.Mhtml => await ExtractMhtmlAsync(content, cancellationToken),
             ParserInputKind.Markdown => await ExtractMarkdownAsync(content, cancellationToken),
             ParserInputKind.Html => await ExtractHtmlAsync(content, cancellationToken),
             _ => await ExtractTextAsync(content, cancellationToken)
@@ -463,6 +468,26 @@ public sealed class MongoFileStore : IFileStore
         }
         return BuildStructuredText(segments);
     }
+    private static ExtractionResult ExtractStructuredPptx(Stream content)
+    {
+        using var document = PresentationDocument.Open(content, false);
+        var presentation = document.PresentationPart;
+        var slideList = presentation?.Presentation?.SlideIdList;
+        if (presentation is null || slideList is null) return new ExtractionResult(string.Empty, [], []);
+        var segments = new List<StructuredSegment>(); var slideNumber = 0; var paragraphIndex = 0;
+        foreach (var slideId in slideList.ChildElements.OfType<DocumentFormat.OpenXml.Presentation.SlideId>())
+        {
+            slideNumber++;
+            if (slideId.RelationshipId?.Value is not string relationshipId || presentation.GetPartById(relationshipId) is not SlidePart slidePart) continue;
+            if (slidePart.Slide is null) continue;
+            foreach (var paragraph in slidePart.Slide.Descendants<A.Paragraph>())
+            {
+                var text = string.Concat(paragraph.Descendants<A.Text>().Select(x => x.Text));
+                if (!string.IsNullOrWhiteSpace(text)) segments.Add(new StructuredSegment(text, "PARAGRAPH", null, slideNumber, paragraphIndex++, $"PPTX slide {slideNumber}"));
+            }
+        }
+        return BuildStructuredText(segments);
+    }
     private static ExtractionResult ExtractStructuredPdf(Stream content)
     {
         using var document = PdfDocument.Open(content);
@@ -519,6 +544,71 @@ public sealed class MongoFileStore : IFileStore
             if (text.Length > 0) segments.Add(new StructuredSegment(text, kind, level, null, index++, kind switch { "HEADING" => $"Heading {level}", "LIST_ITEM" => "List item", "TABLE" => "Table", "CODE" => "Code block", "QUOTE" => "Quote", _ => "Paragraph" }));
         }
         return BuildStructuredText(segments);
+    }
+    private static async Task<ExtractionResult> ExtractMhtmlAsync(Stream content, CancellationToken cancellationToken)
+    {
+        using var reader = new StreamReader(content, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
+        var source = await reader.ReadToEndAsync(cancellationToken);
+        var headerEnd = source.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+        var separatorLength = 4;
+        if (headerEnd < 0) { headerEnd = source.IndexOf("\n\n", StringComparison.Ordinal); separatorLength = 2; }
+        if (headerEnd < 0) throw new InvalidOperationException("MHTML root headers are missing.");
+        var rootHeaders = source[..headerEnd];
+        var boundaryMatch = Regex.Match(rootHeaders, "boundary\\s*=\\s*(?:\"(?<b>[^\"]+)\"|(?<b>[^;\\r\\n]+))", RegexOptions.IgnoreCase);
+        if (!boundaryMatch.Success) throw new InvalidOperationException("MHTML boundary is missing.");
+        var boundary = "--" + boundaryMatch.Groups["b"].Value.Trim();
+        var parts = source[(headerEnd + separatorLength)..].Split(boundary, StringSplitOptions.RemoveEmptyEntries);
+        var extracted = new List<ExtractionResult>();
+        foreach (var rawPart in parts)
+        {
+            var part = rawPart.TrimStart('\r', '\n').TrimEnd('\r', '\n', '-');
+            var partHeaderEnd = part.IndexOf("\r\n\r\n", StringComparison.Ordinal); var partSeparator = 4;
+            if (partHeaderEnd < 0) { partHeaderEnd = part.IndexOf("\n\n", StringComparison.Ordinal); partSeparator = 2; }
+            if (partHeaderEnd < 0) continue;
+            var headers = part[..partHeaderEnd];
+            var contentType = HeaderValue(headers, "Content-Type") ?? string.Empty;
+            if (!contentType.StartsWith("text/html", StringComparison.OrdinalIgnoreCase) && !contentType.StartsWith("text/plain", StringComparison.OrdinalIgnoreCase)) continue;
+            var encoding = HeaderValue(headers, "Content-Transfer-Encoding") ?? string.Empty;
+            var charset = Regex.Match(contentType, "charset\\s*=\\s*[\"']?(?<c>[^;\"'\\s]+)", RegexOptions.IgnoreCase).Groups["c"].Value;
+            var decoded = DecodeMimeBody(part[(partHeaderEnd + partSeparator)..], encoding, charset);
+            if (contentType.StartsWith("text/html", StringComparison.OrdinalIgnoreCase))
+            {
+                await using var html = new MemoryStream(Encoding.UTF8.GetBytes(decoded));
+                extracted.Add(await ExtractHtmlAsync(html, cancellationToken));
+            }
+            else
+            {
+                await using var text = new MemoryStream(Encoding.UTF8.GetBytes(decoded));
+                extracted.Add(await ExtractTextAsync(text, cancellationToken));
+            }
+        }
+        return BuildStructuredText(extracted.SelectMany((result, partIndex) => result.Blocks.Select((block, index) =>
+            new StructuredSegment(block.Text, block.Kind, block.Level, null, index, $"MHTML part {partIndex + 1}"))));
+    }
+    private static string? HeaderValue(string headers, string name)
+    {
+        var unfolded = Regex.Replace(headers, "\\r?\\n[ \\t]+", " ");
+        var match = Regex.Match(unfolded, $"^{Regex.Escape(name)}\\s*:\\s*(?<v>.+)$", RegexOptions.IgnoreCase | RegexOptions.Multiline);
+        return match.Success ? match.Groups["v"].Value.Trim() : null;
+    }
+    private static string DecodeMimeBody(string body, string transferEncoding, string charset)
+    {
+        byte[] bytes;
+        if (transferEncoding.Equals("base64", StringComparison.OrdinalIgnoreCase))
+            bytes = Convert.FromBase64String(Regex.Replace(body, "\\s+", string.Empty));
+        else if (transferEncoding.Equals("quoted-printable", StringComparison.OrdinalIgnoreCase))
+        {
+            var compact = Regex.Replace(body, "=\\r?\\n", string.Empty); var output = new List<byte>();
+            for (var index = 0; index < compact.Length; index++)
+            {
+                if (compact[index] == '=' && index + 2 < compact.Length && byte.TryParse(compact.AsSpan(index + 1, 2), System.Globalization.NumberStyles.HexNumber, null, out var value)) { output.Add(value); index += 2; }
+                else output.Add((byte)compact[index]);
+            }
+            bytes = output.ToArray();
+        }
+        else bytes = Encoding.UTF8.GetBytes(body);
+        try { return (string.IsNullOrWhiteSpace(charset) ? Encoding.UTF8 : Encoding.GetEncoding(charset)).GetString(bytes); }
+        catch (ArgumentException) { return Encoding.UTF8.GetString(bytes); }
     }
     private static ExtractionResult BuildStructuredText(IEnumerable<StructuredSegment> segments)
     {

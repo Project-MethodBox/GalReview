@@ -44,6 +44,17 @@ public sealed record MockPasswordReset(string UserId, DateTimeOffset ExpiresAt);
 
 public sealed class InMemoryAuthRepository(MockAuthStore store) : IAuthRepository
 {
+    public RegistrationOutcome TryCreateCredential(Credential value)
+    {
+        lock (store.Sync)
+        {
+            if (store.CredentialIdsByEmail.ContainsKey(value.Email)) return RegistrationOutcome.EmailAlreadyRegistered;
+            store.CredentialsById[value.UserId] = value;
+            store.CredentialIdsByEmail[value.Email] = value.UserId;
+            return RegistrationOutcome.Created;
+        }
+    }
+
     public RegistrationOutcome TryCreateCredentialWithInvitation(Credential value, string invitationCode)
     {
         lock (store.Sync)

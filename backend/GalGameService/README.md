@@ -12,13 +12,14 @@
 - 剧情模板生成（CAMPUS / FANTASY / SCIENCE）
 - 难度适配（BASIC / STANDARD / ADVANCED）
 - 经 Gateway 读取 KnowledgeService 的不可变 PlanGraph（§7.3.1 URGENT）
+- 生成前经 Gateway 向 CreditService 预授权，成功后按模型返回的实际 token usage 结算，失败时释放
 - 使用 MiMo v2.5 TTS 为非玩家角色生成逐句语音，并随游戏包持久化
 
 ## 端点
 
 | 方法 | 路由 | 用途 | 状态码 |
 |---|---|---|---|
-| `POST` | `/api/v1/game-generations` | 创建游戏包生成任务 | `202/400/401/422/503` |
+| `POST` | `/api/v1/game-generations` | 创建游戏包生成任务并完成 credits 预授权 | `202/400/401/402/422/503` |
 | `GET` | `/api/v1/game-generations/{generationId}` | 查询生成任务 | `200/400/401/404` |
 | `GET` | `/api/v1/game-packages/{packageId}` | 读取游戏包清单 | `200/400/401/404` |
 | `GET` | `/api/v1/game-packages/{packageId}/content` | 下载完整 JSON | `200/304/400/401/404` |
@@ -118,6 +119,12 @@ GalGameService/
 - `reviewPlanId` 不存在 → `422 REVIEW_PLAN_NOT_FOUND`
 - 上游不可用 → `503 SERVICE_UNAVAILABLE`
 - 校验通过 → `202 Accepted`，后台异步生成游戏包
+- 预估 credits 不足 → `402 CREDITS_INSUFFICIENT`，不启动后台生成
+
+预授权以 `generationId` 为计费幂等键。所有已被模型供应商接受并返回 usage 的响应都会
+计入实际消耗，包括客户端内容重试和之后未通过 schema 校验的草稿；成功响应缺少有效 usage
+时按上游契约错误终止，不猜测计费值。确定性 Mock 未调用模型时实际值为 0。
+后台成功时先结算再保存游戏包，失败时释放 held，避免失败任务占用用户可用 credits。
 
 ### 2. 游戏包生成
 

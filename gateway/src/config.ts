@@ -97,6 +97,16 @@ export function loadConfig(): GatewayConfig {
       url: env('RENDER_SERVICE_URL', 'http://localhost:5106'),
       serviceKey: svcKey('RENDER_SERVICE_KEY'),
     },
+    practiceService: {
+      name: 'PracticeService',
+      url: env('PRACTICE_SERVICE_URL', 'http://localhost:5107'),
+      serviceKey: svcKey('PRACTICE_SERVICE_KEY'),
+    },
+    creditService: {
+      name: 'CreditService',
+      url: env('CREDIT_SERVICE_URL', 'http://localhost:5108'),
+      serviceKey: svcKey('CREDIT_SERVICE_KEY'),
+    },
   };
   const readinessServices = env(
     'READINESS_SERVICES',

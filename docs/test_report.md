@@ -998,3 +998,60 @@ Gateway 端口在集成与演示部署中直接对外发布。实测：对 `POST
   PM 决策，此处仅记录。
 - AuthService 的 time-window 邀请码在未指定 maxUses 时被隐式赋予 10 次上限，契约对该类型
   只描述了时间窗。同样属语义待澄清项，未擅自更改既有行为。
+
+## 24. 2026-08-08 ReciteHelper 复习内核迁移验证
+
+本轮把 ReciteHelper 的复习资料库、题库、练习、试卷、项目包与资源中心作为产品主线迁入
+四层 PracticeService；GalReview 的知识图谱、SM-2 和故事生成作为 StudyProject 下的复习
+能力复用。测试使用本机完整 ReciteHelper 运行时资源，未修改源仓库中的用户工作区改动。
+
+| 验证项 | 结果 |
+|---|---:|
+| PracticeService solution build | PASS，0 warning / 0 error |
+| PracticeService 单元测试 | PASS，14 / 14 |
+| 其中旧 `.rhproj` 五题型、`.qzwlp` round-trip、ZIP traversal | PASS |
+| 其中资料生成出处、生成幂等冲突、整卷缺答案不猜测 | PASS |
+| 其中 MongoDB Guid 表示 | PASS，UUID Standard |
+| 其中项目 material 所有权 | PASS，拒绝他人资料并接受本人 READY 文本 |
+| KnowledgeService PracticeService allowlist 目标测试 | PASS，12 / 12 |
+| Gateway 全量 Vitest | PASS，15 files，199 / 199 |
+| Gateway 项目包请求体边界 | PASS，50 MiB 文件 + 1 MiB multipart；资料上传原限制未变 |
+| FileService build（含 PPTX/MHTML parser） | PASS，0 warning / 0 error |
+| Frontend TypeScript + Vite production build | PASS；仅保留既有 KnowledgeDag >500 kB chunk 警告 |
+| `docker compose -f compose.integration.yaml config --quiet` | PASS |
+| PracticeService 容器镜像 build | NOT RUN：Docker Desktop Linux daemon 未启动 |
+
+模型关键资产校验值：SBERT `994a58868f7abacacbf2192aa0aae8f56da8c4505dbde2740c861b24426ede6b`，
+XGBoost `53b563e2df2c6026f7a996b4d8f63e83c63bbf64d1dde5e03a3c7f9dbf688ea0`，
+`vocab.txt` `45bbac6b341c319adc98a532532882e91a9cefc0329aa57bac9ae761c27b291c`。
+
+当前没有运行包含 MongoDB、Neo4j 与八个领域服务的全栈容器 E2E，因此共享包 GridFS 实写、
+Practice 完成后真实 SM-2 变化、项目内故事模式端到端均不得标记为集成通过。Docker daemon
+启动后应按 `docs/deploy.md` 第 11 节补跑并追加结果。
+
+## 25. 2026-08-08 credits 计费制度迁移验证
+
+本轮取消注册邀请码，新增 CreditService，并把 Practice 题目生成与 GalGame 故事生成接入
+“生成前预授权、成功后按实际使用量结算、失败释放”的同一计费链路。旧用户通过幂等惰性
+建账获得一次初始额度，不执行 Auth/Credit 跨数据库扫描。面向用户的页面只显示 credits，
+没有展示内部 token 换算规则。
+
+| 验证项 | 结果 |
+|---|---:|
+| CreditService 四层 solution build + tests | PASS，6 / 6 |
+| 初始额度幂等、旧用户惰性建账、兑换单次使用 | PASS |
+| 预授权不足 402、实际结算、失败释放 | PASS |
+| AuthService 无邀请码注册与 credits 建账补偿 | PASS，11 / 11 |
+| PracticeService 生成计费与现有功能 | PASS，14 / 14 |
+| GalGameService usage 累计、计费与现有功能 | PASS，362 / 362 |
+| Gateway Credit 路由、配置与全量 Vitest | PASS，15 files，203 / 203 |
+| Frontend 注册、设置页、管理员兑换码与不足跳转 production build | PASS；仅既有 KnowledgeDag chunk 警告 |
+| `docker compose -f compose.integration.yaml config --quiet` | PASS |
+| CreditService / 全栈容器镜像 build 与 MySQL E2E | NOT RUN：Docker Desktop Linux daemon 未启动 |
+
+安全检查结论：兑换码持久化只保存 SHA-256 摘要，完整明文仅在批量创建响应返回；管理员列表
+只返回掩码；余额使用整数内部单位；`operationId` 负责计费幂等；Gateway 按目标服务密钥转发。
+购买页固定为 `https://pay.ldxp.cn/shop/7CX09W5E`，只有用户在 credits 不足提示中确认后跳转。
+
+第 23.4 节关于 time-window 邀请码的待澄清记录已被本轮决策取代：邀请码接口已撤下且注册不
+再读取邀请码。遗留表和 repository 仅作迁移兼容，不是可调用能力。

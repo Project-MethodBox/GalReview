@@ -1,9 +1,9 @@
 # 千知万理 API 接口规范与数据契约
 
-> 版本：v0.1  
-> 状态：Draft / 各服务负责人待确认  
+> 版本：v0.3
+> 状态：BASELINE / ReciteHelper 主线与 credits 计费已落地
 > 总负责人：PM & TL `@Arabidopsis`  
-> 更新时间：2026-08-02
+> 更新时间：2026-08-08
 > 依据：《千知万理 产品需求与技术方案》v0.2
 
 ## 0. 文档定位
@@ -31,23 +31,27 @@
 | 模块 | 负责人 | 本文覆盖 | 最终设计责任 |
 |---|---|---|---|
 | UserService | `@Sleexy` | 用户资料与偏好 | 字段、校验、持久化与迁移 |
-| AuthService | `@Sleexy` | 注册、会话、令牌、密码恢复、管理员账号治理与邀请码 | 凭证模型、令牌策略、管理员边界与安全实现 |
+| AuthService | `@Sleexy` | 注册、会话、令牌、密码恢复与管理员账号治理 | 凭证模型、令牌策略、管理员边界与安全实现 |
 | FileService | `@Sleexy` | 上传、GridFS、解析任务与内容访问 | 文件限制、解析器与存储实现 |
 | KnowledgeService | `@Arabidopsis` | 图谱、知识点、关系、复习计划与掌握度 | 图谱模型、抽取策略与 Neo4j 查询 |
 | GalGameService | `@F15EX` | 游戏生成任务、游戏包与 schema | 生成流程、剧情结构与兼容策略 |
 | RenderService | `@Zopiclone` | 复习会话、进度、结果和 WASM 运行时 | C++ / WASM API 与状态机 |
+| PracticeService | `@Arabidopsis` | 学习项目、题库、练习、考试、项目包与共享资源 | 题目模型、判分、组卷、导入兼容与 MongoDB 持久化 |
+| CreditService | `@Arabidopsis` | credits 账户、预授权、实际结算、兑换码与账本 | 计量规则、CQRS、兑换码安全与 MySQL 持久化 |
 | Frontend / WASM Adapter | `@甲烷` | JS 桥接、页面调用与错误展示 | 前端适配器和运行时集成 |
 | API Gateway | `@甲烷` | 路由、鉴权、错误、CORS 与链路头 | Gateway 策略与部署配置 |
 
 ### 0.2 当前持久化基线
 
 - **UserService 的数据库为 MySQL**：仅持久化用户展示资料、学习偏好及其关联数据。
-- **AuthService 的数据库为 MySQL**：仅持久化凭证密码哈希、会话、令牌撤销状态、密码恢复记录、管理员账号治理、邀请码与管理员审计记录。
+- **AuthService 的数据库为 MySQL**：仅持久化凭证密码哈希、会话、令牌撤销状态、密码恢复记录、管理员账号治理与管理员审计记录；遗留邀请码表只作迁移兼容，不再提供接口，也不参与注册。
 - 同一业务事实只能由一个服务及其权威数据库写入；禁止 AuthService 与 UserService 互相直连或读写对方的 MySQL 数据表。
 - **FileService 的数据库为 MongoDB + GridFS**：文件二进制、资料元数据、解析任务和规范化文本只由 FileService 写入。
 - **KnowledgeService 的数据库为 Neo4j**：章节、知识点、关系、计划和掌握度只由 KnowledgeService 写入。
 - **GalGameService 的数据库为 MongoDB**：生成任务和游戏包存储在 MongoDB 中，容器重启后数据保留；支持 4 种运行模式（`mock-mongodb` / `mock-memory` / `mongodb` / `ephemeral-memory`），通过 `GalGameStore:Provider` 配置项切换。服务启动时自动将因重启而卡在 `RUNNING` 或 `QUEUED` 的生成任务标记为 `FAILED`。
-- **RenderService 当前只是 C++ / JS 基础工具链壳**：不创建或存储复习会话、进度、事件和结果；这些能力由后续负责人实现。
+- **RenderService 使用 C++/WASM runtime ABI 与 TypeScript 服务层**：持久化运行时会话、进度与结果，并经 Gateway INTERNAL 提交同步学习证据；异步 `ReviewCompleted v2` 消息仍未实现。
+- **PracticeService 的数据库为 MongoDB + GridFS**：学习项目、题库、生成/导入任务、练习与考试会话、兼容项目包和共享包只由 PracticeService 写入；知识掌握度仍只由 KnowledgeService 写入。
+- **CreditService 的数据库为独立 MySQL `qzwl_credit`**：credits 账户、兑换码、生成预授权与不可变账本只由 CreditService 写入。服务采用 API、Application、Domain、Persistence 四层，Application 通过 MediatR 实现 CQRS。
 - 不得将同一事实跨 MySQL、MongoDB、Neo4j 双写为多个权威来源。
 
 ## 1. 架构级调用约束
@@ -296,7 +300,7 @@ interface UserPreferences extends UserPreferencesInput {
 ## 4. AuthService
 
 > 负责人：`@Sleexy`  
-> 拥有：凭证、会话、访问令牌、刷新令牌、撤销状态、管理员会话和邀请码。  
+> 拥有：凭证、会话、访问令牌、刷新令牌、撤销状态和管理员会话。
 > 不拥有：用户展示资料、学习偏好和学习业务数据。  
 > 数据库：MySQL
 
@@ -304,7 +308,7 @@ interface UserPreferences extends UserPreferencesInput {
 
 管理员能力是 AuthService 的内部模块，当前不单独部署 Admin Service：
 
-- AuthService 负责管理员登录、管理员会话、用户凭证治理（重置密码、撤销会话、删除认证账户）和邀请码管理。
+- AuthService 负责管理员登录、管理员会话和用户凭证治理（重置密码、撤销会话、删除认证账户）。credits 与兑换码由 CreditService 独占。
 - UserService 仍拥有用户展示资料与偏好。管理员操作如需影响该服务的数据，必须经 Gateway 调用对应的 `/internal/v1/...` 接口；禁止 AuthService 直接读取或修改 UserService 数据库。
 - 浏览器只可通过 Gateway 的 `/api/v1/admin/...` 路由访问管理员接口。Gateway 验证 Access Token 并注入可信身份上下文，AuthService 最终判定管理员权限。
 - 管理员默认凭据只能用于本地开发，禁止进入浏览器代码、日志、提交到版本控制的生产配置或公开文档。
@@ -315,7 +319,7 @@ interface UserPreferences extends UserPreferencesInput {
 
 | 方法 | Gateway 路由 | 用途 | 请求 | 响应 | 状态 |
 |---|---|---|---|---|---|
-| `POST` | `/api/v1/auth/registrations` | 校验邀请码后创建凭证和初始会话 | `RegistrationRequest` | `AuthSessionResponse` | `201/400/409/422/503` |
+| `POST` | `/api/v1/auth/registrations` | 创建凭证、credits 账户和初始会话 | `RegistrationRequest` | `AuthSessionResponse` | `201/400/409/503` |
 | `POST` | `/api/v1/auth/sessions` | 邮箱与密码登录 | `LoginRequest` | `AuthSessionResponse` | `201/400/401` |
 | `GET` | `/api/v1/auth/sessions/{sessionId}` | 读取会话状态 | - | `AuthSession` | `200/404` |
 | `DELETE` | `/api/v1/auth/sessions/{sessionId}` | 退出并撤销会话 | - | - | `204/404` |
@@ -340,9 +344,6 @@ interface UserPreferences extends UserPreferencesInput {
 | `GET` | `/api/v1/admin/users` | 列出已注册用户 | - | `AdminUser[]` | `200/403/502/503` |
 | `DELETE` | `/api/v1/admin/users/{userId}` | 删除用户认证账户及其关联认证数据 | - | - | `204/403/404/503` |
 | `POST` | `/api/v1/admin/users/{userId}/password` | 管理员重置用户密码并撤销会话 | `AdminPasswordResetRequest` | - | `204/400/403/404` |
-| `GET` | `/api/v1/admin/invitations` | 列出邀请码 | - | `AdminInvitation[]` | `200/403` |
-| `POST` | `/api/v1/admin/invitations` | 创建邀请码 | `CreateInvitationRequest` | `AdminInvitation` | `201/400/403` |
-| `DELETE` | `/api/v1/admin/invitations/{code}` | 删除未使用或不再需要的邀请码 | - | - | `204/403/404` |
 
 `GET /api/v1/admin/users` 只接受 UserService 返回的完整成功信封：`data` 必须是非空引用的
 数组（无匹配时使用 `[]`），`meta` 必须为空对象，`traceId` 非空，且数组元素的 UUID、
@@ -357,7 +358,6 @@ interface RegistrationRequest {
   email: string;
   password: string;
   displayName: string;
-  invitationCode: string; // 必填；由管理员生成，忽略首尾空白并按大写校验
   deviceName?: string;
 }
 
@@ -417,32 +417,6 @@ interface AdminUser {
   displayName: string;
   isActive: boolean;
 }
-
-type InvitationType = "single-use" | "multi-use" | "time-window";
-
-interface CreateInvitationRequest {
-  type: InvitationType;
-  maxUses?: number;        // single-use 固定为 1；multi-use 必填
-  validFrom?: DateTime;    // 仅 time-window 使用
-  validTo?: DateTime;      // 仅 time-window 使用，且必须晚于 validFrom
-}
-
-interface AdminInvitation {
-  code: string;
-  type: InvitationType;
-  maxUses: number;
-  usedCount: number;
-  validFrom: DateTime | null;
-  validTo: DateTime | null;
-  createdAt: DateTime;
-}
-
-邀请码注册规则：
-
-- `single-use` 只能成功注册一次；`multi-use` 成功次数不得超过 `maxUses`；`time-window` 仅在 `validFrom` 至 `validTo`（含边界）期间有效。
-- AuthService 必须在创建凭证的同一数据库事务中锁定邀请码、校验可用性并递增 `usedCount`，避免并发超额使用。
-- 若后续创建用户资料或会话失败，AuthService 必须删除本次凭证并归还邀请码使用次数。
-- 无效、过期或已用尽的邀请码返回 `422 BUSINESS_RULE_VIOLATION`；邀请码不得出现在日志中。
 
 interface PasswordChangeRequest {
   currentPassword: string;
@@ -1662,8 +1636,10 @@ MongoDB 模式下服务启动时自动将因重启而卡在 `RUNNING` 或 `QUEUE
 | `POST` | `/api/v1/review-sessions/{sessionId}/events` | 追加交互事件 | `InteractionEventBatch` | `EventReceipt` | `202/400/401/404/409/422` |
 | `PUT` | `/api/v1/review-sessions/{sessionId}/result` | 幂等提交最终结果 | `ReviewResultInput` | `ReviewResult` | `200/400/401/404/409/422/503` |
 
-上表中的 ReviewSession 接口是后续实现目标。当前 `runtimeMode=SHELL` 时只实现三个公开
-runtime 资源；访问 `/api/v1/review-sessions*` 返回 `501 RENDER_SESSION_NOT_IMPLEMENTED`。
+上表中的 ReviewSession 接口已经实现。服务同时满足完整 WASM ABI 且配置
+`Gateway__BaseUrl`、`Gateway__ServiceKey` 后，manifest 报告 `runtimeMode=FULL` 与
+`reviewSessionsAvailable=true`；缺少回调身份时保持 `SHELL`，访问
+`/api/v1/review-sessions*` 返回 `501 RENDER_SESSION_NOT_IMPLEMENTED`，不得虚报证据能力。
 
 ### 8.2 REST 数据类型
 
@@ -1831,14 +1807,15 @@ export function createWasmAdapter(
 
 `adapter.js` 必须以 ES module 形式导出上述 `createWasmAdapter`；前端只依赖这个工厂和
 `WasmAdapter`，不得访问 RenderService 容器直连地址。`SessionBootstrap` 已固定为完整
-`ReviewSession`；`RuntimeInput`、`RenderEvent` 与 `RuntimeState` 的稳定字段仍为 OWNER-TBD，在它们冻结前 adapter
-只能透传 JSON 对象，调用方不得据此形成新的跨服务证据字段。
+`ReviewSession`。`RuntimeInput`、`RenderEvent` 与 `RuntimeState` 已按 runtime ABI v1 冻结；
+adapter 仍以 JSON 对象传递，调用方不得据此形成新的跨服务证据字段。
 
-当前可执行版本为 `cpp-js-shell-0.1.0`：镜像会编译并运行 C++ 空壳自检，Adapter 加载
-manifest 指定的最小 WASM、校验游戏包并冻结浏览器本地会话。场景展示与选择仍由前端根据
-`GamePackage` 驱动。`/readyz` 和 manifest 必须如实返回 `runtimeMode="SHELL"`、
-`executionEngine="cpp-js-shell"`、`reviewSessionsAvailable=false` 和
-`wasmAbiComplete=false`；不得把它描述成完整 C++ 渲染引擎或结果回传服务。
+当前可执行版本为 `cpp-wasm-0.2.0`，实现 runtime ABI v1 的八个 C++/WASM 导出；
+Adapter 负责字符串编解码与生命周期，场景状态机、导航、计分、作答与序列化在 WASM 内。
+`/readyz` 必须从实际产物自省 `wasmAbiComplete`；完整产物报告
+`executionEngine="cpp-wasm-shell"`。`runtimeMode` 只有在 WASM ABI 完整且服务端会话回调
+身份已配置时为 `FULL`，否则为 `SHELL`。Compose 基线配置回调身份，因此应提供服务端
+ReviewSession、进度、事件与同步 evidence 提交。
 
 职责：
 
@@ -1873,13 +1850,13 @@ manifest 指定的最小 WASM、校验游戏包并冻结浏览器本地会话。
 }
 ```
 
-### 8.5 OWNER-TBD
+### 8.5 已冻结的 runtime ABI v1
 
-- [ ] WASM 函数的内存所有权和字符串释放规则；
-- [ ] `RuntimeState` schema；
-- [ ] 保存进度的频率和最大尺寸；
-- [ ] JS Adapter 与 WASM 的版本兼容策略；
-- [ ] 页面刷新、断网和重复提交结果的恢复行为。
+- [x] WASM 字符串入参由调用方用 `rtAlloc/rtFree` 管理；返回指针由运行时持有，调用方立即拷贝且不得释放；
+- [x] `RuntimeState` 使用 `render-runtime-state-1`，冻结会话/计划/场景、计分和作答字段；
+- [x] 场景切换或选择后保存，`runtimeState` 最大 256 KiB，使用 `progressVersion` 乐观并发；
+- [x] Adapter 只接受 ABI v1；导出缺失或版本不支持时诚实回退 JS shell；
+- [x] 刷新读取服务端快照；相同进度和结果重放幂等，载荷冲突返回 `409`，断网不清除仍有效会话。
 
 ## 9. API Gateway 与前端
 
@@ -1893,34 +1870,39 @@ manifest 指定的最小 WASM、校验游戏包并冻结浏览器本地会话。
 |---|---|---|---|
 | `/api/v1/users` | UserService | Browser | 用户令牌 |
 | `/api/v1/auth` | AuthService | Browser | 登录和注册公开，其余按接口 |
+| `/api/v1/admin/credit-codes` | CreditService | Browser（管理员后台） | 管理员令牌；必须先于通用 `/api/v1/admin` 匹配 |
 | `/api/v1/admin` | AuthService | Browser（管理员后台） | 管理员登录公开，其余管理员令牌 |
+| `/api/v1/credits` | CreditService | Browser | 用户令牌 |
 | `/api/v1/materials`、`/api/v1/ingestion-jobs` | FileService | Browser | 用户令牌 |
 | `/api/v1/knowledge-*`、`/api/v1/assessment-plans`、`/api/v1/learning-plans`、`/api/v1/review-plans`、`/api/v1/mastery-records` | KnowledgeService | Browser | 用户令牌 |
 | `/api/v1/game-*` | GalGameService | Browser / Render | 用户令牌 |
 | `/api/v1/render-runtime/manifest`、`/api/v1/render-runtime/runtime.wasm`、`/api/v1/render-runtime/adapter.js` | RenderService | Browser | 公开；可缓存，必须按 manifest checksum 验证 WASM |
 | `/api/v1/review-sessions` | RenderService | Browser | 用户令牌 |
-| `/internal/v1/materials/*/extracted-text` | FileService | KnowledgeService | 服务身份；维护适配为 **URGENT（FileService / Gateway）** |
-| `/internal/v1/review-plans/*/graph` | KnowledgeService | GalGameService | **URGENT（跨服务阻塞项）** 精确服务身份 |
-| `/internal/v1/review-evidence/*` | KnowledgeService | RenderService | **URGENT（跨服务阻塞项）** 精确服务身份 |
+| `/api/v1/practice-*`、`/api/v1/question-generation-jobs`、`/api/v1/exam-import-jobs`、`/api/v1/shared-practice-packages` | PracticeService | Browser | 用户令牌 |
+| `/internal/v1/materials/*/extracted-text` | FileService | KnowledgeService / PracticeService | 精确服务身份 |
+| `/internal/v1/review-plans/*/graph` | KnowledgeService | GalGameService / PracticeService | 精确服务身份 |
+| `/internal/v1/review-evidence/*` | KnowledgeService | RenderService / PracticeService | 精确服务身份 |
 | `/internal/v1/game-package-validations` | GalGameService | RenderService | 服务身份；当前默认只允许 `RenderService` |
 | `/internal/v1/game-packages/*` | GalGameService | RenderService | 服务身份；同时校验请求中的 ownerUserId |
+| `/internal/v1/credits/*` | CreditService | AuthService / PracticeService / GalGameService | 精确服务身份；端点分别限制调用方 |
 | `/internal/v1/*` | 对应服务 | Service only | 服务身份；用户委托身份可选 |
 
 ### 9.2 Gateway 行为与信任头
 
 - 浏览器 `/api` 请求中的 `X-Service-Name`、`X-Service-Key`、`X-User-Id`、`X-Gateway-Key` 全部丢弃。`/internal` 请求只暂留 `X-Service-Name + X-Service-Key` 用于服务身份验证，仍先丢弃外部 `X-User-Id` 与 `X-Gateway-Key`。
 - INTERNAL 服务身份通过逐服务密钥验证后，Gateway 转发时剥离 `Authorization` 与 `X-Service-Key`，重新注入可信 `X-Service-Name` 和目标服务的 `X-Gateway-Key`。用户路由则从已验证令牌重新注入 `X-User-Id`。
-- 每个目标服务使用自己的 `*_SERVICE_KEY`；只有未配置独立密钥时才回退 `GATEWAY_KEY`。KnowledgeService 的入站 `Gateway__ServiceKey` 必须与 Gateway 的 `KNOWLEDGE_SERVICE_KEY` 一致；GalGameService 对应 `GALGAME_SERVICE_URL`、`GALGAME_SERVICE_KEY`，其入站 `Gateway__ServiceKey` 必须与后者一致。
+- 每个目标服务使用自己的 `*_SERVICE_KEY`；只有未配置独立密钥时才回退 `GATEWAY_KEY`。KnowledgeService 的入站 `Gateway__ServiceKey` 必须与 Gateway 的 `KNOWLEDGE_SERVICE_KEY` 一致；GalGameService 对应 `GALGAME_SERVICE_URL`、`GALGAME_SERVICE_KEY`；PracticeService 对应 `PRACTICE_SERVICE_URL`、`PRACTICE_SERVICE_KEY`；CreditService 对应 `CREDIT_SERVICE_URL`、`CREDIT_SERVICE_KEY`，各服务入站 `Gateway__ServiceKey` 必须与目标密钥一致。
 - Gateway 验证 Bearer Token 时调用 AuthService `/internal/v1/auth/introspections`，携带 AuthService 的目标密钥作为 `X-Gateway-Key`，并原样传递或生成 `X-Correlation-Id`。只有规范的 `200` `ApiSuccess<TokenIntrospection>` 响应且 `active=false` 能证明令牌无效并返回 `401`；该成功信封必须含对象 `data`、空对象 `meta` 和非空字符串 `traceId`，非空 `userId/sessionId` 必须是小写 UUID v4，非空 `expiresAt` 必须是完整 ISO 8601 UTC 时间。内省超时、连接失败、任意非 `200`（含密钥错配 `403` 和 `5xx`）、非 JSON、缺字段、信封或字段不合规，以及 `active=true` 但数据形状错误，均统一返回 `503 SERVICE_UNAVAILABLE`，不得把认证基础设施或上游契约故障伪装成令牌无效。
 - 写操作不在 Gateway 层盲目重试。
 - GET 只有在确认幂等且无副作用时才能有限重试。
 - 保持下游 `error.code`，统一响应结构和 `traceId`。
 - 不允许用 HTTP 200 包装业务失败。
 - CORS 只允许明确的前端源。
-- 限流至少区分匿名登录、上传、生成任务和普通读取。只有创建型长任务 `POST /api/v1/knowledge-graph-builds` 与 `POST /api/v1/game-generations` 使用 generation 限流；构图/游戏生成轮询、游戏包读取和 INTERNAL 游戏包校验使用 general 限流，轮询不得消耗 generation 配额。
-- `POST /api/v1/materials` 使用 `UPLOAD_TIMEOUT_MS`，默认 `120000` 毫秒；其他路由使用 `DEFAULT_TIMEOUT_MS`，默认 `30000` 毫秒。上传超时不得隐式套用到所有 FileService 路由。
+- 限流至少区分匿名登录、上传、生成任务和普通读取。创建型长任务 `POST /api/v1/knowledge-graph-builds`、`POST /api/v1/game-generations`、Practice 题库生成与整卷导入使用 generation；轮询和普通读取使用 general；项目包导入使用 upload。
+- `POST /api/v1/materials` 与 `POST /api/v1/practice-packages/imports` 使用 `UPLOAD_TIMEOUT_MS`，默认 `120000` 毫秒；其他路由使用 `DEFAULT_TIMEOUT_MS`，默认 `30000` 毫秒。上传超时不得隐式套用到服务的所有路由。
 - 上传文件本体硬上限为 `10 MiB`。Gateway 和 FileService 的 multipart 整包前置上限均为 `11 MiB`，其中额外 `1 MiB` 只用于 boundary、字段和头部开销；最终仍由 FileService 按 `IFormFile.Length` 拒绝超过 `10 MiB` 的文件。不得把整包与文件本体错误地使用同一个 `10 MiB` 阈值。
-- Frontend 之前如部署 Nginx、Caddy 或云负载均衡，该外层代理至少允许 `12 MiB` 请求体并提供不短于 `190` 秒的上传读写超时，同时保留请求体、`Authorization`、`Content-Type` 与 `X-Correlation-Id`。外层代理生成的 HTML/纯文本 `413/502/504` 不属于 API 错误信封；浏览器客户端必须保留其真实 HTTP 状态，不得统一伪装成 `502 UPSTREAM_CONTRACT_INVALID`。
+- Practice 项目包文件上限为 `50 MiB`，精确导入路由的 multipart 整包上限为 `51 MiB`；不放大其他路由上限。
+- Frontend 之前如部署 Nginx、Caddy 或云负载均衡，该外层代理至少允许 `52 MiB` 请求体并提供不短于 `190` 秒的上传读写超时，同时保留请求体、`Authorization`、`Content-Type` 与 `X-Correlation-Id`。外层代理生成的 HTML/纯文本 `413/502/504` 不属于 API 错误信封；浏览器客户端必须保留其真实 HTTP 状态，不得统一伪装成 `502 UPSTREAM_CONTRACT_INVALID`。
 - 不在 Gateway 保存业务状态或访问服务数据库。
 
 ### 9.3 健康检查
@@ -1932,7 +1914,7 @@ manifest 指定的最小 WASM、校验游戏包并冻结浏览器本地会话。
 
 `READINESS_SERVICES` 是逗号分隔的服务 key。Gateway 应用默认值为
 `userService,authService,fileService,knowledgeService`；根目录集成 Compose 显式追加
-`galGameService,renderService`，因此当前完整本地闭环会真实探测六个服务的 `/healthz`。
+`galGameService,renderService,practiceService,creditService`，因此当前完整本地闭环会真实探测八个服务的 `/healthz`。
 可选 OCRService 不进入 readiness。配置中出现未知 key
 时 Gateway 必须拒绝启动。
 KnowledgeService 在宿主机的默认目标为 `http://localhost:5104`；集成容器网络内使用
@@ -1941,19 +1923,23 @@ KnowledgeService 在宿主机的默认目标为 `http://localhost:5104`；集成
 
 ### 9.4 前端适配原则
 
+- 产品对外名称固定为“千知万理”。ReciteHelper 是迁移来源，GalReview 是既有架构/实现标识，均不得替代产品名。
+- 公开首页和登录后主页必须以学习项目、资料解析、题库确认、知识图谱与 SM-2 智能复习为默认主线；视觉小说仅表达为项目内可选复习模式。
+- “AI 驱动”只可描述语义整理、候选内容生成和辅助解释。文件解析/OCR、确定性判分、来源校验与复习调度必须按其真实机制表述，并展示人工确认边界。
 - 页面只依赖 Gateway 路由和公共响应结构。
 - WASM 只依赖 JS Adapter。
 - 前端不得拼接服务直连地址。
 - 前端不得根据 HTTP 500 的 message 猜测业务状态。
 - 所有稳定分支判断使用 `error.code` 或显式状态字段。
 
-当前页面路由为 `/login`、`/register`、`/forgot-password`、`/home`、`/materials`、
+当前页面路由为 `/login`、`/register`、`/forgot-password`、`/home`、`/projects`、
+`/projects/:projectId`、`/practice/:sessionId`、`/shared-projects`、`/materials`、
 `/knowledge`、`/knowledge-graph` 和 `/review`。`/knowledge` 使用 6.1 已有分页接口展示完整知识点列表，
 `/knowledge-graph` 展示章节、知识点与关系；两页必须持续读取 `nextCursor`，不得把首个 100 条结果冒充完整图谱。`/materials` 只按 5.2 的非 OCR 请求上传、提取并构图，
 随后创建 Assessment 或 Learning Plan；`/review` 依次调用 GalGame 生成、游戏包读取、
-Render runtime 资源。manifest 为 `runtimeMode=SHELL` 时只在浏览器本地创建临时会话并
-完成壳体验，不调用 ReviewSession/progress/events/result，也不更新 mastery；只有
-`reviewSessionsAvailable=true` 后才允许走这些服务端接口。桌面页面不得把 Prototype 的
+Render runtime 资源。manifest 为 `runtimeMode=SHELL` 时只在浏览器本地创建临时会话，
+不调用 ReviewSession/progress/events/result，也不更新 mastery；Compose 正常配置应为
+`reviewSessionsAvailable=true` 并走完整服务端接口。桌面页面不得把 Prototype 的
 固定像素画布直接套到任意屏幕：宽屏主页使用视口高度和弹性网格填满浏览器，认证页的
 内容区、字号与间距随视口连续缩放；移动端和平板仍可按断点改为纵向滚动布局。生产容器
 在容器内监听 `8080`，默认向宿主发布为 `5120`（由 `FRONTEND_HOST_PORT` 覆盖），并
@@ -1976,10 +1962,13 @@ Render runtime 资源。manifest 为 `runtimeMode=SHELL` 时只在浏览器本�
 | KnowledgeService | `8080` | `5104` | `KNOWLEDGE_HOST_PORT`；仅诊断，绑定地址由 `DIAGNOSTIC_BIND_ADDRESS` 配置 |
 | GalGameService | `5105` | 不发布 | 只由 Gateway 访问；使用 MongoDB 持久化 |
 | RenderService | `5106` | 不发布 | C++ / WASM 运行时与服务适配层，只由 Gateway 访问 |
+| PracticeService | `5107` | 不发布 | 四层 MediatR CQRS 复习服务，使用 MongoDB 与本地模型资产 |
+| CreditService | `5108` | 不发布 | 四层 MediatR CQRS 计费服务，使用独立 MySQL |
 | Frontend | `8080` | `5120` | `FRONTEND_HOST_PORT`；非 root Node 静态站点，同源代理 `/api` 到 Gateway |
 | OCRService | `5110` | 不发布 | `ocr` profile 的可选内部依赖，本轮闭环不启动 |
 | User MySQL | `3306` | 不发布 | 只供 UserService；独立卷 `user-mysql-data` |
 | Auth MySQL | `3306` | 不发布 | 只供 AuthService；独立卷 `auth-mysql-data` |
+| Credit MySQL | `3306` | 不发布 | 只供 CreditService；独立卷 `credit-mysql-data` |
 | MongoDB | `27017` | 不发布 | 只供 FileService |
 | Neo4j Browser | `7474` | `5254` | `NEO4J_BROWSER_HOST_PORT`；仅供受限诊断 |
 | Neo4j Bolt | `7687` | `5255` | `NEO4J_BOLT_HOST_PORT`；KnowledgeService 在容器网络内连接 `neo4j:7687` |
@@ -2002,8 +1991,10 @@ SMTP、HTTP(S)、SOCKS 等第三方协议端口不受该范围限制。测试监
 - FileService 使用 `Gateway__ServiceKey`、`ConnectionStrings__FileDatabase`、`MongoDb__Database`、`InternalAccess__ExtractedTextAllowedServices__0`、`Ocr__BaseUrl`、`Ocr__TimeoutMinutes`；
 - KnowledgeService 使用 `Gateway__ServiceKey`、`GatewayMaterialText__BaseUrl`、`GatewayMaterialText__ServiceName`、`GatewayMaterialText__ServiceKey`、`GatewayMaterialText__Timeout` 以及 `Neo4j__Uri`、`Neo4j__Username`、`Neo4j__Password`、`Neo4j__Database`；
 - GalGameService 使用 `Gateway__BaseUrl`、`Gateway__ServiceKey`、`InternalAccess__ValidationAllowedServices__0`、`InternalAccess__PackageReaderAllowedServices__0` 和 `NarrativeGeneration__*`；两个 INTERNAL 调用方默认都只允许 `RenderService`，叙事 API key 只从 `DSAPI` 注入；
+- PracticeService 使用 `Gateway__BaseUrl`、`Gateway__ServiceName=PracticeService`、`Gateway__ServiceKey`、MongoDB 连接串和本地模型资产；
+- CreditService 使用 `Gateway__ServiceKey`、`CreditStore__Provider=MySQL` 与独立 `ConnectionStrings__CreditDatabase`；
 - RenderService 基础壳只使用 `PORT`；未来实现 INTERNAL 回调时再启用 `Gateway__BaseUrl`、`Gateway__ServiceName` 与 `Gateway__ServiceKey`；
-- AuthService 与 UserService 分别使用自己的 `Gateway__ServiceKey`、独立 MySQL 连接串和独立数据卷；服务器模板固定使用 `MySql` 模式，本地可显式覆盖为 `Mock`。Compose 内部 MySQL 8.4 的 `caching_sha2_password` 连接串包含 `AllowPublicKeyRetrieval=True` 且端口不外露；改接外部数据库时必须使用受信 CA 的 TLS；
+- AuthService、UserService 与 CreditService 分别使用自己的 `Gateway__ServiceKey`、独立 MySQL 连接串和独立数据卷；Auth/User 服务器模板固定使用 `MySql` 模式，本地可显式覆盖为 `Mock`，CreditService 生产固定使用 MySQL。Compose 内部 MySQL 8.4 的 `caching_sha2_password` 连接串包含 `AllowPublicKeyRetrieval=True` 且端口不外露；改接外部数据库时必须使用受信 CA 的 TLS；
 - Frontend 使用 `GATEWAY_UPSTREAM`，AuthService 的可选邮件配置使用 `SMTP_*` 与 `ACCOUNT_FRONTEND_BASE_URL`；
 - `DSAPI`（DeepSeek）只用于 §7.3.2 的可选 GalGame 叙事生成；`BitchSDAU`（阿里 API）仍不属于当前主链路。二者都不是“注册/登录 -> 上传 -> 确定性文本提取 -> KnowledgeService 构图 -> Neo4j”的依赖，不能注入 User/Auth/File/Knowledge/Render/Gateway 容器或写入日志。
 
@@ -2325,3 +2316,373 @@ Neo4j 计数一致，先修子图无环，初始 mastery 全为 0，同请求构
 - [ ] **URGENT** RenderService 发布 `ReviewCompleted v2` 消息并由 KnowledgeService 消费；同步闭环不得冒充消息总线已经完成。
 
 后续字段细化进入各服务仓库；本文只维护跨服务边界与团队共同依赖。
+
+## 14. PracticeService（ReciteHelper 迁移，BASELINE）
+
+PracticeService 承载产品默认主线的 ReciteHelper 复习资料库聚合。KnowledgeService 的图谱/SM-2 与 GalGameService/RenderService 的视觉小说链路是 StudyProject 下的计划复习和故事复习能力；不得把 ReciteHelper 表达成 GalReview 故事产品的附属功能。该产品主从关系不改变下述单一事实所有者和跨服务权限边界。
+
+PracticeService 的迁移决策、来源差异、UI 原则和逐项变更状态见
+`docs/recitehelper-migration.md`。服务内部固定采用与 KnowledgeService 相同的
+API/Application/Domain/Persistence 四层项目；API 通过 MediatR Command/Query 调用应用层，
+不得直接访问仓储、MongoDB、模型或 Gateway client。本节只冻结跨服务可见的 HTTP 与数据契约。
+
+### 14.1 接口目录
+
+| 方法 | 路径 | 鉴权 | 用途 |
+|---|---|---|---|
+| `POST` | `/api/v1/practice-projects` | 用户 | 创建引用一个或多个资料的学习项目 |
+| `GET` | `/api/v1/practice-projects` | 用户 | 游标分页查询自己的项目 |
+| `GET` | `/api/v1/practice-projects/{projectId}` | 用户 | 查询项目详情和统计 |
+| `PATCH` | `/api/v1/practice-projects/{projectId}` | 用户 | 修改名称、科目和图谱引用 |
+| `DELETE` | `/api/v1/practice-projects/{projectId}` | 用户 | 归档项目；不删除 File/Knowledge 数据 |
+| `POST` | `/api/v1/practice-projects/{projectId}/question-generations` | 用户 | 从 FileService 规范化文本异步生成题库 |
+| `GET` | `/api/v1/question-generation-jobs/{jobId}` | 用户 | 查询生成状态和逐资料诊断 |
+| `GET` | `/api/v1/practice-projects/{projectId}/questions` | 用户 | 查询题目；可按题型、状态、知识点筛选 |
+| `POST` | `/api/v1/practice-projects/{projectId}/questions` | 用户 | 人工新增题目 |
+| `PATCH` | `/api/v1/practice-questions/{questionId}` | 用户 | 修改题目、答案、解释、分值和绑定 |
+| `DELETE` | `/api/v1/practice-questions/{questionId}` | 用户 | 软删除题目 |
+| `POST` | `/api/v1/practice-sessions` | 用户 | 创建普通、智能或试卷会话 |
+| `GET` | `/api/v1/practice-sessions/{sessionId}` | 用户 | 查询会话、顺序与作答进度 |
+| `PUT` | `/api/v1/practice-sessions/{sessionId}/answers/{questionId}` | 用户 | 幂等保存一道答案并判分 |
+| `POST` | `/api/v1/practice-sessions/{sessionId}/completion` | 用户 | 完成会话并幂等提交 mastery 证据 |
+| `POST` | `/api/v1/practice-questions/{questionId}/help` | 用户 | 返回有出处的 Top 3 帮助，可选生成解释 |
+| `POST` | `/api/v1/exam-import-jobs` | 用户 | 从 READY material 异步导入整卷草稿 |
+| `GET` | `/api/v1/exam-import-jobs/{jobId}` | 用户 | 查询整卷导入状态与校对问题 |
+| `POST` | `/api/v1/practice-projects/{projectId}/exam-papers` | 用户 | 按题型比例、分值和种子随机组卷 |
+| `POST` | `/api/v1/practice-packages/imports` | 用户 | 导入 `.rhproj`、`.rhp` 或新版项目包 |
+| `GET` | `/api/v1/practice-projects/{projectId}/package` | 用户 | 导出新版项目包 |
+| `POST` | `/api/v1/practice-projects/{projectId}/publications` | 用户 | 发布不可变共享包版本 |
+| `GET` | `/api/v1/shared-practice-packages` | 用户 | 搜索可见共享包 |
+| `GET` | `/api/v1/shared-practice-packages/{packageId}/content` | 用户 | 经鉴权下载共享包 |
+
+所有端点使用第 2 节统一信封。异步创建返回 `202` 和任务资源；资源创建返回
+`201`。列表 `limit` 默认 20、范围 1-100，`cursor` 为 opaque 字符串。对非所有者统一
+返回 `404 RESOURCE_NOT_FOUND`，避免泄露资源存在性。
+
+### 14.2 基础数据类型
+
+```ts
+type PracticeQuestionKind =
+  | "SINGLE_CHOICE"
+  | "FILL_BLANK"
+  | "TRUE_FALSE"
+  | "TERM_DEFINITION"
+  | "ESSAY";
+
+type StudyProject = {
+  projectId: UUID;
+  ownerUserId: UUID;
+  name: string;                 // 1-120
+  subjectCode: string | null;   // 与 FileService SubjectCode 规则一致
+  materialIds: UUID[];          // 1-20；仅保存引用
+  graphId: UUID | null;         // 仅保存引用
+  questionBankId: UUID;
+  status: "ACTIVE" | "ARCHIVED";
+  questionCounts: Partial<Record<PracticeQuestionKind, number>>;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+};
+
+type SourceReference = {
+  materialId: UUID;
+  startOffset: number;          // FileService UTF-16 offset
+  endOffset: number;            // end-exclusive
+  sourceMapVersion: string;
+  excerptChecksum: string;      // lowercase SHA-256
+};
+
+type PracticeQuestion = {
+  questionId: UUID;
+  questionBankId: UUID;
+  kind: PracticeQuestionKind;
+  prompt: string;               // 1-4000
+  options: string[];            // SINGLE_CHOICE 为 2-8；其余为空
+  correctAnswers: string[];     // 填空按空位顺序；判断为 "true"/"false"
+  explanation: string | null;
+  score: number;                // (0, 100]
+  difficulty: number;           // [1, 5]
+  knowledgePointId: UUID | null;
+  sourceReferences: SourceReference[];
+  status: "DRAFT" | "READY" | "DELETED";
+  version: number;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+};
+```
+
+`correctAnswers` 只在题库所有者编辑接口、已作答题目的评分结果以及完整考试结束后返回；
+活动会话的未作答题不得提前返回答案。题目修改使用 `version` 乐观并发；版本冲突返回
+`409 VERSION_CONFLICT`。
+
+### 14.3 创建项目与生成题库
+
+```json
+POST /api/v1/practice-projects
+{
+  "name": "数据结构期末复习",
+  "subjectCode": "CS_DS",
+  "materialIds": ["62456508-30dd-4284-8144-6ffdc0116e55"],
+  "graphId": "7be31db3-b662-4ec3-a8c4-49a1343513c8"
+}
+```
+
+```json
+POST /api/v1/practice-projects/{projectId}/question-generations
+{
+  "idempotencyKey": "565bb54f-ad63-4a27-a499-753a9bbbd18a",
+  "reviewPlanId": "8e812950-3311-40a7-93ab-636409df8cc2",
+  "snapshotVersion": "plan-graph-1.0:3da5f48f37ac57c91b49ee747c11e45f1a9e9e73d8e892fcd1bd1f9f3f50c620",
+  "kinds": ["SINGLE_CHOICE", "FILL_BLANK", "TERM_DEFINITION", "ESSAY"],
+  "targetCount": 30,
+  "generatorVersion": "recite-question-v1"
+}
+```
+
+`reviewPlanId` 和 `snapshotVersion` 必须同时出现或同时省略。出现时 PracticeService 必须以
+`X-Service-Name: PracticeService` 经 Gateway 读取现有 PlanGraph，并只绑定快照内的知识点；
+省略时可生成未绑定题目。`targetCount` 范围 1-200。相同所有者、项目和
+`idempotencyKey` 必须返回同一任务；载荷不同则返回 `409 IDEMPOTENCY_KEY_REUSED`。
+
+```ts
+type PracticeJob = {
+  jobId: UUID;
+  projectId: UUID;
+  kind: "QUESTION_GENERATION" | "EXAM_IMPORT";
+  status: "QUEUED" | "RUNNING" | "SUCCEEDED" | "PARTIALLY_SUCCEEDED" | "FAILED";
+  progress: number;             // [0, 1]
+  createdCount: number;
+  diagnostics: Array<{
+    materialId: UUID | null;
+    code: string;
+    message: string;
+    retryable: boolean;
+  }>;
+  createdAt: Timestamp;
+  startedAt: Timestamp | null;
+  finishedAt: Timestamp | null;
+};
+```
+
+生成模型只能得到本次项目的规范化文本、选中 PlanGraph 的知识点和固定提示词；返回 JSON
+必须经过 schema 校验。模型输出不得作为 HTML、脚本、查询或可执行代码运行。
+
+### 14.4 练习、判分与证据
+
+```json
+POST /api/v1/practice-sessions
+{
+  "projectId": "a81a657a-50e4-44bb-8bb7-3a48ff4cc2a0",
+  "mode": "SMART_REVIEW",
+  "reviewPlanId": "8e812950-3311-40a7-93ab-636409df8cc2",
+  "snapshotVersion": "plan-graph-1.0:3da5f48f37ac57c91b49ee747c11e45f1a9e9e73d8e892fcd1bd1f9f3f50c620",
+  "questionCount": 20,
+  "kinds": [],
+  "durationSeconds": null,
+  "seed": 173344521
+}
+```
+
+`mode` 为 `RANDOM | SMART_REVIEW | EXAM`。`SMART_REVIEW` 必须提供 plan 和 snapshot；
+`EXAM` 还必须提供 `examPaperId`。服务端保存最终题目 ID 与顺序，重取会话不得重新随机。
+
+```ts
+type PracticeAnswerResult = {
+  attemptId: UUID;
+  questionId: UUID;
+  correct: boolean;
+  similarity: number | null;    // [0,1]，主观题使用
+  quality: number;              // [0,5]
+  awardedScore: number;
+  responseTimeMs: number;
+  answerJudgeVersion: string;
+  answeredAt: Timestamp;
+};
+```
+
+答案保存请求包含 `answer: string | string[]`、`responseTimeMs`、`attemptNumber` 和
+`idempotencyKey`。单选、填空、判断使用确定性规则；名词解释和简答使用本地语义模型与
+确定性兜底。模型不可用时 `answerJudgeVersion` 必须显示降级算法，响应 `meta` 中加入
+`degraded: true`，不能静默冒充 ONNX 判分。
+
+完成会话时 PracticeService 将每题映射为第 6.4 节已经冻结的
+`KnowledgeAnswerEvidence`，并复用：
+
+```text
+PUT /internal/v1/review-evidence/{resultId}
+X-Service-Name: PracticeService
+```
+
+PracticeService 语义下：`packageId = questionBankId`，`sessionId = practiceSessionId`。
+KnowledgeService 必须同时允许 `RenderService` 与精确大小写的 `PracticeService` 调用证据
+端点；PlanGraph 读取必须同时允许 `GalGameService` 与 `PracticeService`。除此之外的服务名
+返回 `403 FORBIDDEN`。这只是扩展调用方 allowlist，不改变 mastery、SM-2、plan snapshot 和
+结果幂等规则。
+
+### 14.5 错题帮助
+
+帮助响应只包含当前用户项目中的证据：
+
+```ts
+type QuestionHelp = {
+  questionId: UUID;
+  matches: Array<{
+    knowledgePointId: UUID | null;
+    title: string;
+    excerpt: string;
+    sourceReference: SourceReference;
+    similarity: number;
+  }>;
+  generatedExplanation: string | null;
+  grounded: boolean;
+  generatorVersion: string | null;
+};
+```
+
+请求的 `generateExplanation` 默认 `false`。为 `true` 时也只能以 `matches` 为上下文；无匹配
+证据时必须返回 `generatedExplanation: null, grounded: false`，不得让模型自由补写答案。
+
+### 14.6 整卷、项目包和共享资源安全
+
+- 整卷导入只接受 FileService 中属于当前用户且状态为 `READY` 的 material ID；导入结果
+  必须为 `DRAFT` 并返回无法确定答案、题型或分值的诊断。
+- `.rhproj` 为 UTF-8 JSON；`.rhp` 与新版包为 ZIP。导入限制：原始包不超过 50 MiB、最多
+  2000 个条目、解压后不超过 200 MiB、单条目不超过 20 MiB。
+- 包导入使用 `multipart/form-data`，字段 `file` 为包内容，`materialIds` 为 1-20 个重复 UUID
+  字段。导入方必须把旧题库映射到自己已有的 READY material；包内旧绝对路径和他人的
+  material ID 不获得权威性，也不能据此复制 FileService 数据所有权。
+- ZIP 条目路径必须规范化；绝对路径、盘符、UNC、`..`、符号链接和重复规范化路径一律
+  返回 `422 PACKAGE_ENTRY_UNSAFE`。
+- 新包 manifest 的 `schemaVersion` 固定为 `qzwl-practice-package-1.0`，包含内容 SHA-256；
+  导入时逐项校验。旧包记录 `importedFromSchema`，但内部保存时仍转换为当前类型。
+- 发布创建不可变版本；`visibility` 为 `PRIVATE | UNLISTED | PUBLIC`。只有所有者可发布、
+  撤下；搜索只返回 `PUBLIC` 或当前用户拥有的包。
+
+### 14.7 Gateway 路由与部署
+
+- `/api/v1/practice-projects`、`/api/v1/practice-questions`、
+  `/api/v1/practice-sessions`、`/api/v1/exam-import-jobs`、
+  `/api/v1/practice-packages` 和 `/api/v1/shared-practice-packages` 归 PracticeService。
+- 题库生成、整卷导入和解释生成的 `POST` 使用 `generation` 限流；包导入使用 `upload`
+  限流和上传超时；其余使用 `general`。
+- 默认本机端口 `5107`，MongoDB 数据库 `qzwl_practice`。
+- Gateway 配置键为 `PRACTICE_SERVICE_URL`、`PRACTICE_SERVICE_KEY`；服务到 Gateway 的
+  配置为 `Gateway__BaseUrl`、`Gateway__ServiceName=PracticeService`、
+  `Gateway__ServiceKey`。
+- 生产 readiness 默认包含 PracticeService；模型降级不使 `/healthz` 失败，但 `/readyz`
+  必须在响应数据中列出每个模型的 `READY | MISSING | HASH_MISMATCH | LOAD_FAILED`。
+
+### 14.8 错误码
+
+| code | HTTP | 场景 |
+|---|---:|---|
+| `PROJECT_MATERIALS_REQUIRED` | 400 | 项目没有资料 |
+| `QUESTION_KIND_UNSUPPORTED` | 400 | 未知题型 |
+| `QUESTION_ANSWER_INVALID` | 422 | 答案形状与题型不匹配 |
+| `PLAN_REQUIRED` | 400 | 智能复习缺 plan/snapshot |
+| `SESSION_NOT_ACTIVE` | 409 | 向非活动会话作答 |
+| `SESSION_ALREADY_COMPLETED` | 409 | 完成状态冲突但幂等键不匹配 |
+| `MODEL_UNAVAILABLE` | 503 | 调用方明确要求模型且不能降级 |
+| `PACKAGE_SCHEMA_UNSUPPORTED` | 422 | 无法迁移的项目包版本 |
+| `PACKAGE_ENTRY_UNSAFE` | 422 | ZIP 路径或解压限制违规 |
+| `VERSION_CONFLICT` | 409 | 题目乐观并发冲突 |
+
+未列错误继续使用第 2.4 节公共错误码，禁止用 `200` 包裹失败。
+
+## 15. CreditService（credits 计费）
+
+CreditService 是 credits、兑换码、预授权和扣费账本的唯一事实所有者。注册不再要求邀请码；
+新注册用户在注册事务链中创建 credits 账户并获得 `1 credit`。在 CreditService 上线前已经存在
+的用户，会在首次读取余额、兑换或生成预授权时幂等补建账户并获得一次初始额度，重复调用不
+得重复赠送。AuthService 的资料/credits 建账与失败补偿不使用浏览器断开令牌；客户端中断不能
+把凭证、资料和 credits 留在半完成状态。
+
+### 15.1 用户与管理员接口
+
+| 方法 | Gateway 路由 | 用途 | 状态 |
+|---|---|---|---|
+| `GET` | `/api/v1/credits/balance` | 读取总余额、可用余额和预授权占用 | `200/401/503` |
+| `POST` | `/api/v1/credits/redemptions` | 使用兑换码增加 credits | `200/400/401/422/503` |
+| `GET` | `/api/v1/admin/credit-codes` | 管理员读取兑换码状态，最多返回最近 5000 条 | `200/403/503` |
+| `POST` | `/api/v1/admin/credit-codes/batches` | 批量生成 1 至 1000 个兑换码 | `201/400/403/503` |
+| `DELETE` | `/api/v1/admin/credit-codes/{codeId}` | 撤销尚未兑换的兑换码 | `204/403/404/503` |
+
+```ts
+interface CreditBalance {
+  userId: Uuid;
+  balance: number;
+  available: number;
+  held: number;
+  updatedAt: DateTime;
+}
+
+interface RedeemCreditRequest { code: string; }
+
+interface CreateCreditCodeBatchRequest {
+  count: number;             // 1..1000
+  creditsPerCode: number;    // > 0，最多 5 位小数
+  expiresAt?: DateTime;
+}
+
+type CreditCodeStatus = "ACTIVE" | "REDEEMED" | "REVOKED" | "EXPIRED";
+interface AdminCreditCode {
+  codeId: Uuid;
+  code: string;              // 创建响应返回完整值；后续列表仅返回掩码和末 6 位
+  credits: number;
+  status: CreditCodeStatus;
+  redeemedBy: Uuid | null;
+  redeemedAt: DateTime | null;
+  expiresAt: DateTime | null;
+  createdAt: DateTime;
+}
+```
+
+credits 的常规获得方式只有兑换码兑换；购买页只负责购买兑换码，不直接修改账户。用户确认
+前往购买后，前端跳转 `https://pay.ldxp.cn/shop/7CX09W5E`。除首次赠送外，业务服务、前端和
+管理员均不得直接增减某个账户余额。完整兑换码只在创建响应中出现一次，持久化只保存
+SHA-256 摘要与后缀；兑换、过期、撤销统一返回稳定错误 `REDEMPTION_CODE_UNAVAILABLE`，
+避免泄露兑换码存在性。
+
+### 15.2 内部计量、预授权和实际结算
+
+内部计量基线固定为 `1 credit = 100,000 token units`。该换算仅供服务端计算和本契约实现者
+使用，禁止在面向用户的页面、提示、营销文字或公开响应字段中展示 token 换算规则；用户只
+看到 credits 数值。
+
+| 方法 | INTERNAL 路由 | 调用方 | 用途 |
+|---|---|---|---|
+| `POST` | `/internal/v1/credits/accounts` | AuthService | 幂等创建账户与初始额度 |
+| `DELETE` | `/internal/v1/credits/accounts/{userId}` | AuthService | 仅注册补偿阶段删除未投入使用的账户 |
+| `POST` | `/internal/v1/credits/reservations` | PracticeService、GalGameService | 生成前按保守估算预授权 |
+| `POST` | `/internal/v1/credits/reservations/{operationId}/settlement` | PracticeService、GalGameService | 成功后按实际使用量结算 |
+| `POST` | `/internal/v1/credits/reservations/{operationId}/release` | PracticeService、GalGameService | 失败或无产物时释放预授权 |
+
+`operationId` 同时是计费幂等键。相同键、用户、操作类型和估算重复预授权必须返回原结果；
+相同键复用于其他参数返回 `409 IDEMPOTENCY_KEY_REUSED`。预授权只增加 `held`，不立即减少
+`balance`；成功结算原子地释放对应 held、按实际值减少 balance 并写入账本；失败或无有效
+产物必须释放。结算与释放重复调用均为幂等。
+
+当前计费操作如下：
+
+- `PRACTICE_GENERATION`：PracticeService 生成复习项目题目。生成前按资料文本与目标题数
+  估算，成功后按实际输入和已生成题目内容结算。
+- `GAME_GENERATION`：GalGameService 从同一 PlanGraph 生成视觉小说复习。生成前按图谱上下文、
+  提示固定开销、最大输出、最多草稿次数与供应商重试次数估算，成功后使用模型供应商返回的 `usage.total_tokens`（含已消费但
+  未通过响应内容/schema 校验的供应商重试与草稿尝试）结算。供应商成功响应缺少有效 usage
+  时按上游契约错误终止并释放预授权，不猜测实际值。确定性 Mock 未调用模型时实际使用量为 0。
+
+余额小于预估值时，CreditService 返回 `402 CREDITS_INSUFFICIENT`，details 固定包含
+`balance`、`required` 和 `purchaseUrl`。前端只显示当前/所需 credits，并询问是否前往购买；
+不得自动跳转或把内部 token units 展示给用户。若实际值超过预估但扣除其他 held 后余额仍足，
+按实际值结算；余额不足则返回 `409 CREDIT_ESTIMATE_EXCEEDED` 并保留待核对状态，禁止产生
+负余额。
+
+### 15.3 数据、删除与部署约束
+
+- MySQL 数据库为 `qzwl_credit`；表为 `credit_accounts`、`credit_redemption_codes`、
+  `credit_reservations`、`credit_ledger`。余额与 held 使用整数内部单位，避免浮点误差。
+- 用户正常注销或管理员删除账户时，认证资料可以删除，但已发生的 credits 账本与兑换审计
+  予以保留，不能由跨服务级联删除；`DELETE /internal/v1/credits/accounts/{userId}` 只允许注册
+  尚未完成时执行补偿。
+- 默认本机端口 `5108`；Gateway 配置为 `CREDIT_SERVICE_URL`、`CREDIT_SERVICE_KEY`，生产
+  readiness 包含 `creditService`。
+- 管理员列表只返回掩码，不提供兑换码明文恢复接口；撤销只允许 `ACTIVE` 状态。

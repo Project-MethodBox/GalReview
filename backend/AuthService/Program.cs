@@ -121,21 +121,29 @@ app.MapGet("/readyz", (HttpContext c) => Results.Ok(ApiSuccess.Create(new { stat
 
 app.MapPost("/api/v1/auth/registrations", async (RegistrationRequest request, HttpContext c, IAuthRepository repository, IPasswordHasher<Credential> hasher, IHttpClientFactory clients) =>
 {
-    var invitationCode = NormalizeInvitationCode(request.InvitationCode);
-    if (!ValidEmail(request.Email) || !ValidName(request.DisplayName) || !ValidPassword(request.Password) || invitationCode is null) return Failure(c, 400, "VALIDATION_ERROR", "邮箱、显示名、密码或邀请码格式不正确");
+    if (!ValidEmail(request.Email) || !ValidName(request.DisplayName) || !ValidPassword(request.Password)) return Failure(c, 400, "VALIDATION_ERROR", "邮箱、显示名或密码格式不正确");
     var credential = Credential.New(request.Email.Trim().ToLowerInvariant());
     credential = credential with { PasswordHash = hasher.HashPassword(credential, request.Password) };
-    var registration = repository.TryCreateCredentialWithInvitation(credential, invitationCode);
+    var registration = repository.TryCreateCredential(credential);
     if (registration == RegistrationOutcome.EmailAlreadyRegistered) return Failure(c, 409, "STATE_CONFLICT", "该邮箱已注册");
-    if (registration == RegistrationOutcome.InvitationUnavailable) return Failure(c, 422, "BUSINESS_RULE_VIOLATION", "邀请码无效、已过期或使用次数已达上限");
-    var profileCreated = await CreateProfileAsync(clients.CreateClient("gateway"), gatewayKey, c.TraceIdentifier, credential.UserId, request.DisplayName.Trim(), c.RequestAborted);
-    if (!profileCreated) { repository.RollbackRegistration(credential.UserId, invitationCode); return Failure(c, 503, "SERVICE_UNAVAILABLE", "用户资料服务暂时不可用"); }
+    // Registration compensation must finish even when the browser disconnects;
+    // do not let RequestAborted leave credentials, profile and credits half-created.
+    var profileCreated = await CreateProfileAsync(clients.CreateClient("gateway"), gatewayKey, c.TraceIdentifier, credential.UserId, request.DisplayName.Trim(), CancellationToken.None);
+    if (!profileCreated) { repository.DeleteCredential(credential.UserId); return Failure(c, 503, "SERVICE_UNAVAILABLE", "用户资料服务暂时不可用"); }
+    var creditsCreated = await CreateCreditAccountAsync(clients.CreateClient("gateway"), gatewayKey, c.TraceIdentifier, credential.UserId, CancellationToken.None);
+    if (!creditsCreated)
+    {
+        await DeleteUserProfileAsync(clients.CreateClient("gateway"), gatewayKey, c.TraceIdentifier, credential.UserId, CancellationToken.None);
+        repository.DeleteCredential(credential.UserId);
+        return Failure(c, 503, "SERVICE_UNAVAILABLE", "credits 服务暂时不可用");
+    }
     StoredSession session;
     try { session = repository.CreateSession(credential.UserId, request.DeviceName); }
     catch
     {
-        await DeleteUserProfileAsync(clients.CreateClient("gateway"), gatewayKey, c.TraceIdentifier, credential.UserId, c.RequestAborted);
-        repository.RollbackRegistration(credential.UserId, invitationCode);
+        await DeleteUserProfileAsync(clients.CreateClient("gateway"), gatewayKey, c.TraceIdentifier, credential.UserId, CancellationToken.None);
+        await DeleteCreditAccountAsync(clients.CreateClient("gateway"), gatewayKey, c.TraceIdentifier, credential.UserId, CancellationToken.None);
+        repository.DeleteCredential(credential.UserId);
         throw;
     }
     return Results.Created($"/api/v1/auth/sessions/{session.SessionId}", ApiSuccess.Create(session.ToResponse(), c.TraceIdentifier));
@@ -232,24 +240,6 @@ app.MapDelete("/api/v1/auth/account", async ([FromBody] AccountDeletionRequest r
     audit.Write(AdminAuditRecord.Create(userId, "ACCOUNT_SELF_DELETE", userId, null, deleted ? "SUCCEEDED" : "NOT_FOUND", c.TraceIdentifier));
     return deleted ? Results.NoContent() : Failure(c, 404, "RESOURCE_NOT_FOUND", "用户不存在");
 });
-app.MapGet("/api/v1/admin/invitations", (HttpContext c, IAdminRepository admin) =>
-    IsAdmin(c, gatewayKey) ? Results.Ok(ApiSuccess.Create(admin.ListInvitations(), c.TraceIdentifier)) : Failure(c, 403, "FORBIDDEN", "需要管理员权限"));
-app.MapPost("/api/v1/admin/invitations", (CreateInvitationRequest request, HttpContext c, IAdminRepository admin, IAdminAuditRepository audit) =>
-{
-    if (!IsAdmin(c, gatewayKey)) return Failure(c, 403, "FORBIDDEN", "需要管理员权限");
-    var invitation = admin.CreateInvitation(request);
-    if (invitation is null) return Failure(c, 400, "VALIDATION_ERROR", "请填写邀请码");
-    audit.Write(AdminAuditRecord.Create(GetGatewayUser(c, gatewayKey)!, "INVITATION_CREATE", null, invitation.Code, "SUCCEEDED", c.TraceIdentifier));
-    return Results.Created($"/api/v1/admin/invitations/{invitation.Code}", ApiSuccess.Create(invitation, c.TraceIdentifier));
-});
-app.MapDelete("/api/v1/admin/invitations/{code}", (string code, HttpContext c, IAdminRepository admin, IAdminAuditRepository audit) =>
-{
-    if (!IsAdmin(c, gatewayKey)) return Failure(c, 403, "FORBIDDEN", "需要管理员权限");
-    var deleted = admin.DeleteInvitation(code);
-    audit.Write(AdminAuditRecord.Create(GetGatewayUser(c, gatewayKey)!, "INVITATION_DELETE", null, code, deleted ? "SUCCEEDED" : "NOT_FOUND", c.TraceIdentifier));
-    return deleted ? Results.NoContent() : Failure(c, 404, "RESOURCE_NOT_FOUND", "邀请码不存在");
-});
-
 app.MapGet("/api/v1/auth/sessions/{sessionId}", (string sessionId, HttpContext c, IAuthRepository repository) =>
 {
     var caller = GetGatewayUser(c, gatewayKey); if (caller is null) return Failure(c, 401, "AUTH_REQUIRED", "登录状态已失效");
@@ -308,6 +298,20 @@ static async Task<bool> CreateProfileAsync(HttpClient client, string key, string
     request.Headers.Add("X-Service-Name", "AuthService"); request.Headers.Add("X-Service-Key", key); request.Headers.Add("X-Correlation-Id", correlationId);
     try { using var response = await client.SendAsync(request, cancellation); return response.IsSuccessStatusCode || response.StatusCode == System.Net.HttpStatusCode.Conflict; } catch (HttpRequestException) { return false; }
 }
+static async Task<bool> CreateCreditAccountAsync(HttpClient client, string key, string correlationId, string userId, CancellationToken cancellation)
+{
+    using var request = new HttpRequestMessage(HttpMethod.Post, "/internal/v1/credits/accounts") { Content = JsonContent.Create(new { userId }) };
+    request.Headers.Add("X-Service-Name", "AuthService"); request.Headers.Add("X-Service-Key", key); request.Headers.Add("X-Correlation-Id", correlationId);
+    try { using var response = await client.SendAsync(request, cancellation); return response.IsSuccessStatusCode || response.StatusCode == System.Net.HttpStatusCode.Conflict; }
+    catch (HttpRequestException) { return false; }
+}
+static async Task<bool> DeleteCreditAccountAsync(HttpClient client, string key, string correlationId, string userId, CancellationToken cancellation)
+{
+    using var request = new HttpRequestMessage(HttpMethod.Delete, $"/internal/v1/credits/accounts/{Uri.EscapeDataString(userId)}");
+    request.Headers.Add("X-Service-Name", "AuthService"); request.Headers.Add("X-Service-Key", key); request.Headers.Add("X-Correlation-Id", correlationId);
+    try { using var response = await client.SendAsync(request, cancellation); return response.IsSuccessStatusCode || response.StatusCode == System.Net.HttpStatusCode.NotFound; }
+    catch (HttpRequestException) { return false; }
+}
 static async Task<Dictionary<string, string>?> LookupProfileDisplayNamesAsync(HttpClient client, string key, string correlationId, string[] userIds, CancellationToken cancellation)
 {
     if (userIds.Length == 0) return new Dictionary<string, string>(StringComparer.Ordinal);
@@ -344,7 +348,6 @@ static string? GetGatewayUser(HttpContext c, string key) => IsGateway(c, key) &&
 static bool ValidEmail(string? value) => !string.IsNullOrWhiteSpace(value) && value.Length <= 320 && value.Contains('@');
 static bool ValidName(string? value) => !string.IsNullOrWhiteSpace(value) && value.Trim().Length is >= 1 and <= 64;
 static bool ValidPassword(string? value) => !string.IsNullOrWhiteSpace(value) && value.Length >= 8;
-static string? NormalizeInvitationCode(string? value) => string.IsNullOrWhiteSpace(value) || value.Trim().Length > 32 ? null : value.Trim().ToUpperInvariant();
 static bool PasswordMatches(IPasswordHasher<Credential> hasher, Credential credential, string password)
 {
     try { return hasher.VerifyHashedPassword(credential, credential.PasswordHash, password) is not PasswordVerificationResult.Failed; }
@@ -365,7 +368,7 @@ static bool FixedTimeEquals(string left, string right)
 }
 static bool IsAdmin(HttpContext c, string key) => GetGatewayUser(c, key) == AdminIdentity.UserId;
 
-public sealed record RegistrationRequest(string Email, string Password, string DisplayName, string InvitationCode, string? DeviceName);
+public sealed record RegistrationRequest(string Email, string Password, string DisplayName, string? DeviceName);
 public sealed record LoginRequest(string Email, string Password, string? DeviceName);
 public sealed record AdminLoginRequest(string? Username, string? Password);
 public sealed record AdminResetPasswordRequest(string NewPassword);
@@ -403,6 +406,18 @@ public sealed record StoredSession(string SessionId, string UserId, string Acces
 
 public sealed class MySqlAuthRepository(AuthDatabase database) : IAuthRepository
 {
+    public RegistrationOutcome TryCreateCredential(Credential value)
+    {
+        try
+        {
+            using var connection = database.OpenConnection(); using var command = connection.CreateCommand();
+            command.CommandText = "INSERT INTO auth_credentials (user_id,email,password_hash) VALUES (@id,@email,@hash);";
+            command.Parameters.AddWithValue("@id", value.UserId); command.Parameters.AddWithValue("@email", value.Email); command.Parameters.AddWithValue("@hash", value.PasswordHash);
+            command.ExecuteNonQuery(); return RegistrationOutcome.Created;
+        }
+        catch (MySqlException exception) when (exception.Number == 1062) { return RegistrationOutcome.EmailAlreadyRegistered; }
+    }
+
     public RegistrationOutcome TryCreateCredentialWithInvitation(Credential value, string invitationCode)
     {
         using var connection = database.OpenConnection(); using var transaction = connection.BeginTransaction(); using var command = connection.CreateCommand();

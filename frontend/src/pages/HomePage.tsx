@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router'
 import AppShell from '../components/AppShell'
-import { GraphIcon, KnowledgeIcon, MaterialsIcon, ReviewIcon } from '../components/icons'
+import { BookIcon, GraphIcon, MaterialsIcon, ReviewIcon } from '../components/icons'
 import { api } from '../lib/api'
 import { readProfile, saveProfile } from '../lib/session'
 import { readColorTheme, saveColorTheme, type ColorTheme } from '../lib/theme'
@@ -49,10 +49,24 @@ export default function HomePage() {
             {resume.action === '选择复习范围' ? null : <Link className="button button--primary" to={resume.to}>{resume.action}</Link>}
           </div>
           <div className="home-quick-actions" aria-label="页面快捷入口">
-            <Link to="/materials"><span className="quick-action-icon quick-action-icon--materials"><MaterialsIcon /></span><span><strong>藏书阁</strong><small>采章入卷</small></span><i aria-hidden="true">→</i></Link>
-            <Link to="/knowledge"><span className="quick-action-icon quick-action-icon--knowledge"><KnowledgeIcon /></span><span><strong>拾知</strong><small>循章识要</small></span><i aria-hidden="true">→</i></Link>
-            <Link to="/knowledge-graph"><span className="quick-action-icon quick-action-icon--graph"><GraphIcon /></span><span><strong>识网</strong><small>观脉寻源</small></span><i aria-hidden="true">→</i></Link>
-            <Link to="/review"><span className="quick-action-icon quick-action-icon--review"><ReviewIcon /></span><span><strong>回响</strong><small>温故知新</small></span><i aria-hidden="true">→</i></Link>
+            <Link to="/projects"><span className="quick-action-icon"><BookIcon /></span><span><strong>学习项目</strong><small>管理题库与学习范围</small></span><i aria-hidden="true">→</i></Link>
+            <Link to="/projects"><span className="quick-action-icon"><MaterialsIcon /></span><span><strong>日常练习</strong><small>从项目题库开始复习</small></span><i aria-hidden="true">→</i></Link>
+            <Link to="/knowledge-graph"><span className="quick-action-icon quick-action-icon--graph"><GraphIcon /></span><span><strong>知识图谱</strong><small>查看知识关系与掌握度</small></span><i aria-hidden="true">→</i></Link>
+            <Link to="/projects"><span className="quick-action-icon quick-action-icon--review"><ReviewIcon /></span><span><strong>故事复习</strong><small>从学习项目选择视觉小说模式</small></span><i aria-hidden="true">→</i></Link>
+          </div>
+        </section>
+
+        <section className="home-intelligence-flow" aria-labelledby="home-intelligence-title">
+          <header>
+            <span>千知万理如何协助复习</span>
+            <h2 id="home-intelligence-title">从资料解析到下一次复习</h2>
+            <p>AI 辅助理解资料和生成候选内容；来源核对、答案确认、知识关系与 SM-2 调度共同保证复习过程可追踪。</p>
+          </header>
+          <div>
+            <article><span>01</span><h3>解析资料</h3><p>还原文件原文，辅助识别章节、概念与可出题内容，并保留来源位置。</p></article>
+            <article><span>02</span><h3>确认题库</h3><p>生成或导入五类题目，由你核对答案与解析后进入正式复习。</p></article>
+            <article><span>03</span><h3>安排练习</h3><p>知识图谱连接相关概念，SM-2 结合掌握度和到期时间选择题目。</p></article>
+            <article><span>04</span><h3>回写反馈</h3><p>作答结果更新复习间隔；故事复习也使用同一项目的资料与记录。</p></article>
           </div>
         </section>
 

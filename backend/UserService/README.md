@@ -1,6 +1,6 @@
 # UserService
 
-UserService 是 千知万理 的用户资料服务，默认监听 `http://localhost:5101`。采用的数据库是 **MySQL**，只负责用户展示资料与学习偏好；密码、令牌、会话、邀请码和管理员认证均属于 AuthService。
+UserService 是 千知万理 的用户资料服务，默认监听 `http://localhost:5101`。采用的数据库是 **MySQL**，只负责用户展示资料与学习偏好；密码、令牌、会话和管理员认证属于 AuthService，credits 与兑换码属于 CreditService。注册不再使用邀请码。
 
 浏览器只能经 Gateway 访问 `/api/v1/users/...`。UserService 不解析浏览器令牌，而是只信任 Gateway 注入并由共享服务密钥保护的用户上下文。
 
@@ -10,7 +10,7 @@ UserService 是 千知万理 的用户资料服务，默认监听 `http://localh
 | --- | --- |
 | 显示名、头像地址、语言地区、学科偏好 | 邮箱、密码哈希、会话与 Token |
 | 每日学习目标、内容难度、减少动画偏好 | 注册、登录、退出、密码恢复 |
-| 为 AuthService 提供受限的资料创建、批量查询与删除内部接口 | 管理员身份认证与邀请码 |
+| 为 AuthService 提供受限的资料创建、批量查询与删除内部接口 | 管理员身份认证、credits 与兑换码 |
 | 用户资料表及偏好表的持久化 | 直接访问 AuthService 的 MySQL 表 |
 
 虽然 AuthService 与 UserService 当前使用同一个 MySQL 数据库实例，两个服务各自拥有表和数据写入权；跨服务操作必须经过 Gateway 的 `/internal/v1/...` 路由。

@@ -4,14 +4,13 @@ import { api } from '../lib/api'
 import { clearSession, readProfile, readSession } from '../lib/session'
 import { resetWorkflow } from '../lib/workflow'
 import BrandMark from './BrandMark'
-import { GraphIcon, HomeIcon, KnowledgeIcon, LogoutIcon, MaterialsIcon, ReviewIcon, SettingsIcon } from './icons'
+import { BookIcon, GraphIcon, HomeIcon, LogoutIcon, MaterialsIcon, SettingsIcon } from './icons'
 
 const navigation = [
   { to: '/home', label: '起点', icon: HomeIcon },
+  { to: '/projects', label: '学习项目', icon: BookIcon },
   { to: '/materials', label: '藏书阁', icon: MaterialsIcon },
-  { to: '/knowledge', label: '拾知', icon: KnowledgeIcon },
   { to: '/knowledge-graph', label: '识网', icon: GraphIcon },
-  { to: '/review', label: '回响', icon: ReviewIcon },
   { to: '/settings', label: '我的', icon: SettingsIcon },
 ]
 

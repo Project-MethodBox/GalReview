@@ -315,23 +315,29 @@ export interface AdminUser {
   isActive: boolean
 }
 
-export type InvitationType = 'single-use' | 'multi-use' | 'time-window'
+export interface CreditBalance {
+  userId: Uuid
+  balance: number
+  available: number
+  held: number
+  updatedAt: DateTime
+}
 
-export interface AdminInvitation {
+export interface AdminCreditCode {
+  codeId: Uuid
   code: string
-  type: InvitationType
-  maxUses: number
-  usedCount: number
-  validFrom: DateTime | null
-  validTo: DateTime | null
+  credits: number
+  status: 'ACTIVE' | 'REDEEMED' | 'REVOKED' | 'EXPIRED'
+  redeemedBy: Uuid | null
+  redeemedAt: DateTime | null
+  expiresAt: DateTime | null
   createdAt: DateTime
 }
 
-export interface CreateInvitationInput {
-  type: InvitationType
-  maxUses?: number
-  validFrom?: DateTime
-  validTo?: DateTime
+export interface CreateCreditCodeBatchInput {
+  count: number
+  creditsPerCode: number
+  expiresAt?: DateTime
 }
 
 export interface GamePackageManifest {
@@ -450,4 +456,111 @@ export interface WasmAdapter {
   serializeState(): Record<string, unknown>
   lastError?(): { code: string; message: string; details: Record<string, unknown> }
   dispose(): void
+}
+
+export type PracticeQuestionKind = 'SINGLE_CHOICE' | 'FILL_BLANK' | 'TRUE_FALSE' | 'TERM_DEFINITION' | 'ESSAY'
+export interface StudyProject {
+  projectId: Uuid
+  ownerUserId: Uuid
+  name: string
+  subjectCode: string | null
+  materialIds: Uuid[]
+  graphId: Uuid | null
+  questionBankId: Uuid
+  status: 'ACTIVE' | 'ARCHIVED'
+  version: number
+  createdAt: DateTime
+  updatedAt: DateTime
+}
+export interface PracticeProjectDetails {
+  project: StudyProject
+  questionCounts: Partial<Record<PracticeQuestionKind, number>>
+  readyQuestionCount: number
+}
+export interface PracticeQuestionOption { id: string; text: string }
+export interface PracticeQuestion {
+  questionId: Uuid
+  projectId: Uuid
+  questionBankId: Uuid
+  kind: PracticeQuestionKind
+  prompt: string
+  options: PracticeQuestionOption[]
+  correctAnswers: string[]
+  explanation: string | null
+  score: number
+  difficulty: number
+  knowledgePointId: Uuid | null
+  sourceReferences: Array<{ materialId: Uuid; startOffset: number; endOffset: number; sourceMapVersion: string; excerptChecksum: string }>
+  status: 'DRAFT' | 'READY' | 'DELETED'
+  version: number
+  createdAt: DateTime
+  updatedAt: DateTime
+}
+export interface PracticeSessionQuestion {
+  questionId: Uuid
+  kind: PracticeQuestionKind
+  prompt: string
+  options: PracticeQuestionOption[]
+  score: number
+  difficulty: number
+  knowledgePointId: Uuid | null
+}
+export interface PracticeAnswer {
+  attemptId: Uuid
+  questionId: Uuid
+  correct: boolean
+  similarity: number | null
+  quality: number
+  awardedScore: number
+  answerJudgeVersion: string
+}
+export interface PracticeSession {
+  sessionId: Uuid
+  projectId: Uuid
+  mode: 'RANDOM' | 'SMART_REVIEW' | 'EXAM'
+  questions: PracticeSessionQuestion[]
+  answers: PracticeAnswer[]
+  durationSeconds: number | null
+  status: 'CREATED' | 'ACTIVE' | 'COMPLETED' | 'ABANDONED'
+  createdAt: DateTime
+  completedAt: DateTime | null
+}
+export interface ExamPaper {
+  examPaperId: Uuid
+  projectId: Uuid
+  title: string
+  questionIds: Uuid[]
+  durationSeconds: number
+  seed: number
+  totalScore: number
+  createdAt: DateTime
+}
+export interface PracticeJobDiagnostic { materialId: Uuid | null; code: string; message: string; retryable: boolean }
+export interface PracticeJob {
+  jobId: Uuid
+  projectId: Uuid
+  kind: 'QUESTION_GENERATION' | 'EXAM_IMPORT'
+  status: 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'PARTIALLY_SUCCEEDED' | 'FAILED'
+  progress: number
+  createdCount: number
+  diagnostics: PracticeJobDiagnostic[]
+}
+export interface QuestionHelp {
+  questionId: Uuid
+  matches: Array<{ knowledgePointId: Uuid | null; title: string; excerpt: string; similarity: number }>
+  generatedExplanation: string | null
+  grounded: boolean
+  generatorVersion: string | null
+}
+export interface SharedPracticePackage {
+  packageId: Uuid
+  ownerUserId: Uuid
+  sourceProjectId: Uuid
+  version: string
+  title: string
+  subjectCode: string | null
+  visibility: 'PRIVATE' | 'UNLISTED' | 'PUBLIC'
+  sizeBytes: number
+  downloadCount: number
+  createdAt: DateTime
 }

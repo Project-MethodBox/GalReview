@@ -21,7 +21,7 @@ public sealed class DeepSeekNarrativeClient : INarrativeModelClient
     public bool IsEnabled => _options.CanCallProvider;
     public string ModelName => _options.Model;
 
-    public async Task<string> GenerateJsonAsync(
+    public async Task<NarrativeModelResult> GenerateJsonAsync(
         NarrativePrompt prompt,
         CancellationToken cancellationToken)
     {
@@ -29,16 +29,20 @@ public sealed class DeepSeekNarrativeClient : INarrativeModelClient
             throw new InvalidOperationException("叙事模型未启用或配置不完整");
 
         var maxAttempts = Math.Clamp(_options.MaxProviderAttempts, 1, 4);
+        long consumedByRejectedResponses = 0;
         for (var attempt = 1; ; attempt++)
         {
             try
             {
-                return await SendOnceAsync(prompt, cancellationToken);
+                var result = await SendOnceAsync(prompt, cancellationToken);
+                return result with { TotalTokens = checked(result.TotalTokens + consumedByRejectedResponses) };
             }
             catch (Exception exception) when (
                 attempt < maxAttempts
                 && IsRetryable(exception, cancellationToken))
             {
+                if (exception is NarrativeProviderPayloadException payload)
+                    consumedByRejectedResponses = checked(consumedByRejectedResponses + payload.ConsumedTokens);
                 var baseDelay = Math.Clamp(_options.RetryBaseDelayMilliseconds, 0, 5_000);
                 var delayMilliseconds = Math.Min(baseDelay * (1 << (attempt - 1)), 5_000);
                 if (delayMilliseconds > 0)
@@ -47,7 +51,7 @@ public sealed class DeepSeekNarrativeClient : INarrativeModelClient
         }
     }
 
-    private async Task<string> SendOnceAsync(
+    private async Task<NarrativeModelResult> SendOnceAsync(
         NarrativePrompt prompt,
         CancellationToken cancellationToken)
     {
@@ -95,29 +99,35 @@ public sealed class DeepSeekNarrativeClient : INarrativeModelClient
         var responseText = await ReadBoundedAsync(response.Content, MaxResponseCharacters, timeout.Token);
 
         using var document = JsonDocument.Parse(responseText);
+        if (!document.RootElement.TryGetProperty("usage", out var usage)
+            || usage.ValueKind != JsonValueKind.Object
+            || !usage.TryGetProperty("total_tokens", out var total)
+            || !total.TryGetInt64(out var totalTokens)
+            || totalTokens <= 0)
+            throw new NarrativeUsageMissingException();
+
         if (document.RootElement.ValueKind != JsonValueKind.Object
             || !document.RootElement.TryGetProperty("choices", out var choices)
             || choices.ValueKind != JsonValueKind.Array
             || choices.GetArrayLength() == 0)
-            throw new InvalidDataException("Narrative provider returned no choices.");
+            throw new NarrativeProviderPayloadException("Narrative provider returned no choices.", totalTokens);
 
         var first = choices[0];
         if (first.TryGetProperty("finish_reason", out var finishReason)
             && !string.Equals(finishReason.GetString(), "stop", StringComparison.Ordinal))
-            throw new InvalidDataException("Narrative provider response was incomplete.");
+            throw new NarrativeProviderPayloadException("Narrative provider response was incomplete.", totalTokens);
 
         if (first.ValueKind != JsonValueKind.Object
             || !first.TryGetProperty("message", out var message)
             || message.ValueKind != JsonValueKind.Object
             || !message.TryGetProperty("content", out var contentElement)
             || contentElement.ValueKind is not (JsonValueKind.String or JsonValueKind.Null))
-            throw new InvalidDataException("Narrative provider returned an invalid message envelope.");
+            throw new NarrativeProviderPayloadException("Narrative provider returned an invalid message envelope.", totalTokens);
 
         var content = contentElement.GetString();
         if (string.IsNullOrWhiteSpace(content))
-            throw new InvalidDataException("Narrative provider returned empty content.");
-
-        return content;
+            throw new NarrativeProviderPayloadException("Narrative provider returned empty content.", totalTokens);
+        return new NarrativeModelResult(content, totalTokens);
     }
 
     private static bool IsRetryable(Exception exception, CancellationToken callerToken)
@@ -125,7 +135,10 @@ public sealed class DeepSeekNarrativeClient : INarrativeModelClient
         if (callerToken.IsCancellationRequested)
             return false;
 
-        if (exception is OperationCanceledException or JsonException or InvalidDataException)
+        if (exception is NarrativeUsageMissingException)
+            return false;
+
+        if (exception is OperationCanceledException or JsonException or InvalidDataException or NarrativeProviderPayloadException)
             return true;
 
         return exception is HttpRequestException http
@@ -157,3 +170,10 @@ public sealed class DeepSeekNarrativeClient : INarrativeModelClient
         return builder.ToString();
     }
 }
+
+internal sealed class NarrativeProviderPayloadException(string message, long consumedTokens) : Exception(message)
+{
+    public long ConsumedTokens { get; } = consumedTokens;
+}
+
+internal sealed class NarrativeUsageMissingException() : Exception("Narrative provider response did not include valid token usage.");

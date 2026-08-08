@@ -7,8 +7,6 @@ param(
 
     [string]$KnowledgeServiceKey = $env:KNOWLEDGE_SERVICE_KEY,
 
-    [string]$InvitationCode = "MS-MOCK2026",
-
     [ValidateRange(10, 900)]
     [int]$TimeoutSeconds = 240,
 
@@ -76,7 +74,6 @@ $registration = Invoke-GatewayJson `
         email = $email
         password = $password
         displayName = "Integration User"
-        invitationCode = $InvitationCode
         deviceName = "integration-registration"
     }
 $userId = [string]$registration.data.session.userId

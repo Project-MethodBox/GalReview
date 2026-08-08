@@ -10,7 +10,7 @@ public sealed class NarrativeGenerationServiceTests
         var request = NarrativeTestData.CreateRequest();
         var service = CreateService(new StubNarrativeClient("{\"promptVersion\":\"wrong\",\"scenes\":[]}"));
 
-        var package = await service.GenerateAsync(plan, request, NarrativeTestData.OwnerUserId.ToString());
+        var package = (await service.GenerateAsync(plan, request, NarrativeTestData.OwnerUserId.ToString())).Package;
 
         Assert.Equal("图书馆的自习时光", package.Scenes[0].Title);
         Assert.True(new GamePackageValidator().Validate(package).Valid);
@@ -25,11 +25,11 @@ public sealed class NarrativeGenerationServiceTests
         var service = CreateService(new StubNarrativeClient(NarrativeTestData.CreateValidDraftJson(skeleton)));
         var progress = new List<int>();
 
-        var package = await service.GenerateAsync(
+        var package = (await service.GenerateAsync(
             plan,
             request,
             NarrativeTestData.OwnerUserId.ToString(),
-            progress.Add);
+            progress.Add)).Package;
 
         Assert.Equal("雨停前的温室记录", package.Scenes[0].Title);
         Assert.Contains(package.Scenes.SelectMany(scene => scene.Dialogue),
@@ -50,11 +50,11 @@ public sealed class NarrativeGenerationServiceTests
         var service = CreateService(client);
         var progress = new List<int>();
 
-        var package = await service.GenerateAsync(
+        var package = (await service.GenerateAsync(
             plan,
             request,
             NarrativeTestData.OwnerUserId.ToString(),
-            progress.Add);
+            progress.Add)).Package;
 
         Assert.Equal(2, client.CallCount);
         Assert.Equal("雨停前的温室记录", package.Scenes[0].Title);
@@ -68,8 +68,8 @@ public sealed class NarrativeGenerationServiceTests
         var request = NarrativeTestData.CreateRequest();
         var client = new StubNarrativeClient("not-json");
 
-        var package = await CreateService(client).GenerateAsync(
-            plan, request, NarrativeTestData.OwnerUserId.ToString());
+        var package = (await CreateService(client).GenerateAsync(
+            plan, request, NarrativeTestData.OwnerUserId.ToString())).Package;
 
         Assert.Equal(3, client.CallCount);
         Assert.Equal("图书馆的自习时光", package.Scenes[0].Title);
@@ -82,8 +82,8 @@ public sealed class NarrativeGenerationServiceTests
         var plan = NarrativeTestData.CreatePlan();
         var request = NarrativeTestData.CreateRequest();
 
-        var package = await CreateService(new ThrowingNarrativeClient()).GenerateAsync(
-            plan, request, NarrativeTestData.OwnerUserId.ToString());
+        var package = (await CreateService(new ThrowingNarrativeClient()).GenerateAsync(
+            plan, request, NarrativeTestData.OwnerUserId.ToString())).Package;
 
         Assert.Equal("图书馆的自习时光", package.Scenes[0].Title);
         Assert.True(new GamePackageValidator().Validate(package).Valid);
@@ -117,11 +117,11 @@ public sealed class NarrativeGenerationServiceTests
         public string ModelName => "stub";
         public int CallCount { get; private set; }
 
-        public Task<string> GenerateJsonAsync(NarrativePrompt prompt, CancellationToken cancellationToken)
+        public Task<NarrativeModelResult> GenerateJsonAsync(NarrativePrompt prompt, CancellationToken cancellationToken)
         {
             CallCount++;
             var response = _responses.Count > 1 ? _responses.Dequeue() : _responses.Peek();
-            return Task.FromResult(response);
+            return Task.FromResult(new NarrativeModelResult(response, 100));
         }
     }
 
@@ -130,7 +130,7 @@ public sealed class NarrativeGenerationServiceTests
         public bool IsEnabled => true;
         public string ModelName => "throwing-stub";
 
-        public Task<string> GenerateJsonAsync(NarrativePrompt prompt, CancellationToken cancellationToken) =>
+        public Task<NarrativeModelResult> GenerateJsonAsync(NarrativePrompt prompt, CancellationToken cancellationToken) =>
             throw new HttpRequestException("test provider detail that must remain internal");
     }
 }

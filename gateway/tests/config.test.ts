@@ -36,6 +36,8 @@ describe('loadConfig', () => {
     expect(cfg.services.knowledgeService.url).toBe('http://localhost:5104');
     expect(cfg.services.galGameService.url).toBe('http://localhost:5105');
     expect(cfg.services.renderService.url).toBe('http://localhost:5106');
+    expect(cfg.services.practiceService.url).toBe('http://localhost:5107');
+    expect(cfg.services.creditService.url).toBe('http://localhost:5108');
     expect(cfg.readinessServices).toEqual([
       'userService',
       'authService',
@@ -143,5 +145,7 @@ describe('loadConfig', () => {
     expect(cfg.services.knowledgeService.name).toBe('KnowledgeService');
     expect(cfg.services.galGameService.name).toBe('GalGameService');
     expect(cfg.services.renderService.name).toBe('RenderService');
+    expect(cfg.services.practiceService.name).toBe('PracticeService');
+    expect(cfg.services.creditService.name).toBe('CreditService');
   });
 });

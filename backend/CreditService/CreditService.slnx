@@ -1,0 +1,1 @@
+<Solution><Project Path="CreditService.Domain/CreditService.Domain.csproj" /><Project Path="CreditService.Application/CreditService.Application.csproj" /><Project Path="CreditService.Persistence/CreditService.Persistence.csproj" /><Project Path="CreditService.API/CreditService.API.csproj" /><Project Path="CreditService.Tests/CreditService.Tests.csproj" /></Solution>

@@ -10,9 +10,9 @@ FileService 是 千知万理 的资料文件服务，负责保存用户上传文
 - 将文件二进制存入 MongoDB GridFS，元数据与解析任务存入 MongoDB 集合。
 - 计算并保存原文件 SHA-256 checksum。
 - 异步解析任务：任务完成后资料才会标记为 `READY`。
-- 支持 TXT、Markdown、HTML、DOCX、文本型 PDF，以及通过本机 OCR 解析扫描版 PDF、JPG、JPEG、PNG（图片仅支持这三种格式）。
+- 支持 TXT、Markdown、HTML、MHTML/MHT、DOCX、PPTX、文本型 PDF，以及通过本机 OCR 解析扫描版 PDF、JPG、JPEG、PNG（图片仅支持这三种格式）。
 - 文本统一采用 UTF-8、NFC 规范化与 LF 换行保存。
-- DOCX 解析标题、列表、表格；Markdown/HTML 转换为纯文本，同时写入结构化 `blocks`。
+- DOCX 解析标题、列表、表格；PPTX 按幻灯片和文字段落保留来源；MHTML 解码 MIME 的 HTML/纯文本部分；Markdown/HTML 转换为纯文本，同时写入结构化 `blocks`。
 
 扫描版 PDF 没有内嵌文字层时，服务会调用本机 [OcrService](../OcrService/README.md)。请先启动 OcrService；若它未运行，此类文件的解析任务会明确标记为失败，不会产生伪造的文本结果。
 
@@ -89,7 +89,7 @@ X-User-Id: <UUID 用户 ID>
 | `GET` | `/api/v1/ingestion-jobs/{jobId}` | 查询解析进度和错误 |
 | `GET` | `/api/v1/materials/{materialId}/extracted-text-preview` | 获取已解析的文本和结构化 blocks |
 
-内部服务读取接口位于 `/internal/v1/materials/...`，除 `X-Gateway-Key` 外还必须由网关注入非空的 `X-Service-Name`。生产环境不要让浏览器直接访问 FileService。
+内部服务读取接口位于 `/internal/v1/materials/...`，除 `X-Gateway-Key` 外还必须由网关注入非空的 `X-Service-Name`。规范化文本 allowlist 默认仅含 `KnowledgeService`，Compose 为 ReciteHelper 迁移显式增加 `PracticeService`；生产环境不要让浏览器直接访问 FileService。
 
 ## 解析结果格式
 

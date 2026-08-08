@@ -4,7 +4,7 @@ import { createUuidV4 } from './uuid'
 import type {
   ApiFailure,
   ApiSuccess,
-  AdminInvitation,
+  AdminCreditCode,
   AdminUser,
   AnswerResult,
   AuthSession,
@@ -37,7 +37,18 @@ import type {
   UserProfile,
   UserPreferences,
   UserPreferencesInput,
-  CreateInvitationInput,
+  CreateCreditCodeBatchInput,
+  CreditBalance,
+  StudyProject,
+  PracticeProjectDetails,
+  PracticeQuestion,
+  PracticeQuestionKind,
+  PracticeSession,
+  PracticeAnswer,
+  ExamPaper,
+  PracticeJob,
+  QuestionHelp,
+  SharedPracticePackage,
 } from '../types/api'
 
 const configuredBase = import.meta.env.VITE_API_BASE_URL?.trim() || '/api/v1'
@@ -92,10 +103,13 @@ const ERROR_MESSAGES: Record<string, string> = {
   SERVICE_UNAVAILABLE: '服务暂时不可用，请稍后重试。',
   UPSTREAM_CONTRACT_INVALID: '服务返回的数据格式异常，请联系维护人员。',
   PROFILE_DELETE_FAILED: '账户资料删除失败，账户尚未注销。',
+  CREDITS_INSUFFICIENT: 'credits 不足，需要先兑换 credits。',
+  REDEMPTION_CODE_UNAVAILABLE: '兑换码无效、已使用、已撤销或已过期。',
   INTERNAL_ERROR: '服务处理失败，请稍后重试。',
 }
 
 const STATUS_MESSAGES: Record<number, string> = {
+  402: 'credits 不足，需要先兑换 credits。',
   400: '提交内容格式不正确，请检查后重试。',
   401: '登录状态已失效，请重新登录。',
   403: '当前账户没有执行此操作的权限。',
@@ -300,11 +314,11 @@ async function requestRawJson<T>(path: string): Promise<T> {
   }
 }
 
-async function requestBlob(path: string, retryAfterRefresh = true): Promise<Blob> {
+async function requestBlob(path: string, retryAfterRefresh = true, accept = 'application/octet-stream', label = '文件'): Promise<Blob> {
   const controller = new AbortController()
   const timeout = window.setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS)
   const headers = new Headers({
-    Accept: 'audio/wav, audio/*',
+    Accept: accept,
     'X-Correlation-Id': createUuidV4(),
   })
   const token = readSession()?.tokens.accessToken
@@ -313,7 +327,7 @@ async function requestBlob(path: string, retryAfterRefresh = true): Promise<Blob
     const response = await fetch(resolveUrl(path), { headers, signal: controller.signal })
     if (response.status === 401 && retryAfterRefresh) {
       await refreshAccessToken()
-      return requestBlob(path, false)
+      return requestBlob(path, false, accept, label)
     }
     if (!response.ok) {
       const bodyText = await response.text()
@@ -327,10 +341,10 @@ async function requestBlob(path: string, retryAfterRefresh = true): Promise<Blob
     return await response.blob()
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new ApiClientError('语音加载超时，请稍后重试。', 'SERVICE_UNAVAILABLE', 503)
+      throw new ApiClientError(`${label}加载超时，请稍后重试。`, 'SERVICE_UNAVAILABLE', 503)
     }
     if (error instanceof TypeError) {
-      throw new ApiClientError('无法连接语音服务。', 'SERVICE_UNAVAILABLE', 503)
+      throw new ApiClientError(`无法连接${label}服务。`, 'SERVICE_UNAVAILABLE', 503)
     }
     throw error
   } finally {
@@ -409,13 +423,12 @@ export const api = {
     })
   },
 
-  register(input: { email: string; password: string; displayName: string; invitationCode: string }): Promise<AuthSessionResponse> {
+  register(input: { email: string; password: string; displayName: string }): Promise<AuthSessionResponse> {
     return request('/auth/registrations', {
       method: 'POST',
       authenticated: false,
       body: json({
         ...input,
-        invitationCode: input.invitationCode.trim().toUpperCase(),
         deviceName: navigator.userAgent.slice(0, 120),
       }),
     })
@@ -650,7 +663,7 @@ export const api = {
   },
 
   getGameAudio(audioUrl: string): Promise<Blob> {
-    return requestBlob(audioUrl)
+    return requestBlob(audioUrl, true, 'audio/wav, audio/*', '语音')
   },
 
   getRuntimeManifest(): Promise<RuntimeManifest> {
@@ -702,6 +715,96 @@ export const api = {
     })
   },
 
+  listPracticeProjects(): Promise<{ items: StudyProject[]; nextCursor: string | null }> {
+    return request('/practice-projects')
+  },
+
+  createPracticeProject(input: { name: string; subjectCode?: string; materialIds: string[]; graphId?: string }): Promise<StudyProject> {
+    return request('/practice-projects', { method: 'POST', body: json(input) })
+  },
+
+  getPracticeProject(projectId: string): Promise<PracticeProjectDetails> {
+    return request(`/practice-projects/${encodeURIComponent(projectId)}`)
+  },
+
+  listPracticeQuestions(projectId: string): Promise<{ items: PracticeQuestion[]; nextCursor: string | null }> {
+    return request(`/practice-projects/${encodeURIComponent(projectId)}/questions`)
+  },
+
+  createPracticeQuestion(projectId: string, input: {
+    kind: PracticeQuestionKind; prompt: string; options: Array<{ id: string; text: string }>; correctAnswers: string[]
+    explanation?: string; score: number; difficulty: number; knowledgePointId?: string; status: 'DRAFT' | 'READY'
+  }): Promise<PracticeQuestion> {
+    return request(`/practice-projects/${encodeURIComponent(projectId)}/questions`, { method: 'POST', body: json({ ...input, sourceReferences: [] }) })
+  },
+
+  updatePracticeQuestion(question: PracticeQuestion, status: 'DRAFT' | 'READY'): Promise<PracticeQuestion> {
+    return request(`/practice-questions/${encodeURIComponent(question.questionId)}`, {
+      method: 'PATCH', body: json({ kind: question.kind, prompt: question.prompt, options: question.options,
+        correctAnswers: question.correctAnswers, explanation: question.explanation, score: question.score,
+        difficulty: question.difficulty, knowledgePointId: question.knowledgePointId,
+        sourceReferences: question.sourceReferences, status, version: question.version }),
+    })
+  },
+
+  createPracticeSession(input: { projectId: string; mode: 'RANDOM' | 'SMART_REVIEW' | 'EXAM'; questionCount?: number; examPaperId?: string; reviewPlanId?: string; snapshotVersion?: string }): Promise<PracticeSession> {
+    return request('/practice-sessions', { method: 'POST', body: json({ ...input, kinds: [] }) })
+  },
+
+  getPracticeSession(sessionId: string): Promise<PracticeSession> {
+    return request(`/practice-sessions/${encodeURIComponent(sessionId)}`)
+  },
+
+  savePracticeAnswer(sessionId: string, questionId: string, answer: string[], responseTimeMs: number, attemptNumber = 1): Promise<PracticeAnswer> {
+    return request(`/practice-sessions/${encodeURIComponent(sessionId)}/answers/${encodeURIComponent(questionId)}`, {
+      method: 'PUT', body: json({ answer, responseTimeMs, attemptNumber, idempotencyKey: createUuidV4() }),
+    })
+  },
+
+  completePracticeSession(sessionId: string): Promise<{ session: PracticeSession; evidence: unknown }> {
+    return request(`/practice-sessions/${encodeURIComponent(sessionId)}/completion`, { method: 'POST', body: json({ idempotencyKey: createUuidV4() }) })
+  },
+
+  createExamPaper(projectId: string, input: { title: string; questionCount: number; durationSeconds: number }): Promise<ExamPaper> {
+    return request(`/practice-projects/${encodeURIComponent(projectId)}/exam-papers`, { method: 'POST', body: json(input) })
+  },
+
+  generatePracticeQuestions(projectId: string, input: { reviewPlanId?: string; snapshotVersion?: string; kinds: PracticeQuestionKind[]; targetCount: number }): Promise<PracticeJob> {
+    return request(`/practice-projects/${encodeURIComponent(projectId)}/question-generations`, {
+      method: 'POST', body: json({ ...input, idempotencyKey: createUuidV4(), generatorVersion: 'recite-question-v1' }), timeoutMs: UPLOAD_TIMEOUT_MS,
+    })
+  },
+
+  importExam(projectId: string, materialId: string): Promise<PracticeJob> {
+    return request('/exam-import-jobs', { method: 'POST', body: json({ projectId, materialId, idempotencyKey: createUuidV4() }), timeoutMs: UPLOAD_TIMEOUT_MS })
+  },
+
+  getQuestionHelp(questionId: string, generateExplanation = false): Promise<QuestionHelp> {
+    return request(`/practice-questions/${encodeURIComponent(questionId)}/help`, { method: 'POST', body: json({ generateExplanation }) })
+  },
+
+  importPracticePackage(file: File, materialIds: string[]): Promise<{ project: StudyProject; importedQuestionCount: number; importedFromSchema: string; diagnostics: string[] }> {
+    const body = new FormData(); body.append('file', file); materialIds.forEach((id) => body.append('materialIds', id))
+    return request('/practice-packages/imports', { method: 'POST', body, timeoutMs: UPLOAD_TIMEOUT_MS })
+  },
+
+  exportPracticePackage(projectId: string): Promise<Blob> {
+    return requestBlob(`/practice-projects/${encodeURIComponent(projectId)}/package`)
+  },
+
+  publishPracticePackage(projectId: string, version: string, visibility: 'PRIVATE' | 'UNLISTED' | 'PUBLIC'): Promise<SharedPracticePackage> {
+    return request(`/practice-projects/${encodeURIComponent(projectId)}/publications`, { method: 'POST', body: json({ version, visibility }) })
+  },
+
+  listSharedPracticePackages(query?: string): Promise<{ items: SharedPracticePackage[]; nextCursor: string | null }> {
+    const params = new URLSearchParams(); if (query?.trim()) params.set('query', query.trim())
+    return request(`/shared-practice-packages${params.size ? `?${params}` : ''}`)
+  },
+
+  getSharedPracticePackageContent(packageId: string): Promise<Blob> {
+    return requestBlob(`/shared-practice-packages/${encodeURIComponent(packageId)}/content`)
+  },
+
   adminLogin(username: string, password: string): Promise<AuthSessionResponse> {
     return request('/admin/sessions', {
       method: 'POST',
@@ -732,18 +835,26 @@ export const api = {
     })
   },
 
-  listAdminInvitations(): Promise<AdminInvitation[]> {
-    return adminRequest('/admin/invitations')
+  getCreditBalance(): Promise<CreditBalance> {
+    return request('/credits/balance')
   },
 
-  createAdminInvitation(input: CreateInvitationInput): Promise<AdminInvitation> {
-    return adminRequest('/admin/invitations', {
+  redeemCredits(code: string): Promise<CreditBalance> {
+    return request('/credits/redemptions', { method: 'POST', body: json({ code }) })
+  },
+
+  listAdminCreditCodes(): Promise<{ items: AdminCreditCode[] }> {
+    return adminRequest('/admin/credit-codes')
+  },
+
+  createAdminCreditCodeBatch(input: CreateCreditCodeBatchInput): Promise<{ items: AdminCreditCode[] }> {
+    return adminRequest('/admin/credit-codes/batches', {
       method: 'POST', body: json(input),
     })
   },
 
-  deleteAdminInvitation(code: string): Promise<void> {
-    return adminRequest(`/admin/invitations/${encodeURIComponent(code)}`, {
+  revokeAdminCreditCode(codeId: string): Promise<void> {
+    return adminRequest(`/admin/credit-codes/${encodeURIComponent(codeId)}`, {
       method: 'DELETE',
     })
   },
