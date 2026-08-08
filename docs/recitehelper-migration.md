@@ -200,10 +200,10 @@ ReciteHelper 使用 AGPL-3.0。迁移的源代码、提示词、模型和兼容�
 | 日期 | 范围 | 变更 | 原因 | 验证 | 状态 |
 |---|---|---|---|---|---|
 | 2026-08-08 | 架构 | ReciteHelper 复习资料库定为产品内核；故事生成为项目内复习模式；共享包留在同一聚合 | 保持业务主从和资料聚合一致，避免纳米服务/跨库事务 | contract 与 UI 路由审阅 | IMPLEMENTED |
-| 2026-08-08 | Practice | 按 API/Application/Domain/Persistence 四层重构，并使用 MediatR CQRS | 与 KnowledgeService 对齐，隔离 HTTP、用例、领域和基础设施 | solution build 0 warning；14 tests pass | VERIFIED |
-| 2026-08-08 | Practice | 实现五类题目、资料生成、整卷导入、判分、帮助、随机/智能/试卷会话 | 完整承接 ReciteHelper 复习主线 | PracticeService tests 14/14 | VERIFIED |
+| 2026-08-08 | Practice | 按 API/Application/Domain/Persistence 四层重构，并使用 MediatR CQRS | 与 KnowledgeService 对齐，隔离 HTTP、用例、领域和基础设施 | solution build 0 warning；15 tests pass | VERIFIED |
+| 2026-08-08 | Practice | 实现五类题目、资料生成、整卷导入、判分、帮助、随机/智能/试卷会话 | 完整承接 ReciteHelper 复习主线 | PracticeService tests 15/15；全链 SMART_REVIEW 完成 | VERIFIED |
 | 2026-08-08 | Practice | 兼容 `.rhproj`/`.rhp`，新增哈希包、ZIP 安全校验与 GridFS 共享目录 | 保留旧项目并替代未冻结的外部资源中心 | legacy/round-trip/traversal tests pass | VERIFIED |
-| 2026-08-08 | Practice | MongoDB.Driver 3.x 全局 Guid 表示固定为 Standard | 防止项目/题目/会话首次持久化触发 Unspecified 序列化异常 | BSON UUID Standard 测试通过；真实 Mongo 容器待运行 | VERIFIED |
+| 2026-08-08 | Practice | MongoDB.Driver 3.x 全局 Guid 表示固定为 Standard，并忽略 Mongo 自动 `_id` 元数据 | 防止 UUID 表示不确定，以及创建后的首次聚合读取因 `_id` 无领域属性而失败 | BSON 专项 2/2；真实 Mongo 全链通过 | VERIFIED |
 | 2026-08-08 | Practice/File | 项目创建、资料映射修改和旧包导入逐项复用 File extracted-text 读取校验 owner/READY | 防止只校验 UUID 形状后引用他人或未就绪资料 | 所有权拒绝/接受测试通过；跨服务 E2E 待容器 | VERIFIED |
 | 2026-08-08 | Knowledge | PlanGraph reader 与 evidence writer 允许精确身份 PracticeService | 普通练习共享 PlanGraph/SM-2 | 目标测试 12/12 | VERIFIED |
 | 2026-08-08 | File | 补齐 PPTX、MHTML 解析 | 覆盖 ReciteHelper 资料与整卷输入 | build 通过；专项解析测试待补 | IMPLEMENTED |
@@ -218,7 +218,12 @@ ReciteHelper 使用 AGPL-3.0。迁移的源代码、提示词、模型和兼容�
 | 2026-08-08 | GalGame/Credit | 故事复习按 PlanGraph 和最大草稿估算，累计供应商实际 usage 后结算 | 故事生成作为复习功能共享同一 credits 账户 | GalGame 362/362 | VERIFIED |
 | 2026-08-08 | Frontend/Admin | 设置页增加余额、兑换与确认购买；管理员支持兑换码批量生成、状态与撤销；不足提示不展示内部换算 | 延续 GalReview 视觉与中性文案，禁止 AI 风格和 emoji | production build 通过 | VERIFIED |
 | 2026-08-08 | Gateway/Deploy | CreditService 路由、独立密钥、MySQL、healthcheck、readiness、备份与部署变量写入容器基线 | 新服务与现有服务变更必须可部署、可恢复 | Gateway 203/203；Compose config pass | VERIFIED |
-| 2026-08-08 | Practice/Deploy | `Resources` 改为 Git 忽略的 OSCA S3 构建前资产；仓库内单文件下载器配置仅限 `20277-gal-res` 读取/列举的凭据，并保留 14 文件哈希清单与 Docker 缺失门禁 | 避免约 105 MiB 模型和字典进入 Git，同时让任意开发环境一键、可重复恢复 | PowerShell parser、下载器可跟踪状态、资源 Git ignore、14/14 本地哈希校验通过；真实 OSCA 下载待安装 AWS CLI 后验证 | IMPLEMENTED |
+| 2026-08-08 | Credit/Deploy | 健康检查鉴权旁路由 `PathString` 常量模式改为显式 `PathString` 相等比较 | 修复 Linux .NET 10 容器编译的 `CS9135`，保持仅 `/healthz`、`/readyz` 无 Gateway key 可访问 | Credit tests 6/6；Linux 镜像构建与 healthcheck 通过 | VERIFIED |
+| 2026-08-08 | GalGame/Deploy | Docker 构建上下文显式纳入 `Voice/**` 与 `character-voice-config.json` | 修复语音实现和角色配置被白名单式 `.dockerignore` 排除、容器发布无法编译的问题 | GalGame tests 362/362；Linux 镜像构建与故事全链通过 | VERIFIED |
+| 2026-08-08 | Practice/Deploy | `Resources` 改为 Git 忽略的 OSCA S3 构建前资产；仓库内单文件下载器配置仅限 `20277-gal-res` 读取/列举的凭据，并保留 14 文件哈希清单与 Docker 缺失门禁 | 避免约 105 MiB 模型和字典进入 Git，同时让任意开发环境一键、可重复恢复 | 14/14 本地哈希、容器资源门禁与镜像构建通过；真实 OSCA 下载仍待安装 AWS CLI | VERIFIED |
+| 2026-08-08 | Credit/Persistence | MySQL UUID 列统一兼容驱动返回的 `Guid`、字符串或 16-byte 值 | MySqlConnector 可把 `CHAR(36)` 直接物化为 `Guid`，旧代码 `GetString` 使预授权成功后结算/释放 500 | Credit 6/6；MySQL 预授权、实际结算、释放、制码兑换全链通过 | VERIFIED |
+| 2026-08-08 | GalGame/Persistence | credits 拒绝时任务只持久化稳定错误码/消息，即时 402 响应继续返回完整购买 details | Mongo 安全 ObjectSerializer 拒绝把上游 `JsonElement` 写入 `object Details`，原行为会把正确的 402 放大为 503 | GalGame 362/362；不足路径返回 402，后续完整故事链通过 | VERIFIED |
+| 2026-08-08 | Full chain | 题库复习与故事复习共享 material/graph/mastery，但一次完成各自关闭独立评估计划快照 | 遵守 `REVIEW_PLAN_NOT_OPEN`，防止向已完成计划重复写学习证据 | 15 容器 healthy；Gateway 全链含 SM-2 与 Render 结果回写通过 | VERIFIED |
 
 状态只使用 `SPECIFIED | IMPLEMENTED | VERIFIED | BLOCKED`。代码合入后必须逐项更新，测试未运行或失败时不得写 `VERIFIED`。
 

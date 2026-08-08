@@ -3,6 +3,8 @@
 !GalGame.GalGameService.csproj
 !*.cs
 !Narrative/**
+!Voice/**
+!character-voice-config.json
 !appsettings.json
 !Dockerfile
 !.dockerignore

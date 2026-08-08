@@ -1008,7 +1008,7 @@ Gateway 端口在集成与演示部署中直接对外发布。实测：对 `POST
 | 验证项 | 结果 |
 |---|---:|
 | PracticeService solution build | PASS，0 warning / 0 error |
-| PracticeService 单元测试 | PASS，14 / 14 |
+| PracticeService 单元测试 | PASS，15 / 15 |
 | 其中旧 `.rhproj` 五题型、`.qzwlp` round-trip、ZIP traversal | PASS |
 | 其中资料生成出处、生成幂等冲突、整卷缺答案不猜测 | PASS |
 | 其中 MongoDB Guid 表示 | PASS，UUID Standard |
@@ -1019,15 +1019,14 @@ Gateway 端口在集成与演示部署中直接对外发布。实测：对 `POST
 | FileService build（含 PPTX/MHTML parser） | PASS，0 warning / 0 error |
 | Frontend TypeScript + Vite production build | PASS；仅保留既有 KnowledgeDag >500 kB chunk 警告 |
 | `docker compose -f compose.integration.yaml config --quiet` | PASS |
-| PracticeService 容器镜像 build | NOT RUN：Docker Desktop Linux daemon 未启动 |
+| PracticeService 容器镜像 build | PASS；14 项资源门禁通过后完成 Linux publish |
 
 模型关键资产校验值：SBERT `994a58868f7abacacbf2192aa0aae8f56da8c4505dbde2740c861b24426ede6b`，
 XGBoost `53b563e2df2c6026f7a996b4d8f63e83c63bbf64d1dde5e03a3c7f9dbf688ea0`，
 `vocab.txt` `45bbac6b341c319adc98a532532882e91a9cefc0329aa57bac9ae761c27b291c`。
 
-当前没有运行包含 MongoDB、Neo4j 与八个领域服务的全栈容器 E2E，因此共享包 GridFS 实写、
-Practice 完成后真实 SM-2 变化、项目内故事模式端到端均不得标记为集成通过。Docker daemon
-启动后应按 `docs/deploy.md` 第 11 节补跑并追加结果。
+本节初次记录时尚未运行全栈容器；现已由第 27 节的真实 Gateway 全链冒烟结果取代。普通题库
+复习、故事复习、SM-2 证据回写和 MySQL credits 结算均已有持久化集成结果。
 
 ## 25. 2026-08-08 credits 计费制度迁移验证
 
@@ -1042,12 +1041,12 @@ Practice 完成后真实 SM-2 变化、项目内故事模式端到端均不得�
 | 初始额度幂等、旧用户惰性建账、兑换单次使用 | PASS |
 | 预授权不足 402、实际结算、失败释放 | PASS |
 | AuthService 无邀请码注册与 credits 建账补偿 | PASS，11 / 11 |
-| PracticeService 生成计费与现有功能 | PASS，14 / 14 |
+| PracticeService 生成计费与现有功能 | PASS，15 / 15 |
 | GalGameService usage 累计、计费与现有功能 | PASS，362 / 362 |
 | Gateway Credit 路由、配置与全量 Vitest | PASS，15 files，203 / 203 |
 | Frontend 注册、设置页、管理员兑换码与不足跳转 production build | PASS；仅既有 KnowledgeDag chunk 警告 |
 | `docker compose -f compose.integration.yaml config --quiet` | PASS |
-| CreditService / 全栈容器镜像 build 与 MySQL E2E | NOT RUN：Docker Desktop Linux daemon 未启动 |
+| CreditService / 全栈容器镜像 build 与 MySQL E2E | PASS；真实预授权、结算、兑换及故事生成扣费见第 27 节 |
 
 安全检查结论：兑换码持久化只保存 SHA-256 摘要，完整明文仅在批量创建响应返回；管理员列表
 只返回掩码；余额使用整数内部单位；`operationId` 负责计费幂等；Gateway 按目标服务密钥转发。
@@ -1072,10 +1071,10 @@ Practice 完成后真实 SM-2 变化、项目内故事模式端到端均不得�
 | 下载凭据权限 | OWNER-CONFIRMED，仅 `20277-gal-res` 读取/列举；本轮未独立审计云端 IAM 策略 |
 | 仓库外恢复备份对 `resources.manifest.json` | PASS，14 / 14 路径、长度、SHA-256 一致 |
 | OSCA S3 真实列举、同步与下载后复验 | NOT RUN：当前环境未安装 AWS CLI v2 |
-| PracticeService 容器缺失门禁 | IMPLEMENTED；Docker daemon 未启动，镜像未重建 |
+| PracticeService 容器缺失门禁 | PASS；关键模型/词表存在时镜像构建通过 |
 | Git 中断恢复 | PASS，本地 `main` 纯 fast-forward 到远端 `feat: Integrate recite helper`，6 个 stash 冲突已逐项解决 |
 | Git 暂存与冲突状态 | PASS，unmerged 0、staged 0、冲突标记 0 |
-| 仓库工作树资源残留 | PASS，PracticeService 源目录与两个 Debug 输出目录共 21 个资源副本均已移出仓库 |
+| 仓库工作树资源残留 | PASS；冒烟临时恢复的 14 个文件已再次移到仓库外，源目录不存在 |
 
 未把“脚本语法通过”当作云端下载成功。开发者或部署人员必须安装 AWS CLI v2，运行仓库内
 下载脚本并看到 `manifest verification: passed` 后，才能继续开发、测试或执行
@@ -1086,3 +1085,43 @@ Practice 完成后真实 SM-2 变化、项目内故事模式端到端均不得�
 130,668 字节，原始 SHA-256 随之变化；仓库外备份仍与清单一致。这进一步证明模型、词表和
 分词资源不能通过 Git 分发。当前提交历史仍包含此前误提交的资源 blob；普通删除提交只能从
 新版本工作树移除它们，若要从远端历史和仓库存储中彻底清除，必须另行确认历史重写与强制推送。
+
+## 27. 2026-08-08 全链复习冒烟测试
+
+本轮在 `compose.integration.yaml` 的真实持久化栈上，以全新普通用户经 Gateway 完成两种复习
+方式。题库复习和故事复习共享同一个 material、graph 与 mastery，但各自创建一次性评估计划
+快照；完成后的计划按领域规则关闭，不重复接收第二份学习证据。本轮按用户最新要求不修改 UI。
+
+| 验证项 | 结果 |
+|---|---:|
+| Compose 配置与全部应用镜像构建 | PASS |
+| 15 个容器（3 MySQL、MongoDB、Neo4j、8 个领域/边界服务、Gateway、Frontend） | healthy |
+| 六个 .NET 服务测试 | PASS，Auth 11 + User 32 + Credit 6 + Practice 15 + Knowledge 109 + GalGame 362 = 535 |
+| RenderService 镜像内测试 | PASS，22 passed / 1 skipped |
+| Gateway `:5000/readyz` 与 Frontend `:5120` | HTTP 200 |
+| 注册、登录、用户资料与初始额度 | PASS，新用户精确获得 1 credit |
+| TXT 上传、Mongo 持久化、规范化提取 | PASS |
+| Neo4j 知识图谱构建与评估计划 | PASS |
+| StudyProject + PlanGraph 题目生成 | PASS，生成 5 题并人工状态推进至 READY |
+| SMART_REVIEW 作答 | PASS，首次写入、答案重放去重、完成重放去重 |
+| 题目帮助 | PASS，解释 grounded 且包含资料出处匹配 |
+| Practice credits | PASS，`1.00000 -> 0.99790`，无 held 余额 |
+| 管理员批量制码与普通用户兑换 | PASS，1 个 3-credit 兑换码只走正式 API |
+| GalGame credits 不足路径 | PASS，HTTP 402 `CREDITS_INSUFFICIENT`，含购买 URL；失败任务可从 Mongo 读回 |
+| 故事生成及实际结算 | PASS，绑定新的不可变 PlanGraph 快照 |
+| Render 事件、进度、结果 | PASS，事件重投去重、进度重放幂等、结果 `ACCEPTED -> DUPLICATE` |
+| Knowledge evidence / SM-2 回写 | PASS，故事中所有已答知识点均生成递增版本的 mastery record |
+| 最终 credits | PASS，`3.92011`，`held = 0` |
+| 冒烟临时资源清理 | PASS，14 文件 / 109,930,654 bytes 移至 `D:\Projects\GalReview-resource-recovery-20260808-1930\post-smoke-Resources` |
+
+最终通过样本：user `9636baa5-3fee-4ab2-8d92-36e1c6e04bb1`，material
+`3d37eca2-57ed-4637-9a4c-4313fbff988f`，graph `92004435-43a5-4378-9330-96e465f26a95`，
+Practice session `4dd4a86d-5a4f-499f-bcf9-a24df615d93f`，GamePackage
+`b84a90a5-c96d-4454-a505-5ccb0a7b4fbc`，Render session
+`218d2e94-9ef2-457d-a4e3-2017ac7f9c51`。
+
+冒烟首先暴露并随后修复了三个仅在真实持久化链路出现的问题：Practice 聚合无法忽略 MongoDB
+自动 `_id`；MySqlConnector 将 `CHAR(36)` 读取为 `Guid` 时 Credit 持久层仍调用 `GetString`；
+GalGame 在 credits 不足任务中把 `JsonElement` details 直接写入 Mongo。修复后分别重跑目标测试、
+目标镜像和完整 Gateway 链路。故障阶段留下的一笔已知预授权
+`400e04bc-febe-46d6-84a7-40e1c4fd1072` 已通过正式 release 接口恢复为 `RELEASED`。

@@ -374,13 +374,15 @@ app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, Ht
     }
     catch (CreditBillingException credit)
     {
-        store.TryTransitionJob(job.GenerationId, JobStatus.QUEUED, j => j with { Status = JobStatus.FAILED, Error = new ApiError(credit.Code, credit.Message, credit.Details) });
+        // 上游 details 由 System.Text.Json 解析为 JsonElement；MongoDB 的安全 ObjectSerializer
+        // 不接受该运行时类型。任务仅持久化稳定的错误码与消息，即时响应仍完整返回购买信息。
+        store.TryTransitionJob(job.GenerationId, JobStatus.QUEUED, j => j with { Status = JobStatus.FAILED, Error = new ApiError(credit.Code, credit.Message, new Dictionary<string, string>()) });
         return Failure(c, credit.StatusCode, credit.Code, credit.Message, credit.Details);
     }
     catch (Exception ex)
     {
         logger.LogError(ex, "Unable to reserve credits. CorrelationId: {CorrelationId}", traceId);
-        store.TryTransitionJob(job.GenerationId, JobStatus.QUEUED, j => j with { Status = JobStatus.FAILED, Error = new ApiError("SERVICE_UNAVAILABLE", "credits 服务暂时不可用", new { }) });
+        store.TryTransitionJob(job.GenerationId, JobStatus.QUEUED, j => j with { Status = JobStatus.FAILED, Error = new ApiError("SERVICE_UNAVAILABLE", "credits 服务暂时不可用", new Dictionary<string, string>()) });
         return Failure(c, 503, "SERVICE_UNAVAILABLE", "credits 服务暂时不可用");
     }
 
@@ -480,7 +482,7 @@ app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, Ht
                 catch (Exception releaseError) { logger.LogError(releaseError, "Unable to release credits for failed job {GenerationId}", job.GenerationId); }
             }
             store.TryTransitionJob(job.GenerationId, JobStatus.RUNNING,
-                j => j with { Status = JobStatus.FAILED, Error = new ApiError("INTERNAL_ERROR", ex.Message, new { }) });
+                j => j with { Status = JobStatus.FAILED, Error = new ApiError("INTERNAL_ERROR", ex.Message, new Dictionary<string, string>()) });
         }
     });
 

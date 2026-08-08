@@ -21,4 +21,22 @@ public sealed class MongoMappingsTests
         Assert.Equal(BsonBinarySubType.UuidStandard, document[nameof(StudyProject.ProjectId)].AsBsonBinaryData.SubType);
         Assert.Equal(BsonBinarySubType.UuidStandard, document[nameof(StudyProject.OwnerUserId)].AsBsonBinaryData.SubType);
     }
+
+    [Fact]
+    public void Mongo_generated_id_is_ignored_when_reading_domain_aggregate()
+    {
+        MongoMappings.EnsureRegistered(); var now = DateTimeOffset.UtcNow;
+        var project = new StudyProject(Guid.NewGuid(), Guid.NewGuid(), "项目", "CS", [Guid.NewGuid()], null,
+            Guid.NewGuid(), ProjectStatus.Active, 1, now, now);
+        var document = project.ToBsonDocument();
+        document.InsertAt(0, new BsonElement("_id", ObjectId.GenerateNewId()));
+
+        var restored = BsonSerializer.Deserialize<StudyProject>(document);
+
+        Assert.Equal(project.ProjectId, restored.ProjectId);
+        Assert.Equal(project.OwnerUserId, restored.OwnerUserId);
+        Assert.Equal(project.Name, restored.Name);
+        Assert.Equal(project.MaterialIds, restored.MaterialIds);
+        Assert.Equal(project.QuestionBankId, restored.QuestionBankId);
+    }
 }
