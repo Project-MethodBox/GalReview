@@ -1,12 +1,11 @@
 ﻿import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router'
+import { Link } from 'react-router'
 import AppShell, { PageHeader } from '../components/AppShell'
 import LoadingIndicator from '../components/LoadingIndicator'
 import { api, ApiClientError } from '../lib/api'
 import { pollUntil } from '../lib/poll'
 import { readWorkflow, resetWorkflow, updateWorkflow } from '../lib/workflow'
-import { newestGraph } from '../lib/workflowRecovery'
-import type { Chapter, ExtractedTextDocument, IngestionJob, KnowledgeGraphSummary, Material, PlanGraph, ReviewPlanType } from '../types/api'
+import type { ExtractedTextDocument, IngestionJob, Material } from '../types/api'
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024
 
@@ -26,51 +25,28 @@ function formatUploadTime(value: string) {
 }
 
 export default function StudyFlowPage() {
-  const navigate = useNavigate()
   const initial = readWorkflow()
   const [materials, setMaterials] = useState<Material[]>([])
   const [material, setMaterial] = useState<Material | undefined>(initial.material)
-  const [graph, setGraph] = useState<KnowledgeGraphSummary | undefined>(initial.graph)
-  const [chapters, setChapters] = useState<Chapter[]>(initial.chapters || [])
-  const [selectedChapterIds, setSelectedChapterIds] = useState<string[]>(initial.chapters?.[0] ? [initial.chapters[0].chapterId] : [])
-  const [planType, setPlanType] = useState<ReviewPlanType>('ASSESSMENT')
-  const [maxQuestions, setMaxQuestions] = useState(6)
-  const [coveragePercent, setCoveragePercent] = useState(80)
-  const [maximumInferenceDepth, setMaximumInferenceDepth] = useState(3)
-  const [maxPoints, setMaxPoints] = useState(12)
-  const [maximumDependencyDepth, setMaximumDependencyDepth] = useState(5)
   const [file, setFile] = useState<File | null>(null)
   const [displayName, setDisplayName] = useState('')
-  const [subjectCode, setSubjectCode] = useState(initial.graph?.subjectCode || 'GENERAL')
+  const [subjectCode, setSubjectCode] = useState('GENERAL')
   const [enableOcr, setEnableOcr] = useState(false)
   const [ocrMode, setOcrMode] = useState<'quick' | 'standard'>('standard')
   const [force, setForce] = useState(false)
   const [search, setSearch] = useState('')
   const [busy, setBusy] = useState(false)
-  const [progress, setProgress] = useState(initial.graph ? '' : '选择文件或已上传资料。')
+  const [progress, setProgress] = useState('选择文件或已上传资料。')
   const [error, setError] = useState('')
   const [preview, setPreview] = useState<ExtractedTextDocument>()
   const [previewName, setPreviewName] = useState('')
   const [previewBusy, setPreviewBusy] = useState(false)
-  const [flowStep, setFlowStep] = useState<'materials' | 'scope'>('materials')
-  const [flowAnimation, setFlowAnimation] = useState<'idle' | 'exit' | 'enter'>('idle')
 
   useEffect(() => {
     void api.getAllMaterials().then(setMaterials).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : '资料列表读取失败。'))
   }, [])
 
   const visibleMaterials = useMemo(() => materials.filter((item) => item.status !== 'DELETED' && item.displayName.toLowerCase().includes(search.trim().toLowerCase())), [materials, search])
-  const selectedChapters = useMemo(() => chapters.filter((chapter) => selectedChapterIds.includes(chapter.chapterId)), [chapters, selectedChapterIds])
-
-  function moveToStep(nextStep: 'materials' | 'scope') {
-    if (nextStep === flowStep || flowAnimation !== 'idle') return
-    setFlowAnimation('exit')
-    window.setTimeout(() => {
-      setFlowStep(nextStep)
-      setFlowAnimation('enter')
-      window.setTimeout(() => setFlowAnimation('idle'), 300)
-    }, 220)
-  }
 
   async function processMaterial(source: Material) {
     setBusy(true); setError(''); setMaterial(source)
@@ -109,32 +85,15 @@ export default function StudyFlowPage() {
         readyMaterial = await api.getMaterial(source.materialId)
         setMaterial(readyMaterial)
         setMaterials((current) => current.map((item) => item.materialId === source.materialId ? readyMaterial : item))
-        setProgress(completed.ocrUsed ? 'OCR 已完成，正在构建图谱。' : '文字提取完成，正在构建图谱。')
+        setProgress(completed.ocrUsed ? 'OCR 与文字提取已完成。' : '文字提取已完成。')
       }
 
-      if (readyMaterial.status === 'READY' && !force) {
-        stage = '已有图谱读取'
-        setProgress('正在读取资料已有的知识图谱。')
-        const existingGraph = newestGraph(await api.getAllKnowledgeGraphs(readyMaterial.materialId))
-        if (existingGraph) {
-          const chapterList = await api.getChapters(existingGraph.graphId)
-          setGraph(existingGraph); setChapters(chapterList); setSelectedChapterIds(chapterList[0] ? [chapterList[0].chapterId] : [])
-          updateWorkflow({ material: readyMaterial, graph: existingGraph, chapters: chapterList, plan: undefined, gameGeneration: undefined, gameStyle: undefined, gameDifficulty: undefined, gameManifest: undefined, gamePackage: undefined, reviewSession: undefined, visitedSceneIds: undefined, answerResults: undefined, resultIdempotencyKey: undefined })
-          setProgress(`已恢复图谱：${existingGraph.chapterCount} 章，${existingGraph.pointCount} 个知识点。`)
-          return
-        }
-      }
-
-      stage = '知识图谱构建'
-      const acceptedBuild = await api.createGraphBuild(readyMaterial.materialId, subjectCode)
-      const completedBuild = await pollUntil(() => api.getGraphBuild(acceptedBuild.buildId), (job) => job.status === 'SUCCEEDED' || job.status === 'FAILED', (job) => setProgress(`正在构建知识图谱 · ${job.progress}%`))
-      if (completedBuild.status === 'FAILED') throw jobError(completedBuild.error, '知识图谱构建失败。')
-      if (!completedBuild.graphId) throw new Error('构图任务完成但没有返回 graphId。')
-
-      const [summary, chapterList] = await Promise.all([api.getKnowledgeGraph(completedBuild.graphId), api.getChapters(completedBuild.graphId)])
-      setGraph(summary); setChapters(chapterList); setSelectedChapterIds(chapterList[0] ? [chapterList[0].chapterId] : [])
-      updateWorkflow({ material: readyMaterial, graph: summary, chapters: chapterList, plan: undefined, gameGeneration: undefined, gameStyle: undefined, gameDifficulty: undefined, gameManifest: undefined, gamePackage: undefined, reviewSession: undefined, visitedSceneIds: undefined, answerResults: undefined, resultIdempotencyKey: undefined })
-      setProgress(`图谱完成：${summary.chapterCount} 章，${summary.pointCount} 个知识点。`)
+      setMaterial(readyMaterial)
+      updateWorkflow({ projectId: undefined, material: readyMaterial, graph: undefined, chapters: undefined, plan: undefined,
+        gameGeneration: undefined, gameStyle: undefined, gameDifficulty: undefined, gameManifest: undefined,
+        gamePackage: undefined, reviewSession: undefined, visitedSceneIds: undefined, answerResults: undefined,
+        resultIdempotencyKey: undefined })
+      setProgress(readyMaterial.status === 'READY' ? '资料解析已就绪，可据此建立研习册。' : '资料已选中。')
     } catch (reason) {
       const suffix = reason instanceof ApiClientError && reason.traceId ? `（traceId: ${reason.traceId}）` : ''
       setError(`${stage}失败：${reason instanceof Error ? reason.message : '处理失败。'}${suffix}`)
@@ -148,7 +107,7 @@ export default function StudyFlowPage() {
     if ((file.type.startsWith('image/') || /\.(png|jpe?g)$/i.test(file.name)) && !enableOcr) return setError('图片资料需要先开启 OCR。')
     setBusy(true); setError(''); setProgress('正在上传资料。')
     try {
-      resetWorkflow(); setGraph(undefined); setChapters([]); setSelectedChapterIds([]); setFlowStep('materials')
+      resetWorkflow()
       const uploaded = await api.uploadMaterial(file, displayName || file.name, subjectCode)
       setMaterial(uploaded); setMaterials((current) => [uploaded, ...current.filter((item) => item.materialId !== uploaded.materialId)]); updateWorkflow({ material: uploaded })
       setProgress('文件上传完成，正在处理资料。')
@@ -160,36 +119,13 @@ export default function StudyFlowPage() {
     }
   }
 
-  async function createPlan() {
-    if (!graph) return
-    if (selectedChapterIds.length === 0) return setError('至少选择一个章节。')
-    if (planType === 'ASSESSMENT' && (maxQuestions < 1 || maxQuestions > 50 || coveragePercent < 25 || coveragePercent > 100 || maximumInferenceDepth < 0 || maximumInferenceDepth > 8)) {
-      return setError('测试计划参数超出允许范围，请检查题目数量、覆盖目标和推理深度。')
-    }
-    if (planType === 'LEARNING' && (maxPoints < 1 || maxPoints > 50 || maximumDependencyDepth < 0 || maximumDependencyDepth > 8)) {
-      return setError('学习计划参数超出允许范围，请检查知识点数量和依赖深度。')
-    }
-    setBusy(true); setError(''); setProgress('正在生成复习计划。')
-    try {
-      const plan: PlanGraph = planType === 'ASSESSMENT'
-        ? await api.createAssessmentPlan(graph.graphId, selectedChapterIds, {
-          maxQuestions,
-          coverageTarget: coveragePercent / 100,
-          maximumInferenceDepth,
-        })
-        : await api.createLearningPlan(graph.graphId, selectedChapterIds, { maxPoints, maximumDependencyDepth })
-      updateWorkflow({ plan, gameGeneration: undefined, gameStyle: undefined, gameDifficulty: undefined, gameManifest: undefined, gamePackage: undefined, reviewSession: undefined, visitedSceneIds: undefined, answerResults: undefined, resultIdempotencyKey: undefined })
-      navigate('/review')
-    } catch (reason) { setError(reason instanceof Error ? reason.message : '复习计划创建失败。') } finally { setBusy(false) }
-  }
-
   async function deleteMaterial(item: Material) {
     if (!window.confirm(`删除资料“${item.displayName}”？此操作不能撤销。`)) return
     setBusy(true); setError('')
     try {
       await api.deleteMaterial(item.materialId)
       setMaterials((current) => current.filter((entry) => entry.materialId !== item.materialId))
-      if (material?.materialId === item.materialId) { resetWorkflow(); setMaterial(undefined); setGraph(undefined); setChapters([]); setSelectedChapterIds([]); setFlowStep('materials') }
+      if (material?.materialId === item.materialId) { resetWorkflow(); setMaterial(undefined) }
       setProgress('资料已删除。')
     } catch (reason) { setError(reason instanceof Error ? reason.message : '资料删除失败。') } finally { setBusy(false) }
   }
@@ -213,7 +149,7 @@ export default function StudyFlowPage() {
       <main className="page materials-page">
         <PageHeader title="藏书阁" />
 
-        <div className={`process-layout process-layout--${flowStep} process-layout--${flowAnimation}`}>
+        <div className="process-layout process-layout--materials">
           <section className="process-primary">
             <section className="form-section upload-panel">
               <header className="upload-panel__header"><div><h2>上传资料</h2><p>文件上限为 10 MiB。图片和扫描件需要开启 OCR 才能识别文字。</p></div></header>
@@ -226,46 +162,18 @@ export default function StudyFlowPage() {
                 <label className={`inline-select-field${enableOcr ? ' is-enabled' : ''}`}><span>OCR 模式</span><select aria-label="OCR 模式" disabled={!enableOcr} value={ocrMode} onChange={(event) => setOcrMode(event.target.value as 'quick' | 'standard')}><option value="standard">标准</option><option value="quick">快速</option></select></label>
               </div>
               <label className="toggle-field compact-toggle"><span><strong>重新提取</strong><small>再次处理已完成的资料并更新提取结果。</small></span><input type="checkbox" role="switch" aria-label="重新提取" checked={force} onChange={(event) => setForce(event.target.checked)} /></label>
-              <button className="button button--primary" disabled={busy} type="submit">{busy ? '正在处理' : '上传并构建图谱'}</button>
+              <button className="button button--primary" disabled={busy} type="submit">{busy ? '正在处理' : '上传并解析'}</button>
               </form>
             </section>
 
             <section className="material-library">
               <header><div><h2>资料库</h2><p>{materials.filter((item) => item.status !== 'DELETED').length} 份资料</p></div><input aria-label="搜索资料" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索资料" /></header>
               <div className="material-table">
-                {visibleMaterials.map((item) => <article className={material?.materialId === item.materialId ? 'selected' : ''} key={item.materialId}><button className="material-open" type="button" disabled={busy} onClick={() => void processMaterial(item)}><span><strong>{item.displayName}</strong><small>{formatUploadTime(item.createdAt)}</small>{item.ocrUsed ? <em className="material-ocr-badge">OCR</em> : null}</span><em className={`material-status material-status--${item.status.toLowerCase()}`}>{item.status}</em></button><div className="material-actions">{item.status === 'READY' ? <button type="button" disabled={previewBusy} onClick={() => void openTextPreview(item)}>文本</button> : null}<button className="material-delete" type="button" disabled={busy && item.status !== 'PROCESSING'} onClick={() => void deleteMaterial(item)}>删除</button></div></article>)}
+                {visibleMaterials.map((item) => <article className={material?.materialId === item.materialId ? 'selected' : ''} key={item.materialId}><button className="material-open" type="button" disabled={busy} onClick={() => void processMaterial(item)}><span><strong>{item.displayName}</strong><small>{formatUploadTime(item.createdAt)}</small>{item.ocrUsed ? <em className="material-ocr-badge">OCR</em> : null}</span><em className={`material-status material-status--${item.status.toLowerCase()}`}>{item.status}</em></button><div className="material-actions">{item.status === 'READY' ? <><button type="button" disabled={previewBusy} onClick={() => void openTextPreview(item)}>文本</button><Link to={`/projects?materialId=${encodeURIComponent(item.materialId)}`}>立册</Link></> : null}<button className="material-delete" type="button" disabled={busy && item.status !== 'PROCESSING'} onClick={() => void deleteMaterial(item)}>删除</button></div></article>)}
                 {!visibleMaterials.length ? <p className="empty-row">没有匹配的资料。</p> : null}
               </div>
-              {graph && flowStep === 'materials' ? <button className="button button--primary flow-next-button" type="button" disabled={busy} onClick={() => moveToStep('scope')}>选择复习范围 →</button> : null}
             </section>
           </section>
-
-          {graph && flowStep === 'scope' ? <aside className="plan-panel">
-            <>
-              <header>
-                <span>复习范围</span>
-                <h2>选择复习范围</h2>
-              </header>
-              <p className="flow-scope-intro">图谱已准备完成。选择章节后，可设置并创建复习计划。</p>
-              <dl className="plan-summary"><div><dt>学科</dt><dd>{graph.subjectCode}</dd></div><div><dt>知识点</dt><dd>{graph.pointCount}</dd></div><div><dt>关系</dt><dd>{graph.relationCount}</dd></div></dl>
-              <div className={`segmented-control plan-type-switch plan-type-switch--${planType === 'ASSESSMENT' ? 'assessment' : 'learning'}`}><button className={`plan-type-button plan-type-button--assessment${planType === 'ASSESSMENT' ? ' is-active' : ''}`} type="button" onClick={() => setPlanType('ASSESSMENT')}>全面测试</button><button className={`plan-type-button plan-type-button--learning${planType === 'LEARNING' ? ' is-active' : ''}`} type="button" onClick={() => setPlanType('LEARNING')}>章节学习</button></div>
-              <div className="chapter-actions"><button type="button" onClick={() => setSelectedChapterIds(chapters.map((item) => item.chapterId))}>全选</button><button type="button" onClick={() => setSelectedChapterIds([])}>清空</button></div>
-              <div className="chapter-picker">{chapters.map((chapter) => <label key={chapter.chapterId} style={{ paddingLeft: `${chapter.depth * 14}px` }}><input type="checkbox" checked={selectedChapterIds.includes(chapter.chapterId)} onChange={() => setSelectedChapterIds((current) => current.includes(chapter.chapterId) ? current.filter((id) => id !== chapter.chapterId) : [...current, chapter.chapterId])} /><span>{chapter.title}</span></label>)}</div>
-              <details className="plan-options">
-                <summary>计划参数</summary>
-                {planType === 'ASSESSMENT' ? <div className="plan-options__grid">
-                  <label>题目上限<input type="number" min={1} max={50} value={maxQuestions} onChange={(event) => setMaxQuestions(Number(event.target.value))} /></label>
-                  <label>覆盖目标（%）<input type="number" min={25} max={100} value={coveragePercent} onChange={(event) => setCoveragePercent(Number(event.target.value))} /></label>
-                  <label>推理深度<input type="number" min={0} max={8} value={maximumInferenceDepth} onChange={(event) => setMaximumInferenceDepth(Number(event.target.value))} /></label>
-                </div> : <div className="plan-options__grid">
-                  <label>知识点上限<input type="number" min={1} max={50} value={maxPoints} onChange={(event) => setMaxPoints(Number(event.target.value))} /></label>
-                  <label>依赖深度<input type="number" min={0} max={8} value={maximumDependencyDepth} onChange={(event) => setMaximumDependencyDepth(Number(event.target.value))} /></label>
-                </div>}
-              </details>
-              <button className="button button--primary" type="button" disabled={busy || selectedChapters.length === 0} onClick={() => void createPlan()}>创建{planType === 'ASSESSMENT' ? '测试' : '学习'}计划</button>
-              <div className="flow-back-row"><button className="button flow-back-button" type="button" onClick={() => moveToStep('materials')}>← 返回</button></div>
-            </>
-          </aside> : null}
         </div>
         {busy && !error
           ? <LoadingIndicator className="page-loading-transition" label={progress || '正在处理…'} compact />

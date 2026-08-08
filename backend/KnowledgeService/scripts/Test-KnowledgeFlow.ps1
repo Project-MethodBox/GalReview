@@ -3,6 +3,9 @@ param(
     [Parameter(Mandatory = $true)]
     [Guid]$MaterialId,
 
+    [Parameter(Mandatory = $true)]
+    [Guid]$StudyProjectId,
+
     [string]$GatewayBaseUrl = "http://localhost:5000",
 
     [string]$AccessToken = $env:GALREVIEW_ACCESS_TOKEN,
@@ -231,6 +234,7 @@ RETURN count(r) AS relationCount
 $idempotencyKey = [Guid]::NewGuid().ToString("D")
 $buildRequest = @{
     materialId = $MaterialId.ToString("D")
+    studyProjectId = $StudyProjectId.ToString("D")
     subjectHint = $SubjectHint.ToUpperInvariant()
     segmentationMode = "AUTO"
 }
@@ -271,6 +275,7 @@ if ([string]$replayedBuild.buildId -ne [string]$build.buildId) {
 
 $conflictingBuildRequest = @{
     materialId = $MaterialId.ToString("D")
+    studyProjectId = $StudyProjectId.ToString("D")
     subjectHint = if ($SubjectHint -eq "GENERAL") { "AGRONOMY" } else { "GENERAL" }
     segmentationMode = "AUTO"
 }
@@ -383,6 +388,7 @@ $prerequisiteCount = @(
 $report = [pscustomobject]@{
     verifiedAt = [DateTimeOffset]::UtcNow.ToString("O")
     materialId = $MaterialId.ToString("D")
+    studyProjectId = $StudyProjectId.ToString("D")
     buildId = [string]$build.buildId
     graphId = $graphId
     sourceTextChecksum = [string]$build.sourceTextChecksum

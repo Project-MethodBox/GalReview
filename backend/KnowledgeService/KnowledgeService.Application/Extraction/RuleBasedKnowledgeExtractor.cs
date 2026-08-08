@@ -20,7 +20,8 @@ public sealed class RuleBasedKnowledgeExtractor : IKnowledgeExtractor
         string textChecksum,
         string subjectCode,
         IReadOnlyList<ChapterSegment> segments,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        Guid? studyProjectId = null)
     {
         var chapters = segments
             .Select(segment => new Chapter(
@@ -85,7 +86,8 @@ public sealed class RuleBasedKnowledgeExtractor : IKnowledgeExtractor
             chapters,
             points,
             relations,
-            now);
+            now,
+            studyProjectId);
     }
 
     private static IEnumerable<PointDraft> Deduplicate(

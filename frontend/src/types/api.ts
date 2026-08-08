@@ -141,6 +141,7 @@ export type ChapterSegmentationMode = 'AUTO' | 'HEADING_RULES' | 'MARKDOWN' | 'D
 export interface GraphBuildJob {
   buildId: Uuid
   materialId: Uuid
+  studyProjectId: Uuid | null
   status: JobStatus
   progress: number
   graphId: Uuid | null
@@ -156,6 +157,7 @@ export interface GraphBuildJob {
 export interface KnowledgeGraphSummary {
   graphId: Uuid
   materialId: Uuid
+  studyProjectId: Uuid | null
   version: number
   subjectCode: string
   chapterCount: number

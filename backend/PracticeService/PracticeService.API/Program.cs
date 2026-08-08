@@ -42,6 +42,12 @@ app.MapGet("/api/v1/practice-projects", async (HttpContext c, ISender sender, Ca
     Results.Ok(ApiSuccess.Create(new { items = await sender.Send(new ListProjectsQuery(RequestIdentity.RequireUser(c, gatewayKey)), ct), nextCursor = (string?)null }, c.TraceIdentifier)));
 app.MapGet("/api/v1/practice-projects/{projectId:guid}", async (Guid projectId, HttpContext c, ISender sender, CancellationToken ct) =>
     Results.Ok(ApiSuccess.Create(await sender.Send(new GetProjectQuery(RequestIdentity.RequireUser(c, gatewayKey), projectId), ct), c.TraceIdentifier)));
+app.MapGet("/internal/v1/practice-projects/{projectId:guid}/graph-scope", async (Guid projectId, Guid ownerUserId, Guid materialId, HttpContext c, ISender sender, CancellationToken ct) =>
+{
+    RequestIdentity.RequireService(c, gatewayKey, "KnowledgeService");
+    var result = await sender.Send(new ValidateProjectGraphScopeQuery(ownerUserId, projectId, materialId), ct);
+    return Results.Ok(ApiSuccess.Create(result, c.TraceIdentifier));
+});
 app.MapPatch("/api/v1/practice-projects/{projectId:guid}", async (Guid projectId, UpdateProjectRequest request, HttpContext c, ISender sender, CancellationToken ct) =>
 {
     if (!request.Version.HasValue) throw new PracticeDomainException(400, "VALIDATION_ERROR", "version 必填。");
@@ -65,11 +71,11 @@ app.MapDelete("/api/v1/practice-questions/{questionId:guid}", async (Guid questi
 
 app.MapPost("/api/v1/practice-projects/{projectId:guid}/question-generations", async (Guid projectId, GenerateQuestionsRequest request, HttpContext c, ISender sender, CancellationToken ct) =>
 {
-    if (!request.IdempotencyKey.HasValue || !request.TargetCount.HasValue)
-        throw new PracticeDomainException(400, "VALIDATION_ERROR", "idempotencyKey 与 targetCount 必填。");
+    if (!request.IdempotencyKey.HasValue)
+        throw new PracticeDomainException(400, "VALIDATION_ERROR", "idempotencyKey 必填。");
     var result = await sender.Send(new GenerateQuestionsCommand(RequestIdentity.RequireUser(c, gatewayKey), projectId,
-        request.IdempotencyKey.Value, request.ReviewPlanId, request.SnapshotVersion, request.Kinds ?? [], request.TargetCount.Value,
-        request.GeneratorVersion ?? "recite-question-v1"), ct);
+        request.IdempotencyKey.Value, request.ReviewPlanId, request.SnapshotVersion, request.Kinds ?? [], request.TargetCount,
+        request.GeneratorVersion ?? "recite-question-v2"), ct);
     return Results.Json(ApiSuccess.Create(result, c.TraceIdentifier), statusCode: 202);
 });
 app.MapGet("/api/v1/question-generation-jobs/{jobId:guid}", async (Guid jobId, HttpContext c, ISender sender, CancellationToken ct) =>
@@ -118,7 +124,8 @@ app.MapGet("/api/v1/shared-practice-packages/{packageId:guid}/content", async (G
 
 app.MapPost("/api/v1/practice-projects/{projectId:guid}/exam-papers", async (Guid projectId, CreateExamPaperRequest request, HttpContext c, ISender sender, CancellationToken ct) =>
 {
-    var result = await sender.Send(new CreateExamPaperCommand(RequestIdentity.RequireUser(c, gatewayKey), projectId, request.Title, request.QuestionCount ?? 30, request.DurationSeconds ?? 3600, request.Seed, request.KindCounts), ct);
+    var result = await sender.Send(new CreateExamPaperCommand(RequestIdentity.RequireUser(c, gatewayKey), projectId, request.Title, request.QuestionCount ?? 30,
+        request.DurationSeconds ?? 3600, request.Seed, request.KindCounts, request.ReviewPlanId, request.SnapshotVersion), ct);
     return Results.Json(ApiSuccess.Create(result, c.TraceIdentifier), statusCode: 201);
 });
 app.MapPost("/api/v1/practice-sessions", async (CreatePracticeSessionRequest request, HttpContext c, ISender sender, CancellationToken ct) =>

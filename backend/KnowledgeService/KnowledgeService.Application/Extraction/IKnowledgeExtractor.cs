@@ -12,5 +12,6 @@ public interface IKnowledgeExtractor
         string textChecksum,
         string subjectCode,
         IReadOnlyList<ChapterSegment> segments,
-        DateTimeOffset now);
+        DateTimeOffset now,
+        Guid? studyProjectId = null);
 }

@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router'
+import { Link, useNavigate, useParams } from 'react-router'
 import AppShell, { PageHeader } from '../components/AppShell'
 import LoadingIndicator from '../components/LoadingIndicator'
 import { api } from '../lib/api'
@@ -130,6 +130,7 @@ function createShellSession(gamePackage: GamePackage): ReviewSession {
 }
 
 export default function ReviewPage() {
+  const { projectId = '' } = useParams()
   const [initial] = useState(() => {
     const saved = readWorkflow()
     // 兼容修复上线前已经留在 localStorage 中的结束会话，避免旧台词和语音复活。
@@ -459,7 +460,7 @@ useEffect(() => {
       if (!isSessionResumable(currentSession)) {
         resetGame()
         clearCompletedReview()
-        navigate('/materials', { replace: true })
+        navigate(projectId ? `/projects/${projectId}` : '/projects', { replace: true })
         return
       }
       await attachRuntime(manifest, workflow.gamePackage, currentSession)
@@ -724,22 +725,24 @@ useEffect(() => {
   }
 
   async function restartReview() {
-    if (busy || !initial.plan) return
-
-    // 完成页已清理持久化的旧会话；这里只恢复不可变计划，以复用原章节范围。
-    // 游戏包、会话、作答与幂等键全部重新创建，保证进入一次全新的 AI 生成流程。
-    resetGame()
-    updateWorkflow({
-      plan: initial.plan,
-      gameStyle: style,
-      gameDifficulty: difficulty,
-    })
-    setProgress(`正在按上次选择的 ${initial.plan.selectedChapterIds.length} 个章节重新生成剧情…`)
+    if (busy || !initial.plan || !initial.graph) return
+    setBusy(true); setError('')
+    try {
+      const nextPlan = await api.createAssessmentPlan(initial.graph.graphId, initial.plan.selectedChapterIds, {
+        maxQuestions: Math.max(1, Math.min(50, initial.plan.estimatedQuestionCount || 6)), coverageTarget: 1, maximumInferenceDepth: 3,
+      })
+      resetGame()
+      updateWorkflow({ plan: nextPlan, gameStyle: style, gameDifficulty: difficulty })
+      setProgress(`正在按最新掌握度重新检索 ${nextPlan.selectedChapterIds.length} 个章节…`)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '新一轮故事复习准备失败。'); setBusy(false); return
+    }
+    setBusy(false)
     await generateAndStart()
   }
 
-  if (!initial.plan) {
-    return <AppShell><main className="page review-page"><PageHeader title="回响" /><section className="empty-state"><h2>还没有复习计划</h2><Link className="button button--primary" to="/materials">创建新复习计划</Link></section></main></AppShell>
+  if (!initial.plan || !projectId || initial.projectId !== projectId) {
+    return <AppShell><main className="page review-page"><PageHeader title="回响" /><section className="empty-state"><h2>请从研习册开启故事复习</h2><Link className="button button--primary" to={projectId ? `/projects/${projectId}` : '/projects'}>返回研习册</Link></section></main></AppShell>
   }
 
   function advanceDialogue() {
@@ -792,9 +795,9 @@ useEffect(() => {
               <span className="completion-action__icon"><CompletionActionIcon kind="graph" /></span>
               <span className="completion-action__copy"><strong>查看知识图谱</strong><small>回到知识结构，查看掌握情况</small></span>
             </Link>
-            <Link className="completion-action completion-action--plan" to="/materials">
+            <Link className="completion-action completion-action--plan" to={`/projects/${projectId}`}>
               <span className="completion-action__icon"><CompletionActionIcon kind="plan" /></span>
-              <span className="completion-action__copy"><strong>创建新复习计划</strong><small>选择资料与章节，开始新计划</small></span>
+              <span className="completion-action__copy"><strong>返回研习册</strong><small>改选章节或换一种温习方式</small></span>
             </Link>
           </div>
         </section>
@@ -818,7 +821,7 @@ useEffect(() => {
           {gamePackage && isSessionResumable(session)
             ? <button className="primary-button" type="button" disabled={busy} onClick={() => void resumeRuntime()}>恢复会话</button>
             : session && !isSessionResumable(session)
-              ? <Link className="primary-button" to="/materials" onClick={() => clearCompletedReview()}>创建新复习计划</Link>
+              ? <Link className="primary-button" to={`/projects/${projectId}`} onClick={() => clearCompletedReview()}>返回研习册</Link>
             : generation && generation.status !== 'FAILED'
               ? <button className="primary-button" type="button" disabled={busy} onClick={() => void resumeGeneration()}>{busy ? '恢复中…' : `继续生成（${generation.progress}%）`}</button>
               : <button className="primary-button" type="button" disabled={busy} onClick={() => void generateAndStart()}>{busy ? '准备中…' : '生成并开始'}</button>}

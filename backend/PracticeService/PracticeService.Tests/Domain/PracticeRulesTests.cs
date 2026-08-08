@@ -21,6 +21,15 @@ public sealed class PracticeRulesTests
     }
 
     [Fact]
+    public void Graph_project_requires_a_knowledge_point_before_question_is_ready()
+    {
+        var project = new StudyProject(Guid.NewGuid(), Guid.NewGuid(), "测试", "CS", [Guid.NewGuid()], Guid.NewGuid(), Guid.NewGuid(), ProjectStatus.Active, 1, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        var error = Assert.Throws<PracticeDomainException>(() => PracticeRules.CreateQuestion(project,
+            new QuestionDraft(PracticeQuestionKind.Essay, "题目", [], ["答案"], null, 5, 3, null, [], QuestionStatus.Ready)));
+        Assert.Equal("QUESTION_BINDING_REQUIRED", error.Code);
+    }
+
+    [Fact]
     public void Seeded_selection_is_replayable()
     {
         var project = new StudyProject(Guid.NewGuid(), Guid.NewGuid(), "测试", "CS", [Guid.NewGuid()], null, Guid.NewGuid(), ProjectStatus.Active, 1, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
@@ -36,4 +45,41 @@ public sealed class PracticeRulesTests
         Assert.InRange(PracticeRules.LevenshteinSimilarity("二叉树", "树"), 0, 1);
         Assert.Equal(0, PracticeRules.LevenshteinSimilarity("", "答案"));
     }
+
+    [Fact]
+    public void Smart_selection_returns_one_replayable_question_per_target_point()
+    {
+        var project = new StudyProject(Guid.NewGuid(), Guid.NewGuid(), "测试", "CS", [Guid.NewGuid()], Guid.NewGuid(), Guid.NewGuid(), ProjectStatus.Active, 1, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        var firstPoint = Guid.NewGuid(); var secondPoint = Guid.NewGuid();
+        var targets = new[]
+        {
+            new PlanGraphPoint(firstPoint, Guid.NewGuid(), "第一点", "", [], 0.8, [firstPoint]),
+            new PlanGraphPoint(secondPoint, Guid.NewGuid(), "第二点", "", [], 0.2, [secondPoint])
+        };
+        var questions = new[]
+        {
+            ReadyQuestion(project, "第一点 A", firstPoint), ReadyQuestion(project, "第一点 B", firstPoint), ReadyQuestion(project, "第二点", secondPoint)
+        };
+
+        var selected = PracticeRules.SelectSmartQuestions(questions, 2, 42, targets);
+
+        Assert.Equal(2, selected.Count);
+        Assert.Equal(2, selected.Select(question => question.KnowledgePointId).Distinct().Count());
+        Assert.Equal(selected.Select(question => question.QuestionId), PracticeRules.SelectSmartQuestions(questions, 2, 42, targets).Select(question => question.QuestionId));
+    }
+
+    [Fact]
+    public void Smart_selection_reports_exact_coverage_gap()
+    {
+        var project = new StudyProject(Guid.NewGuid(), Guid.NewGuid(), "测试", "CS", [Guid.NewGuid()], Guid.NewGuid(), Guid.NewGuid(), ProjectStatus.Active, 1, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        var missingPoint = Guid.NewGuid();
+        var target = new PlanGraphPoint(missingPoint, Guid.NewGuid(), "缺题知识点", "", [], 1, [missingPoint]);
+
+        var error = Assert.Throws<PracticeDomainException>(() => PracticeRules.SelectSmartQuestions([], 1, 42, [target]));
+
+        Assert.Equal("QUESTION_COVERAGE_GAP", error.Code);
+    }
+
+    private static PracticeQuestion ReadyQuestion(StudyProject project, string prompt, Guid pointId) =>
+        PracticeRules.CreateQuestion(project, new QuestionDraft(PracticeQuestionKind.Essay, prompt, [], ["答案"], null, 5, 3, pointId, [], QuestionStatus.Ready));
 }

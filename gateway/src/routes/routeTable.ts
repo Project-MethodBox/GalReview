@@ -34,6 +34,18 @@ export const ROUTE_TABLE: RouteEntry[] = [
     rateLimitCategory: 'general',
   },
   {
+    path: '/internal/v1/knowledge-graphs',
+    service: 'knowledgeService',
+    auth: 'service',
+    rateLimitCategory: 'general',
+  },
+  {
+    path: '/internal/v1/practice-projects',
+    service: 'practiceService',
+    auth: 'service',
+    rateLimitCategory: 'general',
+  },
+  {
     path: '/internal/v1/review-evidence',
     service: 'knowledgeService',
     auth: 'service',
@@ -189,6 +201,7 @@ export const ROUTE_TABLE: RouteEntry[] = [
     auth: 'user',
     rateLimitCategory: 'generation',
     methods: ['POST'],
+    timeoutMs: 600_000,
   },
   {
     path: '/api/v1/exam-import-jobs',

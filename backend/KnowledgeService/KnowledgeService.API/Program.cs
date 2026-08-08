@@ -7,11 +7,13 @@ using KnowledgeService.Application.Materials;
 using KnowledgeService.Application.Mastery;
 using KnowledgeService.Application.Persistence;
 using KnowledgeService.Application.Planning;
+using KnowledgeService.Application.Projects;
 using KnowledgeService.Application.Segmentation;
 using KnowledgeService.Application.Time;
 using KnowledgeService.Persistence.Materials;
 using KnowledgeService.Persistence.Neo4j;
 using KnowledgeService.Persistence.Options;
+using KnowledgeService.Persistence.Projects;
 using KnowledgeService.Persistence.Repositories;
 using Neo4j.Driver;
 
@@ -47,6 +49,7 @@ builder.Services.AddSingleton<IDriver>(_ =>
     Neo4jDriverFactory.Create(neo4jOptions));
 builder.Services.AddSingleton<IKnowledgeRepository, Neo4jKnowledgeRepository>();
 builder.Services.AddHttpClient<IMaterialTextClient, GatewayMaterialTextClient>();
+builder.Services.AddHttpClient<IStudyProjectScopeClient, GatewayStudyProjectScopeClient>();
 
 builder.Services.AddSingleton<ISystemClock, SystemClock>();
 builder.Services.AddSingleton<IChapterSegmenter, ChapterSegmenter>();

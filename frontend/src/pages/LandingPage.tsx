@@ -12,7 +12,7 @@ const features = [
   },
   {
     title: '把资料整理成自己的题库',
-    description: '围绕同一学习项目管理单选、多选、判断、填空与简答题。既可生成题目，也可导入旧题库，并在确认后进入复习。',
+    description: '围绕同一研习册管理单选、填空、判断、名词解释与简答题。既可生成题目，也可导入旧题库，并在确认后进入复习。',
     icon: KnowledgeIcon,
   },
   {
@@ -22,7 +22,7 @@ const features = [
   },
   {
     title: '在需要时进入故事复习',
-    description: '视觉小说不再是独立流程，而是学习项目中的一种复习模式。题目与剧情仍基于同一份资料、同一张图谱和同一套掌握记录。',
+    description: '视觉小说不是独立项目，而是研习册中的一种复习方式。题目与剧情仍基于同一份资料、同一张识网和同一套掌握记录。',
     icon: ReviewIcon,
   },
 ]
@@ -56,8 +56,8 @@ const characters = [
 ]
 
 const steps = [
-  { num: '01', title: '上传并解析资料', desc: '文件解析与文字识别先还原原文，AI 再辅助整理章节、概念和候选题目。关键结果都能回到资料来源核对。' },
-  { num: '02', title: '建立并确认题库', desc: '系统按资料生成五类题目，也支持导入既有题库。你可以编辑答案与解析，确认后再用于正式复习。' },
+  { num: '01', title: '上传并解析资料', desc: '文件解析与文字识别先还原原文，再整理章节、概念与知识脉络。关键结果都能回到资料来源核对。' },
+  { num: '02', title: '立册并自动成题', desc: '建立研习册后立即生成单选、填空、名词解释与简答题；判断题和既有题库可通过整卷或项目包导入。' },
   { num: '03', title: '开始智能复习', desc: '选择日常练习、智能复习或模拟考试。知识图谱与 SM-2 结合当前掌握度，安排更需要复习的内容。' },
   { num: '04', title: '用结果驱动下一轮', desc: '作答结果回写掌握记录与复习间隔；需要换一种方式巩固时，还可以在同一项目中进入视觉小说复习。' },
 ]
@@ -69,11 +69,11 @@ const faqs = [
   },
   {
     q: 'AI 在解析和复习中做什么？',
-    a: 'AI 用于辅助识别资料结构、生成候选题目和解释作答结果；文件解析、答案判定与复习调度仍有明确规则和降级路径。重要内容保留来源引用，生成题目需经确认。',
+    a: 'AI 用于故事表达和有出处的解释辅助；文件解析、题目生成、答案判定与复习调度都有明确规则和降级路径。自动题只有在答案、知识点和原文出处均可核对时才会入库。',
   },
   {
     q: '故事复习和普通练习是什么关系？',
-    a: '故事复习是学习项目中的可选模式。它与日常练习、智能复习和模拟考试共用资料、题库、知识图谱与复习记录，不会另建一套孤立数据。',
+    a: '故事复习是研习册中的可选方式。它与章节练习、智能复习和模拟试卷共用资料、题笺、识网与掌握记录，不会另建一套孤立数据。',
   },
   {
     q: '需要安装软件吗？',
@@ -277,7 +277,7 @@ export default function LandingPage() {
           </Link>
           <nav className="landing-nav__links">
             <Link to="#features" onClick={(e) => { e.preventDefault(); scroll('#features') }}>核心特色</Link>
-            <Link to="#characters" onClick={(e) => { e.preventDefault(); scroll('#characters') }}>角色介绍</Link>
+            <Link to="#characters" onClick={(e) => { e.preventDefault(); scroll('#characters') }}>故事回响</Link>
             <Link to="#workflow" onClick={(e) => { e.preventDefault(); scroll('#workflow') }}>使用流程</Link>
             <Link to="#faq" onClick={(e) => { e.preventDefault(); scroll('#faq') }}>常见问题</Link>
           </nav>
@@ -384,10 +384,10 @@ export default function LandingPage() {
             </h1>
             <p className="landing-hero__subtitle">
               千知万理围绕你的复习资料库工作：解析原文、建立题库，
-              再用知识图谱与 SM-2 安排练习；视觉小说是同一学习项目中的可选复习方式。
+              再用知识图谱与 SM-2 安排练习；视觉小说是同一研习册中的可选复习方式。
             </p>
             <div className="landing-hero__actions">
-              <Link className="button button--primary landing-hero__cta landing-glass-button" to="/register">建立第一个学习项目</Link>
+              <Link className="button button--primary landing-hero__cta landing-glass-button" to="/register">建立第一册研习</Link>
               <button className="button button--light landing-glass-button" onClick={() => scroll('#workflow')}>了解解析与复习流程</button>
             </div>
           </div>
@@ -402,12 +402,13 @@ export default function LandingPage() {
                   </div>
                   <div className="landing-app-mock__url">galreview.app</div>
                 </div>
-                <div className="landing-app-mock__stage">
-                  <picture className="landing-app-mock__picture">
-                    <source srcSet="/landing-game-scene.avif" type="image/avif" />
-                    <source srcSet="/landing-game-scene.webp" type="image/webp" />
-                    <img className="landing-app-mock__scene-img" src="/landing-game-scene.png" alt="游戏画面" />
-                  </picture>
+                <div className="landing-app-mock__stage landing-app-mock__stage--review">
+                  <div className="landing-review-mock">
+                    <header><span>研习册</span><strong>数据结构期末复习</strong><small>6 章 · 42 个知识点 · 96 道题</small></header>
+                    <div className="landing-review-mock__stats"><span><small>今日待习</small><strong>12</strong></span><span><small>已掌握</small><strong>68%</strong></span><span><small>连续温习</small><strong>7 天</strong></span></div>
+                    <div className="landing-review-mock__list"><span><i>01</i><b>树与二叉树</b><small>4 个知识点待回看</small></span><span><i>02</i><b>图的遍历</b><small>下一次复习：今天</small></span><span><i>03</i><b>排序算法</b><small>掌握度稳定</small></span></div>
+                    <div className="landing-review-mock__actions"><span>开始章节温习</span><span>模拟试卷</span><span>故事回响</span></div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -420,7 +421,7 @@ export default function LandingPage() {
               <div className="landing-feature-split__copy">
                 <h2>让每份资料，<br />进入可持续的复习循环。</h2>
                 <p className="landing-features__intro">
-                  资料、题库、知识图谱和复习记录属于同一个学习项目。
+              资料、题库、知识图谱和复习记录属于同一册经典复习项目。
                   AI 负责辅助理解与生成，明确规则负责判定与调度，你始终可以核对来源并确认内容。
                 </p>
                 <ul className="landing-feature-list">
@@ -459,7 +460,7 @@ export default function LandingPage() {
             <h2>三位性格迥异的校园伙伴</h2>
             <p className="landing-characters__intro">
               有人善于看穿迷雾，有人总能追到第一手线索，也有人相信一切异常都可以被测量和验证。<br />
-              当你选择故事复习模式时，他们会把同一份题库与知识关系带入互动剧情。
+              只有当你从研习册主动选择故事回响时，他们才会把同一份题库与知识关系带入互动剧情。
             </p>
             <div className="landing-characters__grid">
               {characters.map((char) => (
@@ -491,7 +492,7 @@ export default function LandingPage() {
           <div className="landing-workflow__inner">
             <h2>从一份资料，进入智能复习循环</h2>
             <p className="landing-workflow__intro">
-              解析、确认、复习与反馈按顺序衔接；每一步都围绕同一个学习项目，不拆散你的资料与进度。
+              解析、确认、复习与反馈按顺序衔接；每一步都归于同一册研习，不拆散你的资料与进度。
             </p>
             <div className="landing-workflow__timeline">
               {steps.map((step) => (
@@ -528,7 +529,7 @@ export default function LandingPage() {
             <h2>从第一份资料开始建立复习系统</h2>
             <p>让千知万理协助解析、出题和安排复习，同时保留你对资料与答案的最终确认。</p>
             <div className="landing-cta__actions">
-              <Link className="button button--primary landing-glass-button" to="/register">注册并建立学习项目</Link>
+              <Link className="button button--primary landing-glass-button" to="/register">注册并建立研习册</Link>
               <button className="button button--light landing-glass-button" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>返回顶部</button>
             </div>
           </div>
@@ -549,7 +550,7 @@ export default function LandingPage() {
               <h4>产品</h4>
               <nav>
                 <Link to="#features" onClick={(e) => { e.preventDefault(); scroll('#features') }}>核心特色</Link>
-                <Link to="#characters" onClick={(e) => { e.preventDefault(); scroll('#characters') }}>角色介绍</Link>
+                <Link to="#characters" onClick={(e) => { e.preventDefault(); scroll('#characters') }}>故事回响</Link>
                 <Link to="#workflow" onClick={(e) => { e.preventDefault(); scroll('#workflow') }}>使用流程</Link>
                 <Link to="/register">注册</Link>
               </nav>

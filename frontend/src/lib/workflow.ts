@@ -15,6 +15,7 @@ import type {
 const WORKFLOW_KEY = 'galreview.workflow'
 
 export interface StudyWorkflow {
+  projectId?: string
   material?: Material
   graph?: KnowledgeGraphSummary
   chapters?: Chapter[]
@@ -53,6 +54,7 @@ export function updateWorkflow(patch: Partial<StudyWorkflow>): StudyWorkflow {
 export function clearCompletedReview(): StudyWorkflow {
   const current = readWorkflow()
   const next: StudyWorkflow = {
+    projectId: current.projectId,
     material: current.material,
     graph: current.graph,
     chapters: current.chapters,

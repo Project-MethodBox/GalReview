@@ -46,13 +46,20 @@ const pageTitles: Record<string, string> = {
   '/admin/login': '管理员登录',
   '/admin': '观测台',
   '/home': '起点',
-  '/projects': '学习项目',
+  '/projects': '研习册',
   '/shared-projects': '复习资源中心',
   '/materials': '藏书阁',
   '/knowledge': '拾知',
   '/knowledge-graph': '识网',
   '/review': '回响',
   '/settings': '我的',
+}
+
+function resolvePageTitle(pathname: string) {
+  if (pathname.startsWith('/projects/') && pathname.endsWith('/story')) return '故事回响'
+  if (pathname.startsWith('/projects/')) return '研习册'
+  if (pathname.startsWith('/practice/')) return '温习'
+  return pageTitles[pathname] ?? '页面未找到'
 }
 
 function Protected({ children }: { children: ReactNode }) {
@@ -105,9 +112,9 @@ function AnimatedRoutes() {
 
   useEffect(() => {
     if (location.pathname === '/') {
-      document.title = '千知万理 — 知识有图谱，复习有剧情'
+      document.title = '千知万理 — 一卷成册，循知而习'
     } else {
-      document.title = `${pageTitles[location.pathname] ?? '页面未找到'} · 千知万理`
+      document.title = `${resolvePageTitle(location.pathname)} · 千知万理`
     }
   }, [location.pathname])
 
@@ -123,12 +130,13 @@ function AnimatedRoutes() {
         <Route path="/home" element={<Protected><HomePage /></Protected>} />
         <Route path="/projects" element={<Protected><PracticeProjectsPage /></Protected>} />
         <Route path="/projects/:projectId" element={<Protected><PracticeProjectPage /></Protected>} />
+        <Route path="/projects/:projectId/story" element={<Protected><ReviewPage /></Protected>} />
         <Route path="/shared-projects" element={<Protected><SharedPracticePackagesPage /></Protected>} />
         <Route path="/practice/:sessionId" element={<Protected><PracticeSessionPage /></Protected>} />
         <Route path="/materials" element={<Protected><StudyFlowPage /></Protected>} />
         <Route path="/knowledge" element={<Protected><KnowledgePointsPage /></Protected>} />
         <Route path="/knowledge-graph" element={<Protected><KnowledgeGraphPage /></Protected>} />
-        <Route path="/review" element={<Protected><ReviewPage /></Protected>} />
+        <Route path="/review" element={<Protected><Navigate replace to="/projects" /></Protected>} />
         <Route path="/settings" element={<Protected><SettingsPage /></Protected>} />
         <Route path="*" element={<NotFoundPage />} />
       </Routes>

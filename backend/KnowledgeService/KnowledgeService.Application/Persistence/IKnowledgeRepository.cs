@@ -48,7 +48,7 @@ public interface IKnowledgeRepository
         CancellationToken cancellationToken);
 
     Task<IReadOnlyList<KnowledgeGraphSummary>> ListGraphsAsync(
-        Guid materialId,
+        Guid studyProjectId,
         Guid ownerUserId,
         CancellationToken cancellationToken);
 

@@ -437,7 +437,7 @@ test('five endpoints work over HTTP with trusted headers', async () => {
       respond({
         resultId, reviewPlanId: goldenPackage.reviewPlanId, status: 'ACCEPTED',
         updatedPointIds: [], changes: [], ignoredEvidenceCount: 0,
-        algorithmVersion: 'sm2-graph-v1', processedAt: new Date().toISOString(),
+        algorithmVersion: 'sm2-graph-v2', processedAt: new Date().toISOString(),
       })
       return
     }

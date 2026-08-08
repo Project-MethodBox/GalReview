@@ -55,6 +55,7 @@ const configuredBase = import.meta.env.VITE_API_BASE_URL?.trim() || '/api/v1'
 const API_BASE_URL = configuredBase.replace(/\/$/, '')
 const DEFAULT_TIMEOUT_MS = 30_000
 const UPLOAD_TIMEOUT_MS = 120_000
+const QUESTION_BANK_TIMEOUT_MS = 600_000
 
 export class ApiClientError extends Error {
   readonly code: string
@@ -529,12 +530,13 @@ export const api = {
     return request(`/ingestion-jobs/${encodeURIComponent(jobId)}`)
   },
 
-  createGraphBuild(materialId: string, subjectHint?: string): Promise<GraphBuildJob> {
+  createGraphBuild(studyProjectId: string, materialId: string, subjectHint?: string): Promise<GraphBuildJob> {
     return request('/knowledge-graph-builds', {
       method: 'POST',
       headers: { 'Idempotency-Key': createUuidV4() },
       body: json({
         materialId,
+        studyProjectId,
         subjectHint: subjectHint?.trim().toUpperCase() || undefined,
         segmentationMode: 'AUTO',
         extractorVersion: 'knowledge-extractor-v2',
@@ -550,13 +552,13 @@ export const api = {
     return request(`/knowledge-graphs/${encodeURIComponent(graphId)}`)
   },
 
-  listKnowledgeGraphs(materialId: string, cursor?: string): Promise<KnowledgeGraphPage> {
-    return request(`/knowledge-graphs${query({ materialId, limit: 100, cursor })}`)
+  listKnowledgeGraphs(studyProjectId: string, cursor?: string): Promise<KnowledgeGraphPage> {
+    return request(`/knowledge-graphs${query({ studyProjectId, limit: 100, cursor })}`)
   },
 
-  getAllKnowledgeGraphs(materialId: string): Promise<KnowledgeGraphSummary[]> {
+  getAllKnowledgeGraphs(studyProjectId: string): Promise<KnowledgeGraphSummary[]> {
     return collectPages<KnowledgeGraphSummary>((cursor) =>
-      request(`/knowledge-graphs${query({ materialId, limit: 100, cursor })}`),
+      request(`/knowledge-graphs${query({ studyProjectId, limit: 100, cursor })}`),
     )
   },
 
@@ -719,8 +721,14 @@ export const api = {
     return request('/practice-projects')
   },
 
-  createPracticeProject(input: { name: string; subjectCode?: string; materialIds: string[]; graphId?: string }): Promise<StudyProject> {
+  createPracticeProject(input: { name: string; subjectCode?: string; materialIds: string[]; graphId?: null }): Promise<StudyProject> {
     return request('/practice-projects', { method: 'POST', body: json(input) })
+  },
+
+  updatePracticeProject(project: StudyProject, input: { name?: string; subjectCode?: string; materialIds?: string[]; graphId?: string }): Promise<StudyProject> {
+    return request(`/practice-projects/${encodeURIComponent(project.projectId)}`, {
+      method: 'PATCH', body: json({ ...input, version: project.version }),
+    })
   },
 
   getPracticeProject(projectId: string): Promise<PracticeProjectDetails> {
@@ -765,13 +773,13 @@ export const api = {
     return request(`/practice-sessions/${encodeURIComponent(sessionId)}/completion`, { method: 'POST', body: json({ idempotencyKey: createUuidV4() }) })
   },
 
-  createExamPaper(projectId: string, input: { title: string; questionCount: number; durationSeconds: number }): Promise<ExamPaper> {
+  createExamPaper(projectId: string, input: { title: string; questionCount: number; durationSeconds: number; reviewPlanId: string; snapshotVersion: string }): Promise<ExamPaper> {
     return request(`/practice-projects/${encodeURIComponent(projectId)}/exam-papers`, { method: 'POST', body: json(input) })
   },
 
-  generatePracticeQuestions(projectId: string, input: { reviewPlanId?: string; snapshotVersion?: string; kinds: PracticeQuestionKind[]; targetCount: number }): Promise<PracticeJob> {
+  generatePracticeQuestions(projectId: string, input: { reviewPlanId: string; snapshotVersion: string; kinds: PracticeQuestionKind[]; targetCount?: number }): Promise<PracticeJob> {
     return request(`/practice-projects/${encodeURIComponent(projectId)}/question-generations`, {
-      method: 'POST', body: json({ ...input, idempotencyKey: createUuidV4(), generatorVersion: 'recite-question-v1' }), timeoutMs: UPLOAD_TIMEOUT_MS,
+      method: 'POST', body: json({ ...input, idempotencyKey: createUuidV4(), generatorVersion: 'recite-question-v2' }), timeoutMs: QUESTION_BANK_TIMEOUT_MS,
     })
   },
 

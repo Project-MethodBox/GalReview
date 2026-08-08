@@ -1125,3 +1125,168 @@ Practice session `4dd4a86d-5a4f-499f-bcf9-a24df615d93f`，GamePackage
 GalGame 在 credits 不足任务中把 `JsonElement` details 直接写入 Mongo。修复后分别重跑目标测试、
 目标镜像和完整 Gateway 链路。故障阶段留下的一笔已知预授权
 `400e04bc-febe-46d6-84a7-40e1c4fd1072` 已通过正式 release 接口恢复为 `RELEASED`。
+
+## 28. 2026-08-09 Recite-first 业务纠偏与全链复验
+
+本轮按 ReciteHelper 原始代码、用户手册和领域模型重新冻结业务边界：`StudyProject` 是唯一用户可见
+的顶层项目，在界面称为“研习册”；藏书阁只负责资料与识网；章节练习、智能复习、模拟试卷和
+故事回响都从同一册内发起。故事不再建立独立项目，也不再从全局 `/review` 恢复旧计划。
+
+### 28.1 自动化与构建
+
+| 验证项 | 结果 |
+|---|---:|
+| PracticeService 测试 | PASS，21 / 21 |
+| KnowledgeService `sm2-graph-v2` 测试 | PASS，111 / 111 |
+| RenderService TypeScript + Vitest | PASS，23 / 23 |
+| Frontend TypeScript + Vite production build | PASS，1401 modules；仅既有 KnowledgeDag chunk 警告 |
+| PracticeService / KnowledgeService / Frontend 镜像 | PASS |
+| Compose 运行态 | PASS，15 个容器全部 healthy |
+| Gateway `:5000/readyz` / Frontend `:5120/healthz` | HTTP 200 / 200 |
+| Practice 资源清单 | 构建前 14 / 14 哈希通过；构建后仓库内 `Resources` 再次移至仓库外 |
+
+### 28.2 经典复习主线
+
+全新用户经 Gateway 完成 TXT 上传、文字提取、三章/三点知识图谱、研习册、评估计划、自动成题、
+人工确认入库、SMART_REVIEW、模拟试卷与 mastery 读取。结果如下：
+
+| 验证项 | 结果 |
+|---|---:|
+| 自动成题 | `SUCCEEDED`，生成 15 题 |
+| 知识点贴签 | 15 / 15 非空；没有按序号轮转绑定 |
+| SMART_REVIEW | 3 题对应 3 个不同 PlanGraph 目标，`COMPLETED` |
+| 模拟试卷 | 3 题对应 3 个不同 PlanGraph 目标，`COMPLETED` |
+| mastery | 两类答题都经同一 KnowledgeService evidence 入口更新 |
+| Practice credits | `1.00000 -> 0.99600`，held 为 0 |
+
+样本：material `7af9920d-6881-4e69-b782-23b0bc2d7f5a`，graph
+`7695e007-3a74-4d01-8c76-100c00a4ce26`，StudyProject
+`f1c93fe2-40d8-4ae1-9760-1873f3ea02f4`。
+
+### 28.3 故事回响与 credits
+
+同一用户、同一 graph 的首次故事生成按预估正确返回 `402 CREDITS_INSUFFICIENT`：余额
+`0.996`、最低预估 `1.63827`，details 包含固定购买地址。随后只通过管理员正式批量制码 API
+生成一枚 3-credit 兑换码，并由普通用户正式兑换；未直接修改数据库余额。
+
+兑换后故事生成 `SUCCEEDED`，产出 5 个场景；Render 会话提交 3 道题，知识点 3 / 3 唯一，
+事件接收 3 条，结果首次 `ACCEPTED`、同载荷重放 `DUPLICATE`。三个相同 graph 的 mastery
+版本均再次递增，证明普通答题、试卷与故事回响共享掌握记录。最终 credits `3.92482`，held=0。
+样本 GamePackage `b275de54-cc39-4b60-b797-db269848aeab`，Render session
+`d0ba10fe-87c4-4dc8-b1a0-6f6e40790db8`。
+
+### 28.4 无任意混合权重的 `sm2-graph-v2`
+
+终检发现旧 `sm2-graph-v1` 尚有 `score*0.65 + observed*0.35`，计划侧还额外假定 90% 到期保持率；
+另有“答对上层点便给前置点最多增加 5 分”的间接证据。三者都不是原始 SM-2 的一部分，且后者
+没有前置点的真实作答证据。本轮升级后：
+
+- `score=quality/5*100`，只解释该知识点最近一次直接观测；
+- SM-2 的 easiness、repetitions、interval、lapses 与 nextReviewAt 继续作为唯一纵向调度状态；
+- `lastReviewedAt=null`、`repetitions=0` 或 `now>=nextReviewAt` 才进入到期集合；
+- 图谱只在该集合上通过最大乘积路径与单调次模覆盖选择题目，不与 SM-2 按百分比相加；
+- mastery 只更新题目明确绑定的知识点，不给未作答前置点或后继点推断加减分；
+- 没有到期点时只返回一个稳定的探测题。
+
+新 KnowledgeService 镜像部署后，以既有三点 graph 创建计划时确实只得到 1 个探测目标；通过
+Practice SMART 会话正确作答后，目标 score 变为 `100`，reason 为
+`DIRECT:ASSESSMENT:quality=5`。Gateway 与 Frontend 仍为 HTTP 200，仓库内资源目录不存在。
+
+## 29. 2026-08-09 藏书阁顺序与立册布局复验
+
+- 侧栏顺序调整为“起点 → 藏书阁 → 研习册 → 识网 → 我的”；首页快捷入口同样先展示藏书阁，
+  没有旧册时主按钮进入 `/materials`，不再绕过资料解析与识网直接进入立册页。
+- `/projects` 的“立册 / 建立经典复习项目”保留在普通文档流中，CSS 明确为
+  `.practice-project-create { position: static; }`；题目编辑区原有 sticky 行为不受影响。
+- Frontend TypeScript + Vite production build 通过，1401 modules；仅保留既有 KnowledgeDag
+  大 chunk 警告。Frontend 镜像重新构建并替换后 `/healthz` 为 HTTP 200，Compose 15 个容器
+  全部 healthy。按实测要求，验证后未停止 Docker。
+
+## 30. 2026-08-09 研习入口禁用原因与交互复验
+
+实测用户项目 `4ae99304-7751-497d-8ca1-684070cbf2af` 已绑定 graph，但 MongoDB 中题目数为 0，
+且没有题目生成任务。旧前端因此用 `!ready` 同时禁用章节练习、智能复习与模拟试卷；全局
+`.button:disabled { cursor: wait; }` 又把业务前置条件错误表现为进行中状态。
+
+修正后，无 READY 题时页面显示“题库待成”及“前往成题”入口；三个按钮保持可点击，并在任何
+PlanGraph 或试卷创建请求发出前由 `requireReadyQuestions()` 返回成题、补签和核对入库指引。
+普通禁用按钮使用 `not-allowed`，只有显式 `aria-busy=true` 的真实进行中按钮使用等待光标。
+“循网”文案也改为 SM-2 到期集合后再按图谱依赖覆盖，不再描述为两种遗忘风险的混合。
+
+Frontend TypeScript + Vite production build 通过，1401 modules；镜像重新构建并替换后
+`/healthz` 为 HTTP 200，Compose 15 个容器全部 healthy。Docker 保持运行供人工实测。
+
+## 31. 2026-08-09 恢复 ReciteHelper“立册即成题”
+
+重新核对 `ReciteHelper.Infrastructure/Services/ProjectCreationService.cs` 与中文用户手册后，确认经典
+创建流程本来就在一次操作中完成读取文本、知识/题目生成、章节整理和知识库构建；没有生成任何
+题目时创建会明确失败。首次生成包含单选、填空、名词解释和简答，判断题只来自导入套卷。
+
+该节首次验证时仍采用了已废止的 material-scoped graph 顺序；第 32 节已按最新边界重新完成真实
+全链复验。当前产品级编排为：创建 `graphId=null` 的 StudyProject → 以本册 `projectId` 建图并绑定
+→ 读取本册 graph 全部章节 → 创建 OPEN assessment plan → 自动成题 → 进入本册。当前
+`recite-question-v1` 只有在答案、唯一知识点和精确
+SourceReference 同时成立时才创建题目，因此成功结果直接 READY；独立成题区只负责追加或失败重试。
+credits 不足或生成失败时保留已创建的册并显示恢复说明，不重复建立第二册。
+修复前已经存在的空册不在页面加载时自动扣费；其成题按钮明确显示“恢复自动成题”，由用户确认后
+复用同一生成链路补齐 READY 题目。
+
+验证结果：
+
+| 验证项 | 结果 |
+|---|---:|
+| PracticeService tests | PASS，21 / 21 |
+| Frontend production build | PASS，1401 modules；仅既有 KnowledgeDag chunk 警告 |
+| 真实 Gateway 立册编排 | PASS，project `7a2e78c5-a0ce-45d1-bd27-692234990b38` |
+| 自动成题任务 | `SUCCEEDED`，4 题 |
+| READY / 知识点绑定 | 4 / 4；未绑定 0 |
+| 首次题型 | 单选、填空、名词解释、简答；判断题 0 |
+| 自动成题后 SMART_REVIEW | PASS，session `99808d97-eb23-4a2c-b7cd-935069447115`，1 题 ACTIVE |
+| Gateway / Frontend | HTTP 200 / 200 |
+| Compose | 15 个容器全部 healthy，按人工实测要求保持运行 |
+| Practice Resources | 构建时从仓库外临时恢复 14 文件；构建后已移回，仓库内目录不存在 |
+
+## 32. 2026-08-09 图谱归属研习册的双册隔离与经典流程复验
+
+本轮纠正聚合边界：藏书阁的 material 只是研习册图谱的来源，`KnowledgeGraph`、版本序列、知识点
+身份与 mastery 均归 `StudyProject`。新册先以 `graphId=null` 创建，KnowledgeService 再通过 Gateway
+调用 PracticeService 的受信 INTERNAL 查询，核验 `studyProjectId + ownerUserId + materialId` 后构图；
+PracticeService 绑定时反向核验图谱作用域。旧 material-scoped 图只保留按 graphId 的兼容读取，不得挂入新册。
+
+### 32.1 自动化、构建与部署
+
+| 验证项 | 结果 |
+|---|---:|
+| KnowledgeService tests | PASS，112 / 112 |
+| PracticeService tests | PASS，24 / 24；包含跨册拒绝、项目指纹隔离与首批题型轮转回归 |
+| Gateway Vitest / TypeScript | PASS，203 / 203；TypeScript build 通过 |
+| Frontend production build | PASS，1401 modules；仅既有 KnowledgeDag 大 chunk 警告 |
+| `knowledge-service` / `practice-service` / `gateway` / `frontend` 镜像 | PASS；按同一发布单元构建并替换 |
+| Compose | PASS，15 个容器全部 healthy；Gateway `/readyz`、Frontend `/healthz` 均为 HTTP 200 |
+| Practice Resources | PASS，镜像构建时临时恢复 14 文件；构建后仓库内 `Resources` 不存在，109,930,654 bytes 仍在仓库外恢复目录 |
+
+### 32.2 同资料双册隔离
+
+使用全新普通用户上传并解析同一 TXT 后，先后创建甲、乙两本 `graphId=null` 研习册，再分别以相同
+material 构图。两次构图均成功，但 graphId、4 个知识点 ID 和各自初始 mastery 记录完全隔离；
+按 `studyProjectId` 查询图谱时两册各只返回自己的 1 张图。把甲册图谱 PATCH 到乙册得到
+`409 GRAPH_OUTSIDE_PROJECT_SCOPE`，拒绝后乙册版本未被占用，随后可正常绑定乙册自己的图谱。
+
+| 对象 | 研习册 | 图谱 | 知识点 / mastery |
+|---|---|---|---:|
+| 甲册 | `be9148e2-1303-4c3d-b0ba-394b90a3d859` | `87667298-4dbc-4d11-b457-4dd2745c8066` | 4 / 4 |
+| 乙册 | `a5c4e2c7-cdd2-455a-9501-d246db0eea8d` | `e717d8af-b3b9-4270-af64-63ccc834c0bd` | 4 / 4 |
+
+样本 user `ff24f386-08a4-424f-9f74-f172b1d7dfbb`，material
+`fd7dc177-0624-4ad8-aadd-25ad9c08dc62`；两图共享知识点 ID 数为 0。
+
+### 32.3 立册即成题与智能复习
+
+首次部署冒烟同时发现：生成器原先按“题型外层、知识点内层”遍历，四个知识点、四道目标题会在
+第一种题型达到数量上限，实际得到 4 道单选。修复后改为题型与知识点同步轮转；在不伪造答案、
+干扰项或出处的前提下，题数足够时先覆盖全部请求题型，再重复任一题型。
+
+甲册基于本册 graph 创建 assessment plan `0f04d560-08eb-417e-b1bf-4ff6cebe5f07` 后，首次自动成题
+得到 4 道 READY 题，精确覆盖单选、填空、名词解释、简答，4 / 4 带本册知识点标签，未绑定为 0；
+随后成功创建 SMART_REVIEW session `d024a4d0-a808-42d2-8757-0a5f7d3a6f01` 并取得 1 道计划内题。
+credits 从 `1.00000` 结算为 `0.99776`，held 为 0。最终容器保持运行，供人工实测。

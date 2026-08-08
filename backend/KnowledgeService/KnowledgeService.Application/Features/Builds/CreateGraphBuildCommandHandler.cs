@@ -1,5 +1,6 @@
 using KnowledgeService.Application.Exceptions;
 using KnowledgeService.Application.Persistence;
+using KnowledgeService.Application.Projects;
 using KnowledgeService.Application.Time;
 using KnowledgeService.Domain.Builds;
 using KnowledgeService.Domain.Common;
@@ -13,13 +14,16 @@ public sealed partial class CreateGraphBuildCommandHandler
 {
     private readonly IKnowledgeRepository _repository;
     private readonly ISystemClock _clock;
+    private readonly IStudyProjectScopeClient _studyProjectScopeClient;
 
     public CreateGraphBuildCommandHandler(
         IKnowledgeRepository repository,
-        ISystemClock clock)
+        ISystemClock clock,
+        IStudyProjectScopeClient studyProjectScopeClient)
     {
         _repository = repository;
         _clock = clock;
+        _studyProjectScopeClient = studyProjectScopeClient;
     }
 
     public async Task<GraphBuildJobCreation> Handle(
@@ -29,6 +33,12 @@ public sealed partial class CreateGraphBuildCommandHandler
         var subject = SubjectCodePolicy.NormalizeOptional(
             request.SubjectHint);
         var idempotencyKey = ValidateAndNormalize(request, subject);
+        await _studyProjectScopeClient.ValidateMaterialScopeAsync(
+            request.StudyProjectId,
+            request.MaterialId,
+            request.OwnerUserId,
+            idempotencyKey,
+            cancellationToken);
         var now = _clock.UtcNow;
         var extractorVersion = string.IsNullOrWhiteSpace(request.ExtractorVersion)
             ? KnowledgeAlgorithmVersions.Extractor
@@ -48,13 +58,15 @@ public sealed partial class CreateGraphBuildCommandHandler
             null,
             null,
             now,
-            now);
+            now,
+            request.StudyProjectId);
         var result = await _repository.CreateBuildJobAsync(
             candidate,
             cancellationToken);
 
         if (!result.Created &&
             (result.Job.MaterialId != candidate.MaterialId ||
+             result.Job.StudyProjectId != candidate.StudyProjectId ||
              result.Job.OwnerUserId != candidate.OwnerUserId ||
              result.Job.ExtractorVersion != candidate.ExtractorVersion ||
              result.Job.Segmentation != candidate.Segmentation ||
@@ -74,6 +86,7 @@ public sealed partial class CreateGraphBuildCommandHandler
         string? normalizedSubject)
     {
         if (request.MaterialId == Guid.Empty ||
+            request.StudyProjectId == Guid.Empty ||
             request.OwnerUserId == Guid.Empty ||
             string.IsNullOrWhiteSpace(request.IdempotencyKey) ||
             !Guid.TryParseExact(
@@ -85,7 +98,7 @@ public sealed partial class CreateGraphBuildCommandHandler
             throw new KnowledgeServiceException(
                 400,
                 "GRAPH_BUILD_REQUEST_INVALID",
-                "materialId、用户身份无效，或 Idempotency-Key 不是非空 UUID D 格式。");
+                "materialId、studyProjectId、用户身份无效，或 Idempotency-Key 不是非空 UUID D 格式。");
         }
 
         if (normalizedSubject is not null &&

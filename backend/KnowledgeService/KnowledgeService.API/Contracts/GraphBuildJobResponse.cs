@@ -7,6 +7,7 @@ namespace KnowledgeService.API.Contracts;
 public sealed record GraphBuildJobResponse(
     Guid BuildId,
     Guid MaterialId,
+    Guid? StudyProjectId,
     GraphBuildStatus Status,
     int Progress,
     Guid? GraphId,
@@ -22,6 +23,7 @@ public sealed record GraphBuildJobResponse(
         new(
             job.BuildId,
             job.MaterialId,
+            job.StudyProjectId,
             job.Status,
             job.Progress,
             job.GraphId,

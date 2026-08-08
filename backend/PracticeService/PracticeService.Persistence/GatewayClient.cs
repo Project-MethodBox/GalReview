@@ -21,9 +21,24 @@ public sealed class GatewayClient(IHttpClientFactory clients, IConfiguration con
         foreach (var node in data.GetProperty("nodes").EnumerateArray())
         {
             if (node.TryGetProperty("questionTarget", out var target) && !target.GetBoolean()) continue;
-            if (node.GetProperty("pointId").TryGetGuid(out var id)) points.Add(new(id, node.GetProperty("title").GetString() ?? string.Empty));
+            if (!node.GetProperty("pointId").TryGetGuid(out var id)) continue;
+            points.Add(new PlanGraphPoint(
+                id,
+                node.GetProperty("chapterId").GetGuid(),
+                node.GetProperty("title").GetString() ?? string.Empty,
+                node.GetProperty("summary").GetString() ?? string.Empty,
+                node.GetProperty("tags").EnumerateArray().Select(tag => tag.GetString() ?? string.Empty).Where(tag => tag.Length > 0).ToArray(),
+                node.GetProperty("weight").GetDouble(),
+                node.GetProperty("coversPointIds").EnumerateArray().Select(point => point.GetGuid()).ToArray()));
         }
-        return new(data.GetProperty("reviewPlanId").GetGuid(), data.GetProperty("snapshotVersion").GetString() ?? string.Empty, points);
+        return new PlanGraphSnapshot(
+            data.GetProperty("reviewPlanId").GetGuid(),
+            data.GetProperty("snapshotVersion").GetString() ?? string.Empty,
+            data.GetProperty("graphId").GetGuid(),
+            data.GetProperty("ownerUserId").GetGuid(),
+            data.GetProperty("status").GetString() ?? string.Empty,
+            data.GetProperty("algorithmVersion").GetString() ?? string.Empty,
+            points.OrderByDescending(point => point.Weight).ThenBy(point => point.KnowledgePointId).ToArray());
     }
     public async Task<object> SubmitEvidenceAsync(PracticeSession session, IReadOnlyList<PracticeQuestion> questions, Guid resultId, Guid key, CancellationToken ct)
     {
@@ -50,6 +65,16 @@ public sealed class GatewayClient(IHttpClientFactory clients, IConfiguration con
         using var document = JsonDocument.Parse(body); var data = document.RootElement.GetProperty("data");
         return new MaterialText(data.GetProperty("materialId").GetGuid(), data.GetProperty("ownerUserId").GetGuid(), data.GetProperty("text").GetString() ?? string.Empty,
             data.GetProperty("textChecksum").GetString() ?? string.Empty, data.GetProperty("sourceMapVersion").GetString() ?? "1");
+    }
+    public async Task<KnowledgeGraphScope> GetGraphScopeAsync(Guid graphId, Guid ownerUserId, CancellationToken ct)
+    {
+        using var request = Create(HttpMethod.Get, $"/internal/v1/knowledge-graphs/{graphId:D}/scope?ownerUserId={ownerUserId:D}");
+        using var response = await clients.CreateClient("gateway").SendAsync(request, ct); var body = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode) throw Failure(response.StatusCode, body, "读取研习册图谱归属失败。");
+        using var document = JsonDocument.Parse(body); var data = document.RootElement.GetProperty("data");
+        return new KnowledgeGraphScope(data.GetProperty("graphId").GetGuid(), data.GetProperty("materialId").GetGuid(),
+            data.TryGetProperty("studyProjectId", out var projectId) && projectId.ValueKind != JsonValueKind.Null ? projectId.GetGuid() : null,
+            data.GetProperty("ownerUserId").GetGuid());
     }
     public async Task ReserveAsync(Guid userId, Guid operationId, string operationType, long estimatedTokenUnits, CancellationToken ct)
     {

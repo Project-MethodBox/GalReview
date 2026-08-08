@@ -11,9 +11,12 @@ internal static class Neo4jSchema
         FOR (graph:KnowledgeGraph) REQUIRE graph.graphId IS UNIQUE
         """,
         """
-        CREATE CONSTRAINT knowledge_graph_version_unique IF NOT EXISTS
+        DROP CONSTRAINT knowledge_graph_version_unique IF EXISTS
+        """,
+        """
+        CREATE CONSTRAINT knowledge_graph_project_version_unique IF NOT EXISTS
         FOR (graph:KnowledgeGraph)
-        REQUIRE (graph.ownerUserId, graph.materialId, graph.version) IS UNIQUE
+        REQUIRE (graph.ownerUserId, graph.studyProjectId, graph.version) IS UNIQUE
         """,
         """
         CREATE CONSTRAINT graph_fingerprint_unique IF NOT EXISTS
@@ -69,6 +72,10 @@ internal static class Neo4jSchema
         """
         CREATE INDEX knowledge_graph_owner_material IF NOT EXISTS
         FOR (graph:KnowledgeGraph) ON (graph.ownerUserId, graph.materialId)
+        """,
+        """
+        CREATE INDEX knowledge_graph_owner_project IF NOT EXISTS
+        FOR (graph:KnowledgeGraph) ON (graph.ownerUserId, graph.studyProjectId)
         """,
         """
         CREATE INDEX chapter_graph IF NOT EXISTS

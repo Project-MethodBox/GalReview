@@ -61,6 +61,39 @@ Node.js / TypeScript API Gateway
 - 旧 Resource Center 的 HTTP 接口没有随仓库提供服务端契约，且默认配置为明文 HTTP。迁移后不调用该地址，改成本项目内有契约、有鉴权的共享包资源。
 - ReciteHelper WPF 的 Hosted Activation 属于独立部署能力，且本机配置已禁用；它不属于学习领域，首版不迁移到浏览器应用。
 
+### 2.4 原版用户故事与严格业务边界
+
+本轮重新以 `D:\Projects\ReciteHelper` 的 `README.md`、`docs/manual-cn.md`、`Project` 聚合、
+`MainWindow`、`SelectChapterWindow`、`QuizWindow`、`ExamSettingWindow`、`KnowledgePointWindow`、
+`ReviewGenerator`、`QuizService` 和 `ProjectFileService` 为准核对，而不是从 GalReview 旧页面反推业务。
+原版可观察到的主路径固定如下：
+
+```text
+最近项目 / 创建 / 导入
+        -> 经典复习项目
+        -> 章节工作台（章节数、题量、掌握度）
+        -> 章节答题 / 智能复习 / 模拟考试 / 知识点学习
+        -> 追加资料 / 导入套卷 / 项目包导入导出 / 资源中心
+        `-> 可选：从本项目运行游戏
+```
+
+因此新版“用起来就是 ReciteHelper，但多出知识图谱和生成游戏”的边界为：
+
+| 用户能力 | 用户所属上下文 | 权威事实所有者 | 掌握度行为 |
+|---|---|---|---|
+| 建立/续读研习册、追加资料引用 | 经典复习项目 | PracticeService；原文仍属 FileService | 不更新 |
+| 生成、导入、补签、核对五类题目 | 项目题库 | PracticeService；知识点 ID 引用 KnowledgeService | 不更新 |
+| 章节练习、智能复习 | 项目 + 本次章节范围 | PracticeSession；选点/SM-2 属 KnowledgeService | 完成后更新 |
+| 模拟试卷与回顾 | 项目题库 + 本次 PlanGraph | PracticeService | 交卷后更新 |
+| 浏览知识点与“识网” | 当前项目引用的图谱 | KnowledgeService | 浏览不更新 |
+| 故事生成与游玩 | 当前项目内“故事回响” | GalGameService + RenderService | 完成后更新 |
+| `.rhproj/.rhp/.qzwlp` 与共享包 | 当前项目 | PracticeService | 不更新 |
+
+`StudyProject` 是用户可见的唯一顶层项目概念。技术微服务边界不拆散用户聚合：界面不得出现
+“GalGame 项目”，不得要求用户先在资料页建立一个游离的全局复习计划，也不得从主页直接进入
+无项目上下文的 `/review`。故事包、Render 会话和 PlanGraph 虽由各自服务保存，但只通过
+`projectId -> graphId -> reviewPlanId` 从研习册发起。
+
 ## 3. 目标架构
 
 产品内核是 ReciteHelper 的“用户复习资料库”聚合：学习项目、题库、练习、试卷和复习调度构成默认主线。GalReview 的知识图谱、SM-2 和视觉小说不是并列产品，也不是把 ReciteHelper 附加到 GalReview；它们分别作为该聚合的知识组织/调度能力与故事复习模式。技术上新增一个领域服务而不是把原 WPF 单体整体塞入现有服务。该服务与 KnowledgeService 一样采用四层项目并用 MediatR 落实 CQRS：
@@ -122,19 +155,23 @@ PracticeService 不拥有：
 
 ### 4.1 建立学习项目
 
-1. 用户在 FileService 上传一个或多个资料并等待规范化文本 `READY`。
-2. 用户可让 KnowledgeService 对主资料构图。
-3. 用户创建 `StudyProject`，只保存 material ID、可选 graph ID，不复制文本或图谱。
-4. PracticeService 经 Gateway 读取每份资料的规范化文本，生成题库；生成结果必须保留 source range。
-5. 人工可编辑题目、答案、分值、难度和知识点绑定后发布题库。
+1. 用户在“藏书阁”上传一个或多个资料并等待 FileService 规范化文本 `READY`；藏书阁不拥有或创建图谱。
+2. 用户先创建 `StudyProject`，只保存 material ID；KnowledgeService 以 `studyProjectId` 为作用域、以 material 为来源建立本册独立图谱。
+3. 客户端绑定图谱前后分别由 KnowledgeService 与 PracticeService 经受信接口核验项目、用户和资料范围；同一资料用于两本册时不得复用 graph、point 或 mastery。
+4. 立册编排立即从本册图谱创建 OPEN PlanGraph 并自动成题。PracticeService 读取规范化文本，以
+   “目标知识点 -> 精确可核对原文 -> 题目”的次序生成，每道成功题同时保存 point ID 与 source range。
+5. 无精确证据的知识点留下诊断而不强行贴签；人工可编辑题目、答案、分值、难度和主知识点后发布题库。
 
 ### 4.2 普通练习与智能复习
 
-1. 创建 `ASSESSMENT` 或 `LEARNING` PlanGraph；无图谱项目可创建普通随机练习。
-2. PracticeService 按 PlanGraph 的知识点范围选择绑定题目，并按“到期/薄弱/新题”组合排序。
-3. 客观题确定性判分；解释题由本地语义模型评分，并保留相似度与规则版本。
-4. 完成会话后，PracticeService 使用现有 `PUT /internal/v1/review-evidence/{resultId}` 提交证据。
-5. 对 PracticeService 调用，该契约的 `packageId` 表示 `questionBankId`，`sessionId` 表示 PracticeSession；KnowledgeService 仍校验 plan、snapshot、用户、题目知识点范围和幂等键。
+1. 用户从研习册选择章节；页面为该次章节练习、智能复习或模拟试卷创建新的 `ASSESSMENT` PlanGraph。
+2. KnowledgeService 用第 6.6 节唯一算法选点：SM-2 的 `nextReviewAt` 形成到期集合，图谱形成依赖覆盖，再按
+   次模边际收益选择目标；禁止任意设置“SM-2 60% + 图谱 40%”之类混合权重。
+3. PracticeService 按 PlanGraph 目标顺序，每个知识点确定性选择一道 READY 题；缺题返回点级缺口，
+   不换入计划外题，也不在同次计分会话重复同一知识点。
+4. 客观题确定性判分；解释题由本地语义模型评分，并保留相似度与规则版本。
+5. 完成会话后，PracticeService 使用现有 `PUT /internal/v1/review-evidence/{resultId}` 提交证据。
+6. 对 PracticeService 调用，该契约的 `packageId` 表示 `questionBankId`，`sessionId` 表示 PracticeSession；KnowledgeService 仍校验 plan、snapshot、用户、题目知识点范围和幂等键。
 
 ### 4.3 视觉小说复习
 
@@ -161,7 +198,9 @@ PracticeService 不代理、不复制也不转换 GamePackage。这样普通刷�
 - 题型：`SINGLE_CHOICE | FILL_BLANK | TRUE_FALSE | TERM_DEFINITION | ESSAY`。
 - 题库状态：`DRAFT | GENERATING | READY | FAILED | ARCHIVED`。
 - 会话状态：`CREATED | ACTIVE | COMPLETED | ABANDONED`。
-- 自动生成/导入的题库必须先是 `DRAFT`；用户确认后才能 `READY`。
+- `recite-question-v1` 只有在答案、唯一知识点和精确原文出处均可机械校验时才生成，并直接进入
+  `READY`，使经典项目立册后即可复习；整卷导入、旧包中未补签题以及未来非确定性模型输出仍须
+  先为 `DRAFT`，用户确认后才能 `READY`。
 - `similarity` 取值 `[0,1]`；`quality` 为整数 `[0,5]`；`responseTimeMs >= 0`。
 - 客观题不调用 LLM 判分。主观题即使调用解释模型，最终证据也必须保存本地模型分数、规则版本与正确答案摘要，保证可审计。
 - PracticeService 不允许客户端上传 `userId` 冒充他人；用户身份只接受 Gateway 注入的 `X-User-Id`。
@@ -173,7 +212,7 @@ PracticeService 不代理、不复制也不转换 GamePackage。这样普通刷�
 
 ReciteHelper 的功能信息架构迁移到 GalReview，而不是复刻 WPF 外观：
 
-- 主导航以学习项目和复习资料库为中心；练习、试卷、图谱计划与故事复习从项目上下文进入；
+- 主导航以“研习册”承载经典复习项目；保留“起点、藏书阁、识网、回响”等 GalReview 文艺但可理解的命名，练习、试卷、图谱计划与故事复习从项目上下文进入；
 - 产品名称始终为“千知万理”，不得在界面中以 ReciteHelper 替换产品名；GalReview 只保留为现有实现标识；
 - 公开首页与登录后主页必须介绍“文件解析/文字识别、AI 辅助语义整理、题库确认、知识图谱与 SM-2 调度、结果回写”的实际流程；不得把所有确定性处理笼统宣传为 AI；
 - 继续使用 GalReview 的浅灰画布、克制蓝色行动色、圆角分组、中文无衬线字体和真实数据表格；
@@ -224,6 +263,15 @@ ReciteHelper 使用 AGPL-3.0。迁移的源代码、提示词、模型和兼容�
 | 2026-08-08 | Credit/Persistence | MySQL UUID 列统一兼容驱动返回的 `Guid`、字符串或 16-byte 值 | MySqlConnector 可把 `CHAR(36)` 直接物化为 `Guid`，旧代码 `GetString` 使预授权成功后结算/释放 500 | Credit 6/6；MySQL 预授权、实际结算、释放、制码兑换全链通过 | VERIFIED |
 | 2026-08-08 | GalGame/Persistence | credits 拒绝时任务只持久化稳定错误码/消息，即时 402 响应继续返回完整购买 details | Mongo 安全 ObjectSerializer 拒绝把上游 `JsonElement` 写入 `object Details`，原行为会把正确的 402 放大为 503 | GalGame 362/362；不足路径返回 402，后续完整故事链通过 | VERIFIED |
 | 2026-08-08 | Full chain | 题库复习与故事复习共享 material/graph/mastery，但一次完成各自关闭独立评估计划快照 | 遵守 `REVIEW_PLAN_NOT_OPEN`，防止向已完成计划重复写学习证据 | 15 容器 healthy；Gateway 全链含 SM-2 与 Render 结果回写通过 | VERIFIED |
+| 2026-08-08 | Product boundary | 重新按 ReciteHelper 原始窗口、领域模型与用户手册冻结用户故事；删除全局 GalReview workflow 的顶层地位，`StudyProject` 成为唯一用户项目，故事回响降为册内功能 | 修复“GalGame 项目/复习项目/资料计划”三套入口混成一锅的业务反转 | 原始代码审计；前端 production build 通过 | VERIFIED |
+| 2026-08-08 | Practice/Knowledge | 自动成题改为 PlanGraph 目标知识点先行与精确原文绑定；拒绝序号轮转贴签；智能练习/试卷每点一道并报告题库覆盖缺口 | 保证题目标签有证据，并满足 KnowledgeService 单次 evidence 知识点唯一性 | Practice tests 21/21；真实栈 15/15 题有标签 | VERIFIED |
+| 2026-08-08 | Frontend | 主页改为最近研习册与 ReciteHelper 主功能；章节练习、智能复习、试卷和故事均从册内创建新计划 | 恢复 ReciteHelper 使用顺序，同时保留 GalReview 设计系统与“识网/回响”等文案风格 | TypeScript + Vite production build 通过 | VERIFIED |
+| 2026-08-08 | Knowledge | mastery 升级为 `sm2-graph-v2`：展示 score 直接投影最近 quality；SM-2 只以 `nextReviewAt` 形成到期集合，图谱再做次模覆盖；删除 65/35 平滑、假设保持率曲线和未作答前置点的推断加分 | 掌握度只接受点级真实作答证据，避免任意混合或推断权重，同时保留 SM-2 调度与可证明的图谱覆盖 | Knowledge tests 111/111；容器复验见 test_report | VERIFIED |
+| 2026-08-09 | Frontend | 导航与首页快捷入口将“藏书阁”置于“研习册”之前；无旧册时首页主按钮先进入藏书阁；“立册”表单取消 sticky，恢复普通文档流 | 界面顺序与“资料解析 → 立册 → 温习”业务顺序一致，并避免立册表单滚动时遮挡下方导入区 | Frontend production build 1401 modules；容器健康与 HTTP 验证见 test_report | VERIFIED |
+| 2026-08-09 | Frontend | 研习册无 READY 题时不再静默禁用温故、循网、试锋入口；页面明确提示先到“成题”区，点击入口也会在创建计划前返回可理解的原因；禁用按钮仅在真实 busy 时使用等待光标 | 保留“必须先有 READY 题才可形成作答证据”的领域约束，同时消除无解释的灰色按钮和假加载光标 | Frontend production build 1401 modules；容器健康与 HTTP 验证见 test_report | VERIFIED |
+| 2026-08-09 | Practice/Frontend | 恢复 ReciteHelper 立册编排：创建 StudyProject 后立即用全部章节建立生成计划并自动生成单选、填空、名词解释、简答四类题；精确原文/知识点绑定的确定性结果直接 READY；成题区降为追加与恢复入口 | 修复“空册创建成功后还要用户手动找成题按钮”的业务断裂，恢复立册即成题，同时保留 credits 失败后的可恢复册 | Practice 21/21、Frontend production build 1401 modules；真实立册成题与 SMART 会话见 test_report | VERIFIED |
+| 2026-08-09 | Knowledge/Practice/Gateway/Frontend | 将 KnowledgeGraph 所有权从 Material 改为 StudyProject：新册先创建，再以 `studyProjectId + materialId` 经双向内部核验构图和绑定；版本、指纹、SUPERSEDED 与 mastery 均按册隔离；藏书阁仅解析资料，识网页按册选择；失败重试从本册恢复 | 修复同一资料建立多册时共享图谱身份与掌握度的聚合越界，保证“资料是来源、研习册拥有图谱” | Knowledge 112/112、Practice 24/24、Gateway 203/203、Frontend 1401 modules；容器与双册隔离实测见 test_report | VERIFIED |
+| 2026-08-09 | Practice | `recite-question-v1` 从“题型外层、知识点内层”改为题型与知识点同步轮转；题数足够时先覆盖所有请求题型，再重复任一题型 | 修复四个知识点、四道首发题时达到数量上限而全部生成为单选的真实链路缺陷，同时保留干扰项不足时不伪造单选的安全降级 | 新回归测试复现旧序列并通过；Practice 24/24；真实首批 4 题覆盖单选、填空、名词解释、简答 | VERIFIED |
 
 状态只使用 `SPECIFIED | IMPLEMENTED | VERIFIED | BLOCKED`。代码合入后必须逐项更新，测试未运行或失败时不得写 `VERIFIED`。
 

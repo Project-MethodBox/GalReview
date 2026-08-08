@@ -247,6 +247,10 @@ services:
       ConnectionStrings__PracticeDatabase: mongodb://mongo:27017
       MongoDb__Database: qzwl_practice
       PracticeStore__Provider: MongoDB
+      QuestionGeneration__ApiKey: ${DSAPI:-}
+      QuestionGeneration__Endpoint: ${PRACTICE_QUESTION_ENDPOINT:-https://api.deepseek.com/chat/completions}
+      QuestionGeneration__Model: ${PRACTICE_QUESTION_MODEL:-deepseek-v4-flash}
+      QuestionGeneration__Parallelism: ${PRACTICE_QUESTION_PARALLELISM:-4}
     depends_on:
       mongo:
         condition: service_healthy

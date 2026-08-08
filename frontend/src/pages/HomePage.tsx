@@ -1,28 +1,26 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useLocation } from 'react-router'
 import AppShell from '../components/AppShell'
 import { BookIcon, GraphIcon, MaterialsIcon, ReviewIcon } from '../components/icons'
 import { api } from '../lib/api'
 import { readProfile, saveProfile } from '../lib/session'
 import { readColorTheme, saveColorTheme, type ColorTheme } from '../lib/theme'
-import { readWorkflow } from '../lib/workflow'
+import type { StudyProject } from '../types/api'
 
-function resumeState() {
-  const workflow = readWorkflow()
-  if (workflow.gamePackage && workflow.reviewSession) return { to: '/review', action: '恢复复习', detail: '游戏包与本地进度已保存。', step: '复习进行中' }
-  if (workflow.plan) return { to: '/review', action: '开始复习', detail: `计划包含 ${workflow.plan.nodes.length} 个知识节点。`, step: '计划已生成' }
-  if (workflow.graph) return { to: '/materials', action: '选择复习范围', detail: `${workflow.graph.chapterCount} 章，${workflow.graph.pointCount} 个知识点。`, step: '图谱已完成' }
-  if (workflow.material) return { to: '/materials', action: '继续处理资料', detail: workflow.material.displayName, step: '资料已上传' }
-  return { to: '/materials', action: '上传第一份资料', detail: '吹灭读书灯，一身都是月', step: '尚未开始' }
+function formatUpdatedAt(value?: string) {
+  if (!value) return '尚无记录'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '时间未知' : date.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
 }
 
 export default function HomePage() {
   const location = useLocation()
   const [profile, setProfile] = useState(readProfile())
+  const [projects, setProjects] = useState<StudyProject[]>([])
   const [colorTheme, setColorTheme] = useState<ColorTheme>(readColorTheme())
   const [message, setMessage] = useState((location.state as { message?: string } | null)?.message || '')
-  const resume = resumeState()
-  const workflow = readWorkflow()
+  const recentProjects = useMemo(() => [...projects].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)).slice(0, 3), [projects])
+  const latestProject = recentProjects[0]
 
   function changeColorTheme(value: ColorTheme) {
     setColorTheme(value)
@@ -30,8 +28,14 @@ export default function HomePage() {
   }
 
   useEffect(() => {
-    if (profile) return
-    void api.getCurrentUser().then((value) => { saveProfile(value); setProfile(value) }).catch((reason: unknown) => setMessage(reason instanceof Error ? reason.message : '用户资料读取失败。'))
+    let active = true
+    void Promise.all([profile ? Promise.resolve(profile) : api.getCurrentUser(), api.listPracticeProjects()])
+      .then(([currentProfile, projectPage]) => {
+        if (!active) return
+        saveProfile(currentProfile); setProfile(currentProfile); setProjects(projectPage.items)
+      })
+      .catch((reason: unknown) => { if (active) setMessage(reason instanceof Error ? reason.message : '复习资料库读取失败。') })
+    return () => { active = false }
   }, [profile])
 
   return (
@@ -45,37 +49,45 @@ export default function HomePage() {
             <input type="checkbox" role="switch" aria-label="深色模式" checked={colorTheme === 'dark'} onChange={(event) => changeColorTheme(event.target.checked ? 'dark' : 'light')} />
           </label>
           <div className="home-welcome__intro">
-            <div><span>{resume.step}</span><h2>欢迎回来，{profile?.displayName || '学习者'}</h2><p>{resume.detail}</p></div>
-            {resume.action === '选择复习范围' ? null : <Link className="button button--primary" to={resume.to}>{resume.action}</Link>}
+            <div>
+              <span>{latestProject ? '旧卷待温' : '新卷待启'}</span>
+              <h2>欢迎回来，{profile?.displayName || '学习者'}</h2>
+              <p>{latestProject ? `“${latestProject.name}”已备好题库、图谱与复习记录。` : '先在藏书阁整理一份资料与知识脉络，再建立属于你的经典复习项目。'}</p>
+            </div>
+            <Link className="button button--primary" to={latestProject ? `/projects/${latestProject.projectId}` : '/materials'}>{latestProject ? '继续温习' : '前往藏书阁'}</Link>
           </div>
-          <div className="home-quick-actions" aria-label="页面快捷入口">
-            <Link to="/projects"><span className="quick-action-icon"><BookIcon /></span><span><strong>学习项目</strong><small>管理题库与学习范围</small></span><i aria-hidden="true">→</i></Link>
-            <Link to="/projects"><span className="quick-action-icon"><MaterialsIcon /></span><span><strong>日常练习</strong><small>从项目题库开始复习</small></span><i aria-hidden="true">→</i></Link>
-            <Link to="/knowledge-graph"><span className="quick-action-icon quick-action-icon--graph"><GraphIcon /></span><span><strong>知识图谱</strong><small>查看知识关系与掌握度</small></span><i aria-hidden="true">→</i></Link>
-            <Link to="/projects"><span className="quick-action-icon quick-action-icon--review"><ReviewIcon /></span><span><strong>故事复习</strong><small>从学习项目选择视觉小说模式</small></span><i aria-hidden="true">→</i></Link>
+          <div className="home-quick-actions" aria-label="复习快捷入口">
+            <Link to="/materials"><span className="quick-action-icon"><MaterialsIcon /></span><span><strong>藏书阁</strong><small>解析资料并整理章节</small></span><i aria-hidden="true">→</i></Link>
+            <Link to="/projects"><span className="quick-action-icon"><BookIcon /></span><span><strong>研习册</strong><small>创建、导入与续读复习项目</small></span><i aria-hidden="true">→</i></Link>
+            <Link to={latestProject ? `/projects/${latestProject.projectId}` : '/projects'}><span className="quick-action-icon"><ReviewIcon /></span><span><strong>章节温习</strong><small>从项目题库开始答题</small></span><i aria-hidden="true">→</i></Link>
+            <Link to="/knowledge-graph"><span className="quick-action-icon quick-action-icon--graph"><GraphIcon /></span><span><strong>识网</strong><small>查看知识脉络与掌握度</small></span><i aria-hidden="true">→</i></Link>
           </div>
         </section>
 
         <section className="home-intelligence-flow" aria-labelledby="home-intelligence-title">
           <header>
-            <span>千知万理如何协助复习</span>
-            <h2 id="home-intelligence-title">从资料解析到下一次复习</h2>
-            <p>AI 辅助理解资料和生成候选内容；来源核对、答案确认、知识关系与 SM-2 调度共同保证复习过程可追踪。</p>
+            <span>千知万理如何陪你温习</span>
+            <h2 id="home-intelligence-title">一卷成册，循知而习</h2>
+            <p>资料解析就绪后即可立册；系统会为本册独立识网并依据原文自动成题，知识图谱与 SM-2 再依照真实作答安排下一轮。章节练习和故事回响写回同一份掌握度。</p>
           </header>
           <div>
-            <article><span>01</span><h3>解析资料</h3><p>还原文件原文，辅助识别章节、概念与可出题内容，并保留来源位置。</p></article>
-            <article><span>02</span><h3>确认题库</h3><p>生成或导入五类题目，由你核对答案与解析后进入正式复习。</p></article>
-            <article><span>03</span><h3>安排练习</h3><p>知识图谱连接相关概念，SM-2 结合掌握度和到期时间选择题目。</p></article>
-            <article><span>04</span><h3>回写反馈</h3><p>作答结果更新复习间隔；故事复习也使用同一项目的资料与记录。</p></article>
+            <article><span>01</span><h3>收卷</h3><p>读取资料原文，保留章节、概念与每道题目的来源位置。</p></article>
+            <article><span>02</span><h3>成题</h3><p>立册时自动生成单选、填空、名词解释与简答题，并逐题标明知识点和原文出处。</p></article>
+            <article><span>03</span><h3>循网</h3><p>SM-2 判断遗忘风险，知识图谱补全先修关系并避免重复覆盖。</p></article>
+            <article><span>04</span><h3>回响</h3><p>普通答题与故事答题都形成学习证据，更新下一次复习时机。</p></article>
           </div>
         </section>
 
-        <section className="home-summary" aria-label="学习概况">
-          <article><span>学科</span><strong>{workflow.graph?.subjectCode || profile?.preferredSubjectCodes[0] || '未设置'}</strong></article>
-          <article><span>章节</span><strong>{workflow.graph?.chapterCount ?? 0}</strong></article>
-          <article><span>知识点</span><strong>{workflow.graph?.pointCount ?? 0}</strong></article>
-          <article><span>计划</span><strong>{workflow.plan ? '已创建' : '未创建'}</strong></article>
+        <section className="home-summary" aria-label="研习概况">
+          <article><span>研习册</span><strong>{projects.length}</strong></article>
+          <article><span>已识网</span><strong>{projects.filter((project) => project.graphId).length}</strong></article>
+          <article><span>资料引用</span><strong>{projects.reduce((total, project) => total + project.materialIds.length, 0)}</strong></article>
+          <article><span>最近温习</span><strong>{formatUpdatedAt(latestProject?.updatedAt)}</strong></article>
         </section>
+
+        {recentProjects.length ? <section className="workspace-card"><header><span className="section-label">近读</span><h2>最近的研习册</h2></header><div className="practice-project-list">
+          {recentProjects.map((project) => <Link key={project.projectId} to={`/projects/${project.projectId}`}><span><strong>{project.name}</strong><small>{project.subjectCode || '未设置学科'} · {project.materialIds.length} 份资料 · {project.graphId ? '知识脉络已建立' : '待建立知识脉络'}</small></span><span>续读</span></Link>)}
+        </div></section> : null}
       </main>
     </AppShell>
   )

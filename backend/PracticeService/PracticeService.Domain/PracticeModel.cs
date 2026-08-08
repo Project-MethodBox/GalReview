@@ -45,8 +45,22 @@ public sealed record ExamPaper(
     IReadOnlyList<Guid> QuestionIds, int DurationSeconds, int Seed,
     decimal TotalScore, DateTimeOffset CreatedAt);
 
-public sealed record PlanGraphPoint(Guid KnowledgePointId, string Title);
-public sealed record PlanGraphSnapshot(Guid ReviewPlanId, string SnapshotVersion, IReadOnlyList<PlanGraphPoint> Points);
+public sealed record PlanGraphPoint(
+    Guid KnowledgePointId,
+    Guid ChapterId,
+    string Title,
+    string Summary,
+    IReadOnlyList<string> Tags,
+    double Weight,
+    IReadOnlyList<Guid> CoversPointIds);
+public sealed record PlanGraphSnapshot(
+    Guid ReviewPlanId,
+    string SnapshotVersion,
+    Guid GraphId,
+    Guid OwnerUserId,
+    string Status,
+    string AlgorithmVersion,
+    IReadOnlyList<PlanGraphPoint> Points);
 public sealed record ModelState(string Name, string Status, string ExpectedSha256, string? ActualSha256, string? Detail);
 public sealed record PracticeJobDiagnostic(Guid? MaterialId, string Code, string Message, bool Retryable);
 public sealed record PracticeJob(

@@ -1,6 +1,6 @@
 # PracticeService
 
-PracticeService 承载产品主线的 ReciteHelper 复习内核，负责学习项目、五类题目、普通/智能练习、计时试卷、答案判分、项目包与共享资源。GalReview 的知识图谱、SM-2 与故事生成作为该复习内核的图谱计划和故事复习模式接入，不反转主从关系。跨服务契约以 `docs/contract.md` 第 14 节为准，迁移决策与状态以 `docs/recitehelper-migration.md` 为准。
+PracticeService 承载产品主线的 ReciteHelper 复习内核，负责研习册、五类题目、章节/智能练习、计时试卷、答案判分、项目包与共享资源。GalReview 的知识图谱、SM-2 与故事生成作为研习册内的识网计划和故事回响接入，不反转主从关系。跨服务契约以 `docs/contract.md` 第 14 节为准，迁移决策与状态以 `docs/recitehelper-migration.md` 为准。
 
 ## 四层与 CQRS
 
@@ -19,6 +19,11 @@ PracticeService 承载产品主线的 ReciteHelper 复习内核，负责学习�
 - 未配置/损坏的模型显式降级，`/readyz` 返回逐资产状态，答题响应 `meta.degraded=true`。
 - `.rhproj`、`.rhp` 与 `.qzwlp` 导入要求映射到当前用户自己的 READY material；旧包不会变成脱离资料库的第二套聚合。
 - 题目生成在读取资料和 PlanGraph 后，通过 Gateway 向 CreditService 预授权；成功按实际输入与生成内容结算，失败或无产物释放 held。credits 不足的 `402` 与详情原样交给前端处理。
+- 图谱归研习册而不是归藏书阁资料。浏览器先创建 `graphId=null` 的新册，再以 `studyProjectId + materialId` 请求 KnowledgeService 为本册识网，最后通过乐观并发 PATCH 绑定返回图谱；PracticeService 会反查 `studyProjectId` 与资料范围，拒绝跨册或旧 material-scoped 图谱。
+- 绑定本册 READY 识网后立即为全部章节创建 OPEN PlanGraph 并自动成题，不能建立空册后要求用户再找首次成题入口。首次生成沿用 ReciteHelper 的单选、填空、名词解释、简答四类；生成器先轮转覆盖请求的四种题型并同步轮换知识点，再重复题型，不能因知识点数量先达到目标数而把首批题全部生成为单选。判断题只来自整卷导入或人工题录。
+- 自动成题必须按目标知识点的标题或唯一标签在原文中找到证据后才贴签，禁止按数组序号轮转。当前确定性生成器只有在答案、唯一知识点和精确原文出处均成立时才创建题目，因此结果直接 READY；整卷导入及未来不能机械校验的模型结果仍保持 DRAFT。
+- SMART 与模拟试卷严格按 PlanGraph 目标顺序“一点一题”；缺题返回 `QUESTION_COVERAGE_GAP`，不以计划外题目凑数。普通答题、试卷和故事回响都通过同一 KnowledgeService evidence 入口更新 mastery。
+- PracticeService 不复制 SM-2 或图谱排序。`sm2-graph-v2` 由 KnowledgeService 先用 SM-2 的 `nextReviewAt` 形成到期集合，再用图谱次模覆盖选点，不存在“SM-2 百分比 + 图谱百分比”的混合分。
 
 ## 本地资产（开发前必做）
 

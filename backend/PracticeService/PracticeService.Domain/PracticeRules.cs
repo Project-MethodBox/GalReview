@@ -19,6 +19,8 @@ public static class PracticeRules
         var options = draft.Options.Select(x => new QuestionOption(NormalizeOptionId(x.Id), x.Text.Trim())).ToArray();
         var answers = draft.CorrectAnswers.Select(NormalizeAnswer).Where(x => x.Length > 0).ToArray();
         ValidateAnswerShape(draft.Kind, options, answers);
+        if (project.GraphId.HasValue && draft.Status == QuestionStatus.Ready && !draft.KnowledgePointId.HasValue)
+            throw new PracticeDomainException(422, "QUESTION_BINDING_REQUIRED", "知识图谱项目中的题目必须绑定知识点后才能进入正式题库。");
         var now = DateTimeOffset.UtcNow;
         return new PracticeQuestion(id ?? Guid.NewGuid(), project.ProjectId, project.QuestionBankId, draft.Kind,
             prompt, options, answers, string.IsNullOrWhiteSpace(draft.Explanation) ? null : draft.Explanation.Trim(),
@@ -50,6 +52,33 @@ public static class PracticeRules
         if (kinds is { Count: > 0 }) filtered = filtered.Where(x => kinds.Contains(x.Kind));
         if (knowledgePointIds is { Count: > 0 }) filtered = filtered.Where(x => x.KnowledgePointId is Guid id && knowledgePointIds.Contains(id));
         return filtered.OrderBy(x => Sha256($"{seed}:{x.QuestionId:D}")).Take(count).ToArray();
+    }
+
+    public static IReadOnlyList<PracticeQuestion> SelectSmartQuestions(
+        IReadOnlyList<PracticeQuestion> candidates,
+        int count,
+        int seed,
+        IReadOnlyList<PlanGraphPoint> orderedTargets,
+        IReadOnlyCollection<PracticeQuestionKind>? kinds = null)
+    {
+        if (count is < 1 or > 200) Invalid("questionCount 必须在 1-200 范围内。");
+        var ready = candidates.Where(question => question.Status == QuestionStatus.Ready);
+        if (kinds is { Count: > 0 }) ready = ready.Where(question => kinds.Contains(question.Kind));
+        var readyByPoint = ready
+            .Where(question => question.KnowledgePointId.HasValue)
+            .GroupBy(question => question.KnowledgePointId!.Value)
+            .ToDictionary(group => group.Key, group => group.ToArray());
+        var targets = orderedTargets.Take(count).ToArray();
+        var missing = targets
+            .Where(target => !readyByPoint.ContainsKey(target.KnowledgePointId))
+            .Select(target => target.KnowledgePointId)
+            .ToArray();
+        if (missing.Length > 0)
+            throw new PracticeDomainException(422, "QUESTION_COVERAGE_GAP", "当前题库没有覆盖复习计划中的全部目标知识点。", new { knowledgePointIds = missing });
+        return targets.Select(target => readyByPoint[target.KnowledgePointId]
+                .OrderBy(question => Sha256($"{seed}:{question.QuestionId:D}"))
+                .First())
+            .ToArray();
     }
 
     public static IReadOnlyList<PracticeQuestion> GenerateExam(

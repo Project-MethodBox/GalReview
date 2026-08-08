@@ -10,4 +10,5 @@ public sealed record CreateGraphBuildCommand(
     string? SubjectHint,
     SegmentationOptions Segmentation,
     string? ExtractorVersion,
-    string IdempotencyKey) : IRequest<GraphBuildJobCreation>;
+    string IdempotencyKey,
+    Guid StudyProjectId = default) : IRequest<GraphBuildJobCreation>;

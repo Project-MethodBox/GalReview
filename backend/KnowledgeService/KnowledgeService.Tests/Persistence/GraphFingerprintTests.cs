@@ -63,4 +63,15 @@ public sealed class GraphFingerprintTests
             GraphFingerprint.Create(graph, first),
             GraphFingerprint.Create(graph, second));
     }
+
+    [Fact]
+    public void Same_material_in_two_study_projects_has_distinct_fingerprints()
+    {
+        var graph = GraphFixture.CreateHubGraph() with { StudyProjectId = Guid.NewGuid() };
+        var otherProjectGraph = graph with { StudyProjectId = Guid.NewGuid() };
+
+        Assert.NotEqual(
+            GraphFingerprint.Create(graph, new SegmentationOptions()),
+            GraphFingerprint.Create(otherProjectGraph, new SegmentationOptions()));
+    }
 }

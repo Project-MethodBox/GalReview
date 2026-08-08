@@ -17,4 +17,5 @@ public sealed record GraphBuildJob(
     string? ErrorCode,
     string? ErrorMessage,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    Guid? StudyProjectId = null);

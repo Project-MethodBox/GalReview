@@ -47,7 +47,8 @@ public sealed partial class Neo4jKnowledgeRepository
                             transaction,
                             fingerprint.GraphId,
                             graph.OwnerUserId,
-                            graph.MaterialId))
+                            graph.MaterialId,
+                            graph.StudyProjectId))
                     {
                         throw IntegrityFailure(
                             "图谱指纹已存在，但其目标图谱不存在。");
@@ -64,11 +65,13 @@ public sealed partial class Neo4jKnowledgeRepository
                 var version = await NextGraphVersionAsync(
                     transaction,
                     graph.OwnerUserId,
-                    graph.MaterialId);
+                    graph.MaterialId,
+                    graph.StudyProjectId);
                 await SupersedeReadyGraphsAsync(
                     transaction,
                     graph.OwnerUserId,
-                    graph.MaterialId);
+                    graph.MaterialId,
+                    graph.StudyProjectId);
                 await CreateGraphNodesAsync(
                     transaction,
                     graph,
@@ -215,7 +218,7 @@ public sealed partial class Neo4jKnowledgeRepository
     }
 
     public async Task<IReadOnlyList<KnowledgeGraphSummary>> ListGraphsAsync(
-        Guid materialId,
+        Guid studyProjectId,
         Guid ownerUserId,
         CancellationToken cancellationToken)
     {
@@ -223,7 +226,7 @@ public sealed partial class Neo4jKnowledgeRepository
         const string query =
             """
             MATCH (graph:KnowledgeGraph {
-                materialId: $materialId,
+                studyProjectId: $studyProjectId,
                 ownerUserId: $ownerUserId
             })
             RETURN graph
@@ -235,7 +238,7 @@ public sealed partial class Neo4jKnowledgeRepository
             query,
             new
             {
-                materialId = Neo4jParameterMapper.Id(materialId),
+                studyProjectId = Neo4jParameterMapper.Id(studyProjectId),
                 ownerUserId = Neo4jParameterMapper.Id(ownerUserId)
             });
         var records = await cursor.ToListAsync();

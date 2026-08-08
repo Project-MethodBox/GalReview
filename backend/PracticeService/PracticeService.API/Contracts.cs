@@ -19,7 +19,8 @@ public sealed record SourceReferenceRequest(Guid? MaterialId, long? StartOffset,
 public sealed record UpsertQuestionRequest(PracticeQuestionKind Kind, string? Prompt, IReadOnlyList<QuestionOptionRequest>? Options,
     IReadOnlyList<string>? CorrectAnswers, string? Explanation, decimal? Score, int? Difficulty, Guid? KnowledgePointId,
     IReadOnlyList<SourceReferenceRequest>? SourceReferences, QuestionStatus? Status, int? Version);
-public sealed record CreateExamPaperRequest(string? Title, int? QuestionCount, int? DurationSeconds, int? Seed, IReadOnlyDictionary<PracticeQuestionKind, int>? KindCounts);
+public sealed record CreateExamPaperRequest(string? Title, int? QuestionCount, int? DurationSeconds, int? Seed,
+    IReadOnlyDictionary<PracticeQuestionKind, int>? KindCounts, Guid? ReviewPlanId, string? SnapshotVersion);
 public sealed record CreatePracticeSessionRequest(Guid ProjectId, PracticeSessionMode Mode, Guid? ReviewPlanId, string? SnapshotVersion,
     Guid? ExamPaperId, int? QuestionCount, IReadOnlyList<PracticeQuestionKind>? Kinds, int? DurationSeconds, int? Seed);
 public sealed record SaveAnswerRequest(IReadOnlyList<string>? Answer, int? ResponseTimeMs, int? AttemptNumber, Guid? IdempotencyKey);

@@ -35,7 +35,7 @@ public sealed class LearningPlanner
 
         var riskByTarget = targets.ToDictionary(
             point => point.PointId,
-            point => ReviewNeedModel.ForgettingRisk(
+                point => ReviewNeedModel.DueNeed(
                 mastery.GetValueOrDefault(point.PointId),
                 now));
         var analyzer = new DependencyPathAnalyzer(graph);
@@ -395,7 +395,7 @@ public sealed class LearningPlanner
     private static void Validate(LearningPlanOptions options)
     {
         if (options.ChapterIds.Count is < 1 or > 100 ||
-            options.MaximumPoints is < 1 or > 50 ||
+            options.MaximumPoints is < 1 or > 1000 ||
             options.MaximumDependencyDepth is < 0 or > 8)
         {
             throw new KnowledgeServiceException(

@@ -33,12 +33,38 @@ public interface IPracticeGateway
     Task<PlanGraphSnapshot> GetPlanAsync(Guid planId, string snapshotVersion, CancellationToken cancellationToken);
     Task<object> SubmitEvidenceAsync(PracticeSession session, IReadOnlyList<PracticeQuestion> questions, Guid resultId, Guid idempotencyKey, CancellationToken cancellationToken);
     Task<MaterialText> GetMaterialTextAsync(Guid materialId, CancellationToken cancellationToken);
+    Task<KnowledgeGraphScope> GetGraphScopeAsync(Guid graphId, Guid ownerUserId, CancellationToken cancellationToken);
 }
+public sealed record KnowledgeGraphScope(Guid GraphId, Guid MaterialId, Guid? StudyProjectId, Guid OwnerUserId);
 public interface ICreditBilling
 {
     Task ReserveAsync(Guid userId, Guid operationId, string operationType, long estimatedTokenUnits, CancellationToken cancellationToken);
     Task SettleAsync(Guid operationId, long actualTokenUnits, CancellationToken cancellationToken);
     Task ReleaseAsync(Guid operationId, CancellationToken cancellationToken);
+}
+
+public sealed record QuestionGenerationInput(
+    IReadOnlyList<MaterialText> Materials,
+    IReadOnlyList<PracticeQuestionKind> Kinds,
+    int? RequestedTargetCount,
+    IReadOnlyList<PlanGraphPoint> Points,
+    string GeneratorVersion);
+
+public sealed record QuestionGenerationEstimate(
+    int ResolvedTargetCount,
+    long MaximumTokenUnits,
+    string Mode);
+
+public sealed record QuestionGenerationOutput(
+    IReadOnlyList<QuestionDraft> Drafts,
+    IReadOnlyList<PracticeJobDiagnostic> Diagnostics,
+    long ActualTokenUnits,
+    string Mode);
+
+public interface IPracticeQuestionGenerator
+{
+    QuestionGenerationEstimate Estimate(QuestionGenerationInput input);
+    Task<QuestionGenerationOutput> GenerateAsync(QuestionGenerationInput input, CancellationToken cancellationToken);
 }
 public interface IModelStatusReader { IReadOnlyList<ModelState> Inspect(); }
 
