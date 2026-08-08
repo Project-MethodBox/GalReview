@@ -482,6 +482,7 @@ docker compose --env-file .env -f compose.integration.yaml logs --tail=200 gatew
 - 兑换码明文只在管理员批量创建响应中返回一次；后续列表只有掩码，不能从数据库恢复明文。生成后应立即通过受控渠道交付。
 - 兑换码无效、已兑换、已撤销或过期统一返回 `422 REDEMPTION_CODE_UNAVAILABLE`，不要通过数据库直接改余额绕过账本。
 - 若生成任务失败，检查对应预授权是否为 `RELEASED`；成功任务应为 `SETTLED`。`CREDIT_ESTIMATE_EXCEEDED` 需要人工核对估算和模型 usage，不得手工制造负余额。
+- 2026-08-08 之前的 CreditService 镜像可能假定 MySQL UUID 一定返回字符串，在当前 MySqlConnector 下会表现为预授权成功、结算或释放 500。更新时必须同时替换 CreditService 镜像，并以真实 MySQL 完成一次 `HELD -> SETTLED` 和一次 `HELD -> RELEASED`，不能只看 `/readyz`。
 
 ### OCR 启动慢或识别失败
 
@@ -510,9 +511,15 @@ OCR 镜像较大，首次加载模型也需要时间。检查容器资源、模�
 - Practice 题目生成与 GalGame 游戏生成在开始前预授权，credits 不足时返回 402；成功按实际用量扣除，失败释放 held，页面不展示内部 token 换算；
 - PracticeService 四层项目构建和测试通过，`/readyz` 模型哈希状态与镜像内资产一致；
 - 普通 Practice 会话和 Render 视觉小说会话都只能经受信身份向 KnowledgeService 提交证据，重复提交不二次更新 mastery；
+- 一次完成会关闭对应评估计划；若同一资料库先做普通练习再做故事复习，应从同一 graph 新建第二个不可变评估计划，不能复用已完成计划，否则应得到 `REVIEW_PLAN_NOT_OPEN`；
 - RenderService 检查 C++/WASM 自检、manifest、会话、同步证据与掌握度更新；异步消息总线未实现时明确标注未测；
 - 未启动 `ocr` profile 时，测试结论不包含 OCR；
 - 日志和配置输出不含密码、令牌、服务密钥或第三方 API key；
 - 三套 MySQL（含 `qzwl_credit` 账本）、MongoDB 与 Neo4j 备份文件可以在隔离环境读取。
 
 具体测试结果记录在 [`test_report.md`](test_report.md)，不能用本部署文档代替实际测试。
+
+2026-08-08 的发布候选已在 15 容器持久化栈上完成注册、初始 credits、上传、解析、构图、
+PlanGraph 题目生成、SMART_REVIEW、SM-2 回写、批量制码、兑换、故事生成、Render 事件/进度/
+结果幂等和第二次 mastery 回写。部署基线还包含 Practice Mongo `_id` 兼容、Credit MySQL UUID
+读取兼容、GalGame credits 错误持久化修复；三项必须随对应镜像一起发布，不应只更新 Gateway。

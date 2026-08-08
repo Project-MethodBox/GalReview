@@ -181,7 +181,7 @@ public sealed class MongoGameStore : IGameStore
             var recoveryError = new ApiError(
                 Code: "JOB_RECOVERED_AFTER_RESTART",
                 Message: "Service restarted while job was running; job has been marked as failed",
-                Details: new { });
+                Details: new Dictionary<string, string>());
 
             var update = Builders<GameGenerationJob>.Update
                 .Set(j => j.Status, JobStatus.FAILED)
