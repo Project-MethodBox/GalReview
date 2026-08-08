@@ -215,6 +215,30 @@ function Start-MoonStoneStack {
     $services += Start-LocalService -Name 'credit-service' -FilePath 'dotnet' -Arguments $creditArguments -HealthUrl 'http://127.0.0.1:5108/healthz'
     $services += Start-LocalService -Name 'new-frontend' -FilePath 'npm.cmd' -Arguments 'run dev' -HealthUrl 'http://127.0.0.1:5121/' -WorkingDirectory (Join-Path $projectRoot 'frontend')
 
+    $processManifest = @(
+        $services | ForEach-Object {
+            $processName = $null
+            $startedAtUtc = $null
+            try {
+                $processName = $_.Process.ProcessName
+                $startedAtUtc = $_.Process.StartTime.ToUniversalTime().ToString('O')
+            }
+            catch {
+                # A process that exits immediately is reported by the health
+                # check below; keep writing the remaining process manifest.
+            }
+            [pscustomobject]@{
+                Name         = $_.Name
+                ProcessId    = $_.Process.Id
+                ProcessName  = $processName
+                StartedAtUtc = $startedAtUtc
+            }
+        }
+    )
+    $processManifest |
+        ConvertTo-Json -Depth 3 |
+        Set-Content -LiteralPath (Join-Path $runtimeDirectory 'project-processes.json') -Encoding UTF8
+
     $failed = @()
     foreach ($service in $services) {
         if (Test-ServiceHealth $service) {
