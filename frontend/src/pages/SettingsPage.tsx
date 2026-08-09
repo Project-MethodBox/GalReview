@@ -14,7 +14,7 @@ type SupportedLocale = 'zh-CN' | 'en-US'
 
 const settingsSections: { id: SettingsSection; label: string }[] = [
   { id: 'profile', label: '个人资料' },
-  { id: 'credits', label: 'credits' },
+  { id: 'credits', label: 'Credits' },
   { id: 'learning', label: '学习偏好' },
   { id: 'security', label: '账户安全' },
   { id: 'danger', label: '账户注销' },
@@ -163,15 +163,15 @@ export default function SettingsPage() {
             {activeSection === 'credits' ? (
             <form className="form-section" id="credits-settings" onSubmit={redeemCredits}>
               <header className="credits-settings__header">
-                <div><h2>credits</h2><p>用于生成复习题库和故事内容，完成后按实际用量扣除。</p></div>
+                <div><h2>Credits</h2><p>用于生成复习题库和故事内容，完成后按实际用量扣除。</p></div>
               </header>
               <div className="credit-balance">
                 <span className="credit-balance__label">可用余额</span>
-                <div className="credit-balance__value"><strong>{creditBalance?.available.toFixed(5) ?? '读取中'}</strong><span>credits</span></div>
+                <div className="credit-balance__value"><strong>{creditBalance?.available.toFixed(5) ?? '读取中'}</strong><span>Credits</span></div>
                 {creditBalance && creditBalance.held > 0 ? <small>{creditBalance.held.toFixed(5)} credits 正在生成任务中占用</small> : <small>当前没有任务占用余额</small>}
               </div>
               <section className="credits-redeem" aria-labelledby="credits-redeem-title">
-                <div className="credits-redeem__copy"><h3 id="credits-redeem-title">兑换 credits</h3><p>输入兑换码后，额度会立即加入当前账户。</p></div>
+                <div className="credits-redeem__copy"><h3 id="credits-redeem-title">兑换 Credits</h3><p>输入兑换码后，额度会立即加入当前账户。</p></div>
                 <div className="credits-redeem__controls">
                   <label><span>兑换码</span><input autoComplete="off" placeholder="输入兑换码" value={redemptionCode} onChange={(event) => setRedemptionCode(event.target.value.toUpperCase())} /></label>
                   <div className="credits-redeem__actions"><button className="button button--primary" disabled={busy !== null || !redemptionCode.trim()} type="submit">立即兑换</button><button className="button button--quiet" type="button" onClick={openPurchase}>购买 credits</button></div>

@@ -42,7 +42,7 @@ Practice 路由按契约细分限流：题库生成与整卷导入使用 `genera
 `/internal/v1/credits` 以服务身份路由。管理员兑换码路由必须位于通用
 `/api/v1/admin` AuthService 路由之前，避免被前缀规则截获。
 
-Gateway 不读取 OCR 或模型供应商密钥。`DSAPI`、`BitchSDAU` 等密钥不得进入
+Gateway 不读取 OCR 或模型供应商密钥。`DEEPSEEK_API_KEY`、`BitchSDAU` 等密钥不得进入
 Gateway 配置、请求头或日志。
 
 ## 信任边界

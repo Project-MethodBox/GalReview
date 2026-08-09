@@ -206,7 +206,7 @@ services:
       MongoDb__Database: qzwl_galgame
       GalGameStore__Provider: MongoDB
       NarrativeGeneration__Enabled: ${GALGAME_NARRATIVE_ENABLED:-true}
-      NarrativeGeneration__ApiKey: ${DSAPI:-}
+      NarrativeGeneration__ApiKey: ${DEEPSEEK_API_KEY:-}
       NarrativeGeneration__Endpoint: ${GALGAME_NARRATIVE_ENDPOINT:-https://api.deepseek.com/chat/completions}
       NarrativeGeneration__Model: ${GALGAME_NARRATIVE_MODEL:-deepseek-v4-pro}
       NarrativeGeneration__PromptVersion: galgame-narrative-v3
@@ -247,7 +247,7 @@ services:
       ConnectionStrings__PracticeDatabase: mongodb://mongo:27017
       MongoDb__Database: qzwl_practice
       PracticeStore__Provider: MongoDB
-      QuestionGeneration__ApiKey: ${DSAPI:-}
+      QuestionGeneration__ApiKey: ${DEEPSEEK_API_KEY:-}
       QuestionGeneration__Endpoint: ${PRACTICE_QUESTION_ENDPOINT:-https://api.deepseek.com/chat/completions}
       QuestionGeneration__Model: ${PRACTICE_QUESTION_MODEL:-deepseek-v4-flash}
       QuestionGeneration__Parallelism: ${PRACTICE_QUESTION_PARALLELISM:-4}

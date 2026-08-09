@@ -303,7 +303,7 @@ Gateway 契约测试还验证：
 - **File access grant 未测试且不属于当前可执行契约**：现有占位映射没有 grant token
   或服务端过期校验，已从当前接口目录移出；完整短期下载授权由 FileService/Gateway
   负责人作为 **URGENT** 项实现。
-- **生产密钥与生产数据库未测试**：本轮使用本地开发配置。`DSAPI` 和 `BitchSDAU`
+- **生产密钥与生产数据库未测试**：本轮使用本地开发配置。`DEEPSEEK_API_KEY` 和 `BitchSDAU`
   没有注入、读取或记录，它们不是确定性提取和构图链路的依赖。
 - **Mongo 跨集合原子提交**：standalone 部署没有事务；当前通过固定顺序、条件更新和
   启动恢复避免错误 `READY`。若生产要求完全不可观察的单一完成态，应将 Mongo 部署为
@@ -798,7 +798,7 @@ FileService，因此界面所见的纯文本/HTML Bad Gateway 来源于仓库外
 | GalGameService 镜像重建 | 未执行；本机 Docker Linux engine 未运行，Compose 静态解析已通过 |
 
 真实模型测试使用仓库测试 PlanGraph（CAMPUS / STANDARD），以
-`GALGAME_RUN_LIVE_LLM_TEST=1` 显式启用，API key 只从宿主 `DSAPI` 读取。最终草稿通过：
+`GALGAME_RUN_LIVE_LLM_TEST=1` 显式启用，API key 只从宿主 `DEEPSEEK_API_KEY` 读取。最终草稿通过：
 
 - sceneId/choiceId 集合完整且无新增；
 - EXPLAIN/QUESTION 的依据可逐字回溯到绑定节点；
@@ -1337,7 +1337,7 @@ PDF 页内题号；农业三道坏题；微生物“名词解释/大题/重要�
 微生物资料确认为半结构化讲义而非标准题库。v2 直接忠实提取了“术语：定义”和“问题标题：分点
 答案”，没有把它们统一重写成模板。该图谱实际只产生 15 个 Learning Plan 点，故 231 道原文问答
 无法唯一贴签并按契约保留 DRAFT，9 道通过唯一绑定后 READY；这不是可宣称“240 道可练习题”的
-结果。当前本地 `DSAPI` 未配置，且该样本的半结构化范围覆盖了可成题区间，因此普通正文的真实
+结果。当前本地 `DEEPSEEK_API_KEY` 未配置，且该样本的半结构化范围覆盖了可成题区间，因此普通正文的真实
 DeepSeek + 独立回验未发生；该分支只由模拟 provider 单元测试验证，不能据此宣称线上模型质量已验收。
 
 最终完整样本 ID：

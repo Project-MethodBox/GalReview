@@ -46,10 +46,10 @@ var storageName = (isMockMode, useMongoStore) switch
 // 叙事生成配置（§7.3.2）
 var narrativeSection = builder.Configuration.GetSection(NarrativeGenerationOptions.SectionName);
 var narrativeOptions = narrativeSection.Get<NarrativeGenerationOptions>() ?? new NarrativeGenerationOptions();
-// 本地 dotnet run 不会像 Compose 那样自动把 DSAPI 映射到配置节；允许直接从
+// 本地 dotnet run 不会像 Compose 那样自动把 DEEPSEEK_API_KEY 映射到配置节；允许直接从
 // 进程环境读取，但绝不要求开发者把密钥写进 appsettings.json。
 if (string.IsNullOrWhiteSpace(narrativeOptions.ApiKey))
-    narrativeOptions.ApiKey = Environment.GetEnvironmentVariable("DSAPI") ?? string.Empty;
+    narrativeOptions.ApiKey = Environment.GetEnvironmentVariable("DEEPSEEK_API_KEY") ?? string.Empty;
 // Mock 模式强制关闭外部模型调用
 if (isMockMode)
     narrativeOptions.Enabled = false;
@@ -140,7 +140,7 @@ var app = builder.Build();
 if (narrativeOptions.Enabled && !narrativeEnabled)
 {
     app.Logger.LogWarning(
-        "Narrative generation was requested but provider configuration is incomplete; set DSAPI and a valid HTTPS endpoint to avoid deterministic fallback");
+        "Narrative generation was requested but provider configuration is incomplete; set DEEPSEEK_API_KEY and a valid HTTPS endpoint to avoid deterministic fallback");
 }
 else if (narrativeEnabled)
 {
