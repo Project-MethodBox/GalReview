@@ -68,13 +68,6 @@ function lastForwardedAddress(value) {
   return header.split(',').map((part) => part.trim()).filter(Boolean).at(-1) || ''
 }
 
-// 网关早期拒绝（401/413/429）到达时客户端请求体往往仍在上传。收尾规则
-// （与网关 bodyDrain 中间件同构）：响应头和信封字节立即转发——响应带
-// Content-Length，客户端凭它即刻完成读取；但 response.end() 延迟到客户端
-// 请求体排空完成后再调用——否则 Node 会对"请求未完成"的连接 destroySoon
-// （RST），信封可能被冲掉。排空前先把请求流从上游腿 unpipe（上游已停止
-// 收体，pipe 背压会把流冻结）。排空有上限、有超时，越界则在响应完成后
-// 显式断开（明示降级）。
 const DRAIN_MAX_BYTES = 12 * 1024 * 1024
 const DRAIN_TIMEOUT_MS = 10_000
 
@@ -116,9 +109,6 @@ function endAfterDrain(request, response, upstream) {
 function proxyToGateway(request, response) {
   const target = new URL(request.url || '/', gateway)
   const traceId = getCorrelationId(request)
-  // 本进程是浏览器侧入口：只有来自 loopback IIS/ARR 的转发链可信，并只取 ARR
-  // 追加在链尾的真实对端；直接调用方自带的 X-Forwarded-* 一律以 socket 覆盖。
-  // 网关再仅信任本机前端，匿名限流才能得到真实且不可伪造的客户端 IP。
   const remoteAddress = request.socket?.remoteAddress || ''
   const fromTrustedProxy = trustLoopbackProxy && isLoopbackAddress(remoteAddress)
   const forwardedAddress = fromTrustedProxy
@@ -132,11 +122,9 @@ function proxyToGateway(request, response) {
     'x-forwarded-proto': fromTrustedProxy ? publicScheme : 'http',
     'x-forwarded-host': request.headers.host || '',
   }
-  // 崩溃防护：早期拒绝后上游/客户端连接的迟到错误（如网关排空超时 RST）
-  // 不能变成未捕获异常打崩整个前端进程
   request.on('error', () => {})
   response.on('error', () => {})
-  let settled = false // 单飞：正常转发与 503 兜底二选一，杜绝二次 writeHead
+  let settled = false
   const upstream = httpRequest(target, { method: request.method, headers }, (upstreamResponse) => {
     if (settled) {
       upstreamResponse.resume()
@@ -158,8 +146,6 @@ function proxyToGateway(request, response) {
   })
   upstream.setTimeout(180_000, () => upstream.destroy(new Error('Gateway request timed out')))
   upstream.on('socket', (socket) => socket.on('error', () => {}))
-  // 客户端在上传途中断开时 pipe 只会 unpipe、不会结束上游请求，网关会一直
-  // 等待剩余请求体直到 180 秒空闲超时；主动销毁上游腿让网关立即回收连接。
   request.once('close', () => {
     if (!settled && !request.complete && !upstream.destroyed) upstream.destroy()
   })
@@ -189,9 +175,6 @@ function proxyToGateway(request, response) {
 }
 
 async function serveFrontend(request, response) {
-  // 畸形百分号编码（如 `/%`、`/%E0%A4%A`）会让 decodeURIComponent 抛 URIError；
-  // 该异常若逸出会成为未处理的 Promise 拒绝并直接终止进程，因此就地回退为
-  // 原始 pathname（后续 normalize + 前缀校验仍保证不会越出静态根目录）。
   const rawPathname = requestPath(request)
   let pathname
   try {
@@ -208,7 +191,14 @@ async function serveFrontend(request, response) {
     if (info.isDirectory()) filePath = join(filePath, 'index.html')
     await stat(filePath)
   } catch {
-    filePath = join(staticRoot, 'index.html')
+    const extension = extname(filePath).toLowerCase()
+    if (!extension || extension === '.html') {
+      filePath = join(staticRoot, 'index.html')
+    } else {
+      response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' })
+      response.end('Not Found')
+      return
+    }
   }
 
   const extension = extname(filePath).toLowerCase()
@@ -217,6 +207,9 @@ async function serveFrontend(request, response) {
     'Cache-Control': filePath.endsWith('index.html')
       ? 'no-cache'
       : 'public, max-age=604800, immutable',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
   })
   createReadStream(filePath).on('error', () => response.destroy()).pipe(response)
 }
@@ -231,7 +224,6 @@ const server = createServer((request, response) => {
     proxyToGateway(request, response)
     return
   }
-  // 兜底：静态服务的任何异步异常都不得逸出为未处理拒绝（会终止进程）
   void serveFrontend(request, response).catch((error) => {
     logProxyFailure('frontend_static_error', request, getCorrelationId(request), {
       code: typeof error?.code === 'string' ? error.code : error?.name || 'UNKNOWN',
