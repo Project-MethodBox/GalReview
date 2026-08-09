@@ -22,6 +22,7 @@ RUN dotnet publish "KnowledgeService.API/KnowledgeService.API.csproj" \
 FROM runtime AS final
 USER $APP_UID
 WORKDIR /app
+ENV ASPNETCORE_URLS=http://+:8080
 COPY --from=build /app/publish .
 HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=5 \
     CMD curl --fail --silent http://127.0.0.1:8080/readyz > /dev/null || exit 1
