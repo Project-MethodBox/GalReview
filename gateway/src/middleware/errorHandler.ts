@@ -12,12 +12,12 @@ export function errorHandlerMiddleware(
   err: Error & { status?: number; code?: string },
   req: Request,
   res: Response,
-  _next: NextFunction,
+  next: NextFunction,
 ): void {
   const traceId = getTraceId(req);
 
-  // 如果响应已发送，交给 Express 默认处理
   if (res.headersSent) {
+    next(err);
     return;
   }
 
