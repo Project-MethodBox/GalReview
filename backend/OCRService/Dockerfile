@@ -12,4 +12,6 @@ COPY app.py ./
 EXPOSE 5110
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=6 \
   CMD curl --fail --silent http://127.0.0.1:5110/healthz > /dev/null || exit 1
+RUN useradd -m -u 1000 ocruser
+USER ocruser
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "5110"]
