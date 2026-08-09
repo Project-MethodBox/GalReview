@@ -3,9 +3,11 @@ export async function pollUntil<T>(
   isDone: (value: T) => boolean,
   onValue?: (value: T) => void,
   timeoutMs = 240_000,
+  signal?: AbortSignal,
 ): Promise<T> {
   const deadline = Date.now() + timeoutMs
   while (true) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
     const value = await read()
     onValue?.(value)
     if (isDone(value)) return value
