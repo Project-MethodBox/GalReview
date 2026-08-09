@@ -184,7 +184,10 @@ static string? GatewayUser(HttpContext context, string key)
 {
     if (!context.Request.Headers.TryGetValue("X-Gateway-Key", out var values) || values.Count != 1)
         return null;
-    var left = System.Text.Encoding.UTF8.GetBytes(values[0]);
+    var keyValue = values[0];
+    if (keyValue is null)
+        return null;
+    var left = System.Text.Encoding.UTF8.GetBytes(keyValue);
     var right = System.Text.Encoding.UTF8.GetBytes(key);
     if (left.Length != right.Length || !System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(left, right))
         return null;
