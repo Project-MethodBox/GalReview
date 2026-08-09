@@ -17,7 +17,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY --from=build /app .
+COPY --chown=$APP_UID:$APP_UID --from=build /app .
 USER $APP_UID
 EXPOSE 5107
 HEALTHCHECK --interval=10s --timeout=3s --start-period=30s --retries=6 \
