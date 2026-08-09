@@ -172,8 +172,8 @@ PracticeService 不拥有：
 1. 用户从研习册选择章节；页面为该次章节练习、智能复习或模拟试卷创建新的 `ASSESSMENT` PlanGraph。
 2. KnowledgeService 用第 6.6 节唯一算法选点：SM-2 的 `nextReviewAt` 形成到期集合，图谱形成依赖覆盖，再按
    次模边际收益选择目标；禁止任意设置“SM-2 60% + 图谱 40%”之类混合权重。
-3. PracticeService 按 PlanGraph 目标顺序，每个知识点确定性选择一道 READY 题；缺题返回点级缺口，
-   不换入计划外题，也不在同次计分会话重复同一知识点。
+3. PracticeService 按 PlanGraph 目标顺序，每个知识点确定性选择一道 READY 题；缺题点被跳过并继续扫描
+   后续计划点，不换入计划外题，也不在同次计分会话重复同一知识点。只有计划与题库零交集时才报错。
 4. 客观题确定性判分；解释题由本地语义模型评分，并保留相似度与规则版本。
 5. 完成会话后，PracticeService 使用现有 `PUT /internal/v1/review-evidence/{resultId}` 提交证据。
 6. 对 PracticeService 调用，该契约的 `packageId` 表示 `questionBankId`，`sessionId` 表示 PracticeSession；KnowledgeService 仍校验 plan、snapshot、用户、题目知识点范围和幂等键。
@@ -193,7 +193,9 @@ PracticeService 不代理、不复制也不转换 GamePackage。这样普通刷�
 
 ### 4.4 整卷与共享包
 
-- 整卷文件先进入 FileService；PracticeService 的导入任务读取规范化文本并生成 `DRAFT` 试卷，必须由用户确认后才可考试。
+- 整卷文件先进入 FileService；PracticeService 的导入任务读取规范化文本并生成 `DRAFT` 试卷。具有逐字
+  来源、答案支持且能唯一对应本册知识点的草稿由既有 PATCH/会话入口自动补签为 `READY`；只有来源失效
+  或确有多义的剩余题才需要人工处理。
 - `.rhproj` / `.rhp` 只作为兼容导入格式，不成为内部存储格式；ZIP 条目必须拒绝绝对路径、`..`、符号链接和解压后超限。
 - 共享包默认 `PRIVATE`；显式发布后为 `UNLISTED` 或 `PUBLIC`。下载仍经 Gateway 用户鉴权，不暴露 GridFS URL。
 
@@ -208,6 +210,11 @@ PracticeService 不代理、不复制也不转换 GamePackage。这样普通刷�
   唯一原题/知识原子决定题数，不能为了达到固定数量制造重复题。
 - 只有 schema、逐字来源、答案支持、分离的第二次回验、题型约束和唯一知识点绑定全部通过才进入 `READY`。
   单选必须是 A-D 四项 one-best-answer；任何门禁失败都拒绝或进入 `DRAFT`，不自动修成“看起来像题”。
+- 名词解释先提取引号内或“请解释/什么是/何谓”之后的术语焦点，再按精确标题、精确标签、最长唯一标题、
+  唯一包含关系、同资料唯一来源区间重叠和来源文本的离散顺序自动补签，不使用相似度混合分。旧草稿也在页面载入、智能复习和组卷
+  前重跑同一规则；来源/checksum/答案支持不成立时禁止自动转 READY。
+- PlanGraph 是复习目标的优先顺序，不是“任一点缺题就整次失败”的全有或全无清单。PracticeService 按
+  顺序跳过缺题点并选择后续有 READY 题的计划点；只有计划与题库完全没有交集时才返回覆盖错误。
 - `similarity` 取值 `[0,1]`；`quality` 为整数 `[0,5]`；`responseTimeMs >= 0`。
 - 客观题不调用 LLM 判分。主观题即使调用解释模型，最终证据也必须保存本地模型分数、规则版本与正确答案摘要，保证可审计。
 - PracticeService 不允许客户端上传 `userId` 冒充他人；用户身份只接受 Gateway 注入的 `X-User-Id`。
@@ -305,6 +312,7 @@ ReciteHelper 使用 AGPL-3.0。迁移的源代码、提示词、模型和兼容�
 | 2026-08-09 | Practice/Gateway/Frontend | 主链升级为 `recite-question-v2`：整册 Learning Plan、可空 targetCount、显式/半结构化/普通正文分流、答案原子、分离的第二次 QA 回验、provider usage 结算与 600 秒超时 | 修复扁平 PDF 行内题无法识别、答案跨章节、固定 30 题、机械模板与猜签问题 | Practice 36/36、Gateway 203/203、Frontend build；两份真实 PDF 与公开 HTTP 闭环见 test_report §33 | VERIFIED |
 | 2026-08-09 | Knowledge/Practice/Frontend/Deploy | 图谱切分与抽取升级为 `chapter-segmenter-v3` / `knowledge-extractor-v3`：识别无空格章节、裸题型栏、数字起始术语和真实绪论；普通长文按完整句切成不超过 1400 字符的模型证据块；题目绑定使用离散的题干精确优先级而非混合权重；前端显式请求 v3 | 修复微生物 PDF 仅 15 个图谱点导致 240 题中 231 题不可练，以及单行长文只形成一个 8 题模型分片；保持 DRAFT/READY 证据门禁 | Knowledge 115/115、Practice 38/38、Frontend build；同款 26,513 字符 PDF 本地探针得到 10 章、210 点、240 题中 220 READY，见 test_report §34 | VERIFIED |
 | 2026-08-09 | Practice/Docs | 将“独立 QA”校正为同一 provider/model 也可执行的“分离第二遍来源回验”；按原始论文、命题指南与 retrieval-practice 研究补齐证据等级、运行参数边界和项目级盲评/学习实验验收协议 | 防止把研究启发、自动门禁或单元测试夸大为当前中文领域组合系统已被证明有效 | 实现—文献映射复核；Practice 回归与结论见 test_report §35 | VERIFIED |
+| 2026-08-09 | Knowledge/Practice/Frontend/Deploy | 复用题目 PATCH 和图谱 scope 接口自动修复来源可验证的无签草稿；名词解释增加焦点/别名与唯一来源区间离散绑定；SMART/EXAM 跳过计划内缺题点并继续取后续已覆盖点，只有零交集才报错 | 消除“请解释第二性比仍待补签”和单个覆盖缺口使温习永久不可进入的问题，同时保留逐字来源、唯一点和计划内证据边界 | Practice 44/44、Knowledge 115/115、Frontend production build；见 test_report §36 | VERIFIED |
 
 状态只使用 `SPECIFIED | IMPLEMENTED | VERIFIED | BLOCKED`。代码合入后必须逐项更新，测试未运行或失败时不得写 `VERIFIED`。
 

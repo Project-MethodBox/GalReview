@@ -198,8 +198,9 @@ docker compose --env-file .env -f compose.integration.yaml up -d --wait knowledg
   `(ownerUserId, studyProjectId, version)` 约束与索引。旧图不改写、不删除，缺少 `studyProjectId` 时只按
   既有 graphId 兼容读取，不能绑定给新册。回滚到旧 KnowledgeService 前必须停止新立册写入，否则旧服务
   会把同资料不同研习册错误视为同一版本序列。
-- 图谱项目中历史 `READY` 且 `knowledgePointId=null` 的题目不会计入“可练习题”，也不会进入计分会话；
-  用户在题库中“补签入库”后恢复使用。Mongo 不需要离线 schema migration。
+- 图谱项目中历史 `DRAFT` 且 `knowledgePointId=null` 的题目不会直接进入计分会话；新版本会在研习册页面、
+  SMART 会话和组卷前自动重跑来源校验与唯一补签，成功后原地写为带版本递增的 READY。来源失效或多义题
+  仍保留草稿。Mongo 不需要离线 schema migration。
 - 自动成题必须携带 OPEN plan/snapshot；滚动发布期间旧前端仍发送无 plan 请求时会得到
   `400 PLAN_REQUIRED`，因此不要长时间混跑新 PracticeService 与旧前端。
 - 每次章节练习、模拟试卷与故事回响都创建新 PlanGraph。已完成或过期计划不得因重启、回滚或恢复
@@ -217,7 +218,7 @@ docker compose --env-file .env -f compose.integration.yaml up -d --wait knowledg
   `aria-busy=true` 的真实进行中操作显示等待光标。
 - 恢复“立册即成题”需要同时发布 `gateway`、`knowledge-service`、`practice-service` 与 `frontend`：前端在创建册后
   先调用现有构图接口并绑定项目，再复用章节、learning-plan 和 question-generation 接口完成编排；首次建库
-  使用整册 Learning Plan、请求四类题并省略 `targetCount`。`recite-question-v2` 只有在来源、答案、独立回验和唯一
+  使用整册 Learning Plan、请求四类题并省略 `targetCount`。`recite-question-v2` 只有在来源、答案、第二遍回验和唯一
   pointId 门禁均成立时才写 READY；显式题库/半结构化讲义优先忠实提取，普通正文才调用 DeepSeek。只替换前端无法获得这一保证，
   发布时必须重建并替换 `practice-service`。
   滚动发布时先替换 Gateway、PracticeService、KnowledgeService，再替换 Frontend；旧前端的资料级构图请求会因缺少
@@ -226,7 +227,7 @@ docker compose --env-file .env -f compose.integration.yaml up -d --wait knowledg
 - Gateway 的 question-generation 路由和前端请求超时均为 600 秒；反向代理的读取超时不得低于该值。
   这只允许长任务完成，不代表 UI 的百分比可伪造；进度仍以服务端任务状态为准。
 - `DEEPSEEK_API_KEY` 为空时 PracticeService 不调用模型：可直接核对的结构化题仍可生成，需要模型的普通正文会留下
-  `QUESTION_MODEL_NOT_CONFIGURED` 诊断。上线前应以真实普通教材验证 provider JSON、独立回验和
+  `QUESTION_MODEL_NOT_CONFIGURED` 诊断。上线前应以真实普通教材验证 provider JSON、第二遍来源约束回验和
   `usage.total_tokens` 结算；不得通过恢复旧模板兜底来掩盖配置缺失。
 - 回滚应用镜像不会回滚已经写入的题目绑定和 mastery。需要回滚时先停止新会话入口，等待活动会话
   完成或明确放弃，再回滚 `practice-service` 与 `frontend`；不得回滚 Neo4j/Mongo 数据卷来撤销学习记录。
@@ -363,10 +364,10 @@ docker compose --env-file .env -f compose.integration.yaml up -d --no-deps --wai
 | `user-service` | `backend/UserService/Dockerfile` | 本地默认 Mock；服务器模板使用 `user-mysql`，权威用户资料只写入该实例 |
 | `auth-service` | `backend/AuthService/Dockerfile` | 本地默认 Mock；服务器模板使用 `auth-mysql`，无邀请码注册时经 Gateway 访问 UserService 并幂等创建 CreditService 账户 |
 | `file-service` | `backend/FileService/Dockerfile` | 依赖 `mongo`；启用图片/扫描件识别时还依赖 `ocr-service` |
-| `knowledge-service` | `backend/KnowledgeService/KnowledgeService.API/Dockerfile` | 依赖 `neo4j`，构图时经 Gateway 读取 FileService 文本 |
+| `knowledge-service` | `backend/KnowledgeService/KnowledgeService.API/Dockerfile` | 依赖 `neo4j`，构图时经 Gateway 读取 FileService 文本；向 PracticeService 的既有图谱 scope 响应附带本册补签候选点 |
 | `galgame-service` | `backend/GalGameService/Dockerfile` | 经 Gateway 读取 KnowledgeService PlanGraph，并在生成前后调用 CreditService 预授权/结算；任务和包持久化到 `qzwl_galgame` |
 | `render-service` | `backend/RenderService/Dockerfile` | 编译并自检 `cpp-wasm-0.2.0` runtime，公开 WASM 与 JS Adapter，并提供 ReviewSession、进度快照、作答和同步证据提交 |
-| `practice-service` | `backend/PracticeService/Dockerfile` | 发布 `PracticeService.API`；内部为 API/Application/Domain/Persistence 四层并由 MediatR CQRS 解耦；依赖 `mongo`、Gateway、File/Knowledge/Credit 内部契约及本地模型资产；按 PlanGraph 目标生成带知识点/原文证据的 READY 确定性题目，不能机械校验的导入/未来模型结果保持 DRAFT；章节练习和试卷完成后提交 mastery；题库生成预授权并按实际内容结算；共享 `.qzwlp` 存 GridFS |
+| `practice-service` | `backend/PracticeService/Dockerfile` | 发布 `PracticeService.API`；内部为 API/Application/Domain/Persistence 四层并由 MediatR CQRS 解耦；依赖 `mongo`、Gateway、File/Knowledge/Credit 内部契约及本地模型资产；按 PlanGraph 目标生成带知识点/原文证据的 READY 题，并自动修复来源可验证的旧草稿绑定；SMART/EXAM 只选择计划内已覆盖点但不被单个缺口阻断；章节练习和试卷完成后提交 mastery；题库生成预授权并按实际内容结算；共享 `.qzwlp` 存 GridFS |
 | `credit-service` | `backend/CreditService/Dockerfile` | API/Application/Domain/Persistence 四层，Application 使用 MediatR CQRS；依赖 `credit-mysql`，内部端口 `5108`，不向宿主发布 |
 | `frontend` | `frontend/Dockerfile` | 生产静态构建；容器内 Node 服务通过 `GATEWAY_UPSTREAM` 同源代理 `/api` |
 | `ocr-service` | `backend/OCRService/Dockerfile` | `ocr` profile；只允许 FileService 在内部网络调用 |
@@ -386,6 +387,33 @@ docker compose --env-file .env -f compose.integration.yaml up -d --no-deps --wai
 验证图谱响应的 `segmenterVersion=chapter-segmenter-v3`、`extractorVersion=knowledge-extractor-v3`，并
 核对 READY 题均有唯一 `knowledgePointId`。回滚应用镜像不会删除 v3 图；旧版本客户端不支持 v3 构图，
 故回滚时应同时回滚这三个组件，且不要把 v3 图重新绑定给只接受 v2 的旧前端流程。
+
+### 自动补签与部分题库覆盖修复
+
+该修复不增加容器、端口、环境变量或数据库 schema，但同时修改 `knowledge-service` 的既有内部 scope
+响应、`practice-service` 的题目 PATCH/会话选择逻辑和 `frontend` 的自动触发行为，因此至少按以下顺序
+重建替换：
+
+```bash
+docker compose --env-file .env -f compose.integration.yaml build knowledge-service practice-service frontend
+docker compose --env-file .env -f compose.integration.yaml up -d --wait knowledge-service practice-service frontend
+```
+
+先发布 KnowledgeService，保证 scope 响应已有 `points[]`；旧 PracticeService 会忽略新增字段。随后发布
+PracticeService，最后发布 Frontend。新 PracticeService 在暂时连接旧 KnowledgeService 时仍可用 PlanGraph
+修复当前复习目标，但页面自动补签会因 scope 不含点而返回明确上游错误，因此不要长期混跑。
+
+部署后使用新建或现有测试册验证：
+
+1. 准备一条带可校验 source range/checksum、题干为 `请解释“第二性比”。`、知识点为空的 DRAFT；打开
+   研习册后应自动绑定本册唯一“第二性比”知识点并成为 READY，版本加一。
+2. 构造至少三个按优先级排列的 PlanGraph 目标，使首个目标缺题、后两个目标各有 READY 题；开始温习应
+   创建含后两个计划内知识点的会话，不得返回覆盖错误，也不得选入计划外题。
+3. 当所有计划目标均无 READY 题时仍应返回 `422 QUESTION_COVERAGE_GAP`；当来源 checksum 错误或两个
+   知识点同样匹配时，草稿必须保持 DRAFT。
+
+回滚时 Frontend、PracticeService、KnowledgeService 逆序整体回滚。自动补签已写入 Mongo 的题目只是
+增加合法 pointId、READY 状态和版本，不应删除；旧版本可继续读取。不要回滚 Mongo/Neo4j 数据卷。
 
 基础设施可以单独恢复：
 

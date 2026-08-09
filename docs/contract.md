@@ -762,8 +762,13 @@ KnowledgeService 只接收 FileService 已规范化的纯文本，先建立章�
 | `GET` | `/internal/v1/review-plans/{reviewPlanId}/graph` | 仅 GalGameService 读取不可变计划图 | `snapshotVersion` Query | `PlanGraph` | `200/400/403/404/409` |
 | `PUT` | `/internal/v1/review-evidence/{resultId}` | 仅 RenderService 幂等提交学习证据并更新掌握度 | `ReviewEvidenceSubmission` | `MasteryUpdateReceipt` | `200/400/403/404/409/422` |
 | `GET` | `/api/v1/mastery-records` | 查询当前用户掌握度 | `MasteryListQuery` | `MasteryPage` | `200/400` |
-| `GET` | `/internal/v1/knowledge-graphs/{graphId}/scope` | 仅 PracticeService 核验图谱归属 | `ownerUserId` Query | `graphId, materialId, studyProjectId, ownerUserId` | `200/403/404` |
+| `GET` | `/internal/v1/knowledge-graphs/{graphId}/scope` | 仅 PracticeService 核验图谱归属并读取补签候选 | `ownerUserId` Query | `graphId, materialId, studyProjectId, ownerUserId, points[]` | `200/403/404` |
 | `GET` | `/internal/v1/practice-projects/{projectId}/graph-scope` | 仅 KnowledgeService 核验项目与资料成员关系 | `ownerUserId, materialId` Query | `studyProjectId, ownerUserId, materialIds` | `200/403/404/409` |
+
+图谱 scope 的 `points[]` 是对既有归属响应的向后兼容附加字段；每项只包含 `pointId, chapterId, title,
+summary, tags, sourceReferences[]`，其中来源项为 `materialId, startOffset, endOffset`。它只供
+PracticeService 校验题目绑定，不包含 mastery、关系权重或其他用户数据，也不赋予 PracticeService 修改图谱
+的能力。
 
 `PATCH /api/v1/knowledge-points/{pointId}` 人工修正属于 **P1（KnowledgeService，
 未实现、未映射、未测试）**，不属于上表当前可执行接口。未来实现前必须冻结
@@ -2353,7 +2358,7 @@ API/Application/Domain/Persistence 四层项目；API 通过 MediatR Command/Que
 | `GET` | `/api/v1/question-generation-jobs/{jobId}` | 用户 | 查询生成状态和逐资料诊断 |
 | `GET` | `/api/v1/practice-projects/{projectId}/questions` | 用户 | 查询题目；可按题型、状态、知识点筛选 |
 | `POST` | `/api/v1/practice-projects/{projectId}/questions` | 用户 | 人工新增题目 |
-| `PATCH` | `/api/v1/practice-questions/{questionId}` | 用户 | 修改题目、答案、解释、分值和绑定 |
+| `PATCH` | `/api/v1/practice-questions/{questionId}` | 用户 | 修改题目、答案、解释、分值和绑定；来源可验证的 DRAFT 可省略 pointId 请求自动补签入库 |
 | `DELETE` | `/api/v1/practice-questions/{questionId}` | 用户 | 软删除题目 |
 | `POST` | `/api/v1/practice-sessions` | 用户 | 创建普通、智能或试卷会话 |
 | `GET` | `/api/v1/practice-sessions/{sessionId}` | 用户 | 查询会话、顺序与作答进度 |
@@ -2484,10 +2489,12 @@ PATCH `graphId`，PracticeService 再反查图谱的 `studyProjectId` 和来源�
    OpenAI-compatible 模型答案先行生成；即使 PDF 一页或全文被抽成单行，也必须按不超过 1400 UTF-16
    字符、优先在换行或完整句末结束的连续来源块拆分，不能把整份长文误算成一个最多 8 题的分片；不得用
    固定 500/800 字符模板、全文随机词或知识点位置轮转凑题。
-4. 每题只允许绑定 PlanGraph 中唯一 `pointId`。确定性绑定按“题干与标题规范化后精确相等 → 题干中
-   最长且唯一的标题 → 答案/来源中最长且唯一的标题 → 唯一标签”依次判定，不使用混合权重；去重键包含
-   pointId、知识原子和认知操作；无法唯一
-   绑定的原题保留 `DRAFT` 并记录诊断，禁止猜签。
+4. 每题只允许绑定 PlanGraph 中唯一 `pointId`。确定性绑定按“引号内名词解释焦点与标题精确相等 →
+   题干与标题精确相等 → 焦点与标签精确相等 → 题干中最长且唯一标题 → 唯一标题包含解释焦点 →
+   题目与知识点的原文区间在同一资料中唯一重叠 → 答案/来源中最长且唯一标题 → 唯一来源标签”依次判定，
+   不使用混合权重；因此
+   `请解释“第二性比”。` 可以自动绑定唯一的“第二性比”或包含该唯一焦点的标题。去重键包含 pointId、
+   知识原子和认知操作；无法唯一绑定的原题保留 `DRAFT` 并记录诊断，禁止猜签。
 5. `READY` 必须同时通过 schema/题型形状、逐字 offset/quote/checksum、同一证据答案支持、与生成调用
    分离的第二次 QA 回验答案一致、题干不泄露答案等布尔门禁。第二次回验可以使用同一 provider/model，
    因而只表示分离的推理调用，不得表述为统计意义或组织意义上的“独立模型验证”。单选必须恰有 A-D
@@ -2496,6 +2503,13 @@ PATCH `graphId`，PracticeService 再反查图谱的 `studyProjectId` 和来源�
 6. 模型缺少 API key 时，不得回退到“请概括下述内容”“10. ____？”或随机干扰项。可直接核对的结构化
    题仍可生成；需要模型的普通正文返回明确诊断。模型调用成功的实际 credits 只使用供应商
    `usage.total_tokens`，缺失 usage 视为上游契约错误；纯结构化提取使用最小内部正数结算。
+
+历史 `DRAFT + knowledgePointId=null` 题目不要求用户逐题补签。研习册页面对具有逐字来源且能找到唯一
+高置信候选的题调用现有 `PATCH` 自动入库；PracticeService 必须重新读取当前研习册图谱候选，并校验
+`studyProjectId/ownerUserId`、source range、`sourceMapVersion`、checksum 和答案受原文支持后才写入
+`READY`。开始智能复习或组卷前，服务端还会对当前 PlanGraph 内的旧草稿执行同一修复。显式 pointId
+也必须属于本册图谱。来源失效、无唯一候选或多候选时继续保留 `DRAFT`；LLM 不得覆盖这一拒绝边界，
+自动化不能退化成随机贴签。
 
 图谱项目中的 `READY` 题目必须有且只有一个主知识点；多知识点复合题应拆题或人工选择主知识点。
 
@@ -2589,10 +2603,11 @@ POST /api/v1/practice-sessions
 
 PracticeService 不重新实现“SM-2 多少百分比 + 图谱多少百分比”的混合分。知识点选择完整复用
 第 6.6 节 `assessment-planner-v1`：SM-2 的 `nextReviewAt` 先形成到期集合，图谱最大乘积路径形成覆盖关系，
-再由单调次模覆盖的真实边际收益选出目标点。题目层严格按 PlanGraph 目标顺序取题；每个目标点
-在一次会话中最多取一道 READY 题，同点多题只用 seed 做可重放的确定性择一。任一目标点没有
-READY 题时返回 `422 QUESTION_COVERAGE_GAP` 并列出缺失 point ID，不得换成计划外题目。这样既
-避免重复知识点证据，也满足 KnowledgeService 对单次提交 `knowledgePointId` 唯一性的校验。
+再由单调次模覆盖的真实边际收益选出目标点。题目层严格扫描 PlanGraph 目标顺序，只从已有 READY 题的
+目标点中取至多 `questionCount` 道；缺题目标被跳过并继续扫描后续计划点，不得换成计划外题目。每个目标点
+在一次会话中最多取一道 READY 题，同点多题只用 seed 做可重放的确定性择一。只有整个 PlanGraph 与
+READY 题库没有任何交集时才返回 `422 QUESTION_COVERAGE_GAP` 并列出计划 point ID。这样避免单个题库
+缺口阻断整次温习，同时仍保证所有作答证据来自计划内唯一知识点。
 
 ```ts
 type PracticeAnswerResult = {
@@ -2693,7 +2708,10 @@ type QuestionHelp = {
 | `PLAN_TARGETS_EMPTY` | 422 | PlanGraph 没有可出题目标 |
 | `KNOWLEDGE_POINT_SOURCE_NOT_FOUND` | 任务诊断 | 知识点没有可信原文，拒绝自动出题/贴签 |
 | `QUESTION_BINDING_REQUIRED` | 422 | 图谱项目的正式题目缺少主知识点 |
-| `QUESTION_COVERAGE_GAP` | 422 | 计划目标知识点在正式题库中缺题 |
+| `QUESTION_BINDING_AMBIGUOUS` | 422 | 自动补签同时命中多个知识点，保留草稿 |
+| `QUESTION_BINDING_INVALID` | 422 | 显式 pointId 不属于当前研习册图谱 |
+| `QUESTION_SOURCE_VERIFICATION_FAILED` | 422 | 自动补签题目的来源/checksum/答案支持未通过 |
+| `QUESTION_COVERAGE_GAP` | 422 | 计划与 READY 题库完全没有交集；部分缺题不阻断会话 |
 | `DUPLICATE_KNOWLEDGE_POINT` | 422 | 同一计分会话重复选择同一知识点 |
 | `SESSION_NOT_ACTIVE` | 409 | 向非活动会话作答 |
 | `SESSION_ALREADY_COMPLETED` | 409 | 完成状态冲突但幂等键不匹配 |

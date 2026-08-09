@@ -80,6 +80,28 @@ public sealed class PracticeRulesTests
         Assert.Equal("QUESTION_COVERAGE_GAP", error.Code);
     }
 
+    [Fact]
+    public void Smart_selection_skips_uncovered_targets_and_keeps_plan_order()
+    {
+        var project = new StudyProject(Guid.NewGuid(), Guid.NewGuid(), "测试", "CS", [Guid.NewGuid()], Guid.NewGuid(), Guid.NewGuid(), ProjectStatus.Active, 1, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        var missingPoint = Guid.NewGuid(); var firstCoveredPoint = Guid.NewGuid(); var secondCoveredPoint = Guid.NewGuid();
+        var targets = new[]
+        {
+            new PlanGraphPoint(missingPoint, Guid.NewGuid(), "缺题知识点", "", [], 1, [missingPoint]),
+            new PlanGraphPoint(firstCoveredPoint, Guid.NewGuid(), "第一可练点", "", [], 0.8, [firstCoveredPoint]),
+            new PlanGraphPoint(secondCoveredPoint, Guid.NewGuid(), "第二可练点", "", [], 0.6, [secondCoveredPoint])
+        };
+        var questions = new[]
+        {
+            ReadyQuestion(project, "第一可练题", firstCoveredPoint),
+            ReadyQuestion(project, "第二可练题", secondCoveredPoint)
+        };
+
+        var selected = PracticeRules.SelectSmartQuestions(questions, 2, 42, targets);
+
+        Assert.Equal([firstCoveredPoint, secondCoveredPoint], selected.Select(question => question.KnowledgePointId!.Value));
+    }
+
     private static PracticeQuestion ReadyQuestion(StudyProject project, string prompt, Guid pointId) =>
         PracticeRules.CreateQuestion(project, new QuestionDraft(PracticeQuestionKind.Essay, prompt, [], ["答案"], null, 5, 3, pointId, [], QuestionStatus.Ready));
 }

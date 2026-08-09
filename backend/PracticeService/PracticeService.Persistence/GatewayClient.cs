@@ -72,9 +72,29 @@ public sealed class GatewayClient(IHttpClientFactory clients, IConfiguration con
         using var response = await clients.CreateClient("gateway").SendAsync(request, ct); var body = await response.Content.ReadAsStringAsync(ct);
         if (!response.IsSuccessStatusCode) throw Failure(response.StatusCode, body, "读取研习册图谱归属失败。");
         using var document = JsonDocument.Parse(body); var data = document.RootElement.GetProperty("data");
+        var points = data.TryGetProperty("points", out var rawPoints) && rawPoints.ValueKind == JsonValueKind.Array
+            ? rawPoints.EnumerateArray().Select(point =>
+            {
+                var pointId = point.GetProperty("pointId").GetGuid();
+                return new PlanGraphPoint(
+                    pointId,
+                    point.GetProperty("chapterId").GetGuid(),
+                    point.GetProperty("title").GetString() ?? string.Empty,
+                    point.GetProperty("summary").GetString() ?? string.Empty,
+                    point.GetProperty("tags").EnumerateArray().Select(tag => tag.GetString() ?? string.Empty).Where(tag => tag.Length > 0).ToArray(),
+                    0,
+                    [pointId],
+                    point.TryGetProperty("sourceReferences", out var rawSources) && rawSources.ValueKind == JsonValueKind.Array
+                        ? rawSources.EnumerateArray().Select(source => new KnowledgePointSource(
+                            source.GetProperty("materialId").GetGuid(),
+                            source.GetProperty("startOffset").GetInt64(),
+                            source.GetProperty("endOffset").GetInt64())).ToArray()
+                        : []);
+            }).ToArray()
+            : [];
         return new KnowledgeGraphScope(data.GetProperty("graphId").GetGuid(), data.GetProperty("materialId").GetGuid(),
             data.TryGetProperty("studyProjectId", out var projectId) && projectId.ValueKind != JsonValueKind.Null ? projectId.GetGuid() : null,
-            data.GetProperty("ownerUserId").GetGuid());
+            data.GetProperty("ownerUserId").GetGuid(), points);
     }
     public async Task ReserveAsync(Guid userId, Guid operationId, string operationType, long estimatedTokenUnits, CancellationToken ct)
     {

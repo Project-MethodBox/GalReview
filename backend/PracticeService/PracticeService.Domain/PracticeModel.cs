@@ -52,7 +52,9 @@ public sealed record PlanGraphPoint(
     string Summary,
     IReadOnlyList<string> Tags,
     double Weight,
-    IReadOnlyList<Guid> CoversPointIds);
+    IReadOnlyList<Guid> CoversPointIds,
+    IReadOnlyList<KnowledgePointSource>? SourceReferences = null);
+public sealed record KnowledgePointSource(Guid MaterialId, long StartOffset, long EndOffset);
 public sealed record PlanGraphSnapshot(
     Guid ReviewPlanId,
     string SnapshotVersion,

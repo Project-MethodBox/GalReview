@@ -35,7 +35,12 @@ public interface IPracticeGateway
     Task<MaterialText> GetMaterialTextAsync(Guid materialId, CancellationToken cancellationToken);
     Task<KnowledgeGraphScope> GetGraphScopeAsync(Guid graphId, Guid ownerUserId, CancellationToken cancellationToken);
 }
-public sealed record KnowledgeGraphScope(Guid GraphId, Guid MaterialId, Guid? StudyProjectId, Guid OwnerUserId);
+public sealed record KnowledgeGraphScope(
+    Guid GraphId,
+    Guid MaterialId,
+    Guid? StudyProjectId,
+    Guid OwnerUserId,
+    IReadOnlyList<PlanGraphPoint> Points);
 public interface ICreditBilling
 {
     Task ReserveAsync(Guid userId, Guid operationId, string operationType, long estimatedTokenUnits, CancellationToken cancellationToken);

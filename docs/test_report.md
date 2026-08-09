@@ -1495,3 +1495,43 @@ KnowledgeService 的生产切分/抽取器和 PracticeService 的生产 `ReciteQ
 和确定性技术门禁已经核对与回归。”如果要升级为“当前算法经验证有效”，必须先完成
 `docs/contract.md` §14.3.1 的版本化中文资料集、盲评、对照、消融和（涉及学习效果声明时）延迟测验；
 样本量、主要终点与判定界值必须在看结果前由功效分析和人工基线确定。
+
+## 36. 2026-08-09 自动补签与部分覆盖复习修复
+
+### 36.1 复现与根因
+
+用户可见的两个症状均已在生产路径定位：
+
+1. `请解释“第二性比”。` 之类名词解释题虽然已有答案和来源，却可能因图谱标题包含别名/限定词而无法
+   通过旧的“标题必须被完整包含在题干”规则，题目停在 `DRAFT + knowledgePointId=null`；历史草稿也没有
+   自动重跑绑定，只能在前端逐题选择。
+2. `SelectSmartQuestions` 先截取前 `questionCount` 个计划点，只要其中任何一点没有 READY 题就抛出
+   `QUESTION_COVERAGE_GAP`。因此“计划部分覆盖”被错误实现为“必须全部覆盖”，一个缺口会阻断整次会话。
+
+### 36.2 修复后的不变量
+
+- Domain 新增同一套离散绑定规则：名词解释焦点精确标题、精确标签、题干最长唯一标题、唯一标题包含
+  焦点、题目与知识点在同一资料中的唯一来源区间重叠、来源最长唯一标题、来源唯一标签。没有相似度分数
+  或混合权重；多个来源区间同时重叠仍判为歧义。
+- 生成器、现有题目 PATCH、SMART 会话和试卷组卷复用该规则。已有草稿只有在 material 属于本册、
+  source range/sourceMapVersion/checksum 全部有效、答案受同一原文支持且候选唯一时才自动写为 READY；
+  显式 pointId 也必须属于本册图谱。
+- KnowledgeService 的既有 `/internal/v1/knowledge-graphs/{graphId}/scope` 以向后兼容的附加字段返回
+  `points[]`，没有新增路由。Frontend 只对高置信候选调用既有题目 PATCH；真正的来源和归属决定仍在
+  PracticeService。
+- SMART/EXAM 按 PlanGraph 顺序扫描，跳过缺题目标并继续取后续已有 READY 题的计划点；不选计划外题，
+  不在一次会话重复同一知识点。仅当计划与 READY 题库零交集时返回 `QUESTION_COVERAGE_GAP`。
+
+### 36.3 静态验证
+
+| 验证项 | 结果 |
+|---|---:|
+| PracticeService | PASS，44 / 44，0 skipped；新增名词解释自动补签、唯一/多义来源区间、历史草稿 PATCH、scope 候选解析、部分覆盖继续选择 |
+| KnowledgeService | PASS，115 / 115，0 skipped；API 项目随 scope 附加字段成功编译 |
+| Gateway | PASS，15 files、203 / 203；TypeScript build PASS。因 pnpm 本机 ignored-build 策略，使用固定 Node 直接执行现有 Vitest/tsc，未修改锁文件或批准策略 |
+| Frontend | PASS，TypeScript + Vite，1401 modules；只保留既有 KnowledgeDag 大 chunk 警告 |
+
+本节没有伪造真实数据库 ID，也没有依赖第 33 节的历史项目。Docker CLI `29.4.3` 可见，但
+`dockerDesktopLinuxEngine` pipe 不存在，故未声称容器态 HTTP 已复验。engine 恢复后须按
+`docs/deploy.md` 的发布顺序重建 Knowledge/Practice/Frontend，并使用新册或明确准备的 DRAFT 样本执行
+§36.2 三条不变量的 HTTP 冒烟。
