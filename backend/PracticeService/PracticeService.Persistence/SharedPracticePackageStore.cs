@@ -33,7 +33,17 @@ public sealed class MongoSharedPracticePackageStore : ISharedPracticePackageStor
         _metadata.Indexes.CreateOne(new CreateIndexModel<SharedPracticePackage>(Builders<SharedPracticePackage>.IndexKeys.Ascending(x => x.OwnerUserId).Ascending(x => x.SourceProjectId).Ascending(x => x.Version), new CreateIndexOptions { Unique = true }));
     }
     public SharedPracticePackage Save(SharedPracticePackage package, byte[] content)
-    { _bucket.UploadFromBytes(package.PackageId.ToString("D"), content); try { _metadata.InsertOne(package); return package; } catch { _bucket.Delete(_bucket.Find(Builders<GridFSFileInfo>.Filter.Eq(x => x.Filename, package.PackageId.ToString("D"))).First().Id); throw; } }
+    {
+        _bucket.UploadFromBytes(package.PackageId.ToString("D"), content);
+        try { _metadata.InsertOne(package); return package; }
+        catch
+        {
+            var fileInfo = _bucket.Find(Builders<GridFSFileInfo>.Filter.Eq(x => x.Filename, package.PackageId.ToString("D"))).FirstOrDefault();
+            if (fileInfo is not null)
+                _bucket.Delete(fileInfo.Id);
+            throw;
+        }
+    }
     public SharedPracticePackage? Get(Guid id) => _metadata.Find(x => x.PackageId == id).FirstOrDefault();
     public SharedPracticePackage? FindVersion(Guid owner, Guid project, string version) => _metadata.Find(x => x.OwnerUserId == owner && x.SourceProjectId == project && x.Version == version).FirstOrDefault();
     public IReadOnlyList<SharedPracticePackage> Search(Guid requester, string? query, string? subject) => InMemorySharedPracticePackageStore.Filter(_metadata.Find(Builders<SharedPracticePackage>.Filter.Empty).ToList(), requester, query, subject);
