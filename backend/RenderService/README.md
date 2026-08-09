@@ -32,7 +32,8 @@ JS Adapter 只做字符串编解码与生命周期管理。
   `questionId/knowledgePointId/choiceId/correct` 的游戏包绑定真实性在本服务先行校验；
 - 纯讲解包（或没有任何实际作答）`answerResults` 必须为空：本地完成会话，
   不调用 evidence 接口，掌握度不变；
-- 存储为 `ephemeral-memory`（与 GalGameService 现状一致），`/readyz` 如实上报；
+- 存储为 `ephemeral-memory`（与 GalGameService 现状一致）；`/readyz` 仅返回最小化的
+  `status=ready`，不公开存储、执行引擎或活动会话等内部诊断信息；
   持久化是文末路线图中的后续里程碑。
 
 ## 目录结构

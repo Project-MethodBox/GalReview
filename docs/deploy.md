@@ -10,7 +10,7 @@
 
 | 组件 | Compose 服务名 | 容器端口 | 宿主机暴露 | 数据 |
 |---|---|---:|---|---|
-| API Gateway | `gateway` | `5000` | `5000`（`GATEWAY_HOST_PORT`） | 无状态 |
+| API Gateway | `gateway` | `5000` | `127.0.0.1:5000`（默认） | 无状态 |
 | UserService | `user-service` | `5101` | 不暴露 | 本地默认内存；服务器模板使用独立 MySQL |
 | AuthService | `auth-service` | `5102` | 不暴露 | 本地默认内存；服务器模板使用独立 MySQL |
 | FileService | `file-service` | `5103` | 不暴露 | MongoDB / GridFS |
@@ -123,7 +123,7 @@ Copy-Item .\.env.deploy.example .\.env
 | `ACCOUNT_FRONTEND_BASE_URL` | 注入 AuthService 的账户前端公开基址；应与实际站点一致 |
 | `AUTH_SERVICE_MODE` | AuthService 运行模式；服务器模板使用 `MySql`，本地默认值为 `Mock` |
 | `USER_SERVICE_MODE` | UserService 运行模式；服务器模板使用 `MySql`，本地默认值为 `Mock` |
-| `GATEWAY_BIND_ADDRESS` | Gateway 在宿主机的绑定地址 |
+| `GATEWAY_BIND_ADDRESS` | Gateway 在宿主机的绑定地址，默认 `127.0.0.1`，禁止生产公网设为 `0.0.0.0` |
 | `GATEWAY_HOST_PORT` | Gateway 宿主发布端口，默认 `5000` |
 | `FRONTEND_BIND_ADDRESS` | Frontend 在宿主机的绑定地址 |
 | `FRONTEND_HOST_PORT` | Frontend 宿主发布端口，默认 `5120` |

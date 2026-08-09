@@ -1289,7 +1289,7 @@ function Start-ProductionServices {
             },
             @{
                 Name = 'render-service'; File = (Get-Command 'node').Source; Arguments = 'dist/server.js'; Work = Join-Path $releaseRoot 'render-service'; Health = 'http://127.0.0.1:5106/healthz';
-                Env = @{ NODE_ENV = 'production'; PORT = '5106'; Gateway__BaseUrl = $gatewayBaseUrl; Gateway__ServiceName = 'RenderService'; Gateway__ServiceKey = Get-Setting 'RENDER_SERVICE_KEY' }
+                Env = @{ NODE_ENV = 'production'; PORT = '5106'; RENDER_HOST = '127.0.0.1'; Gateway__BaseUrl = $gatewayBaseUrl; Gateway__ServiceName = 'RenderService'; Gateway__ServiceKey = Get-Setting 'RENDER_SERVICE_KEY' }
             },
             @{
                 Name = 'practice-service'; File = Join-Path $releaseRoot 'services\practice-service\PracticeService.API.exe'; Work = Join-Path $releaseRoot 'services\practice-service'; Health = 'http://127.0.0.1:5107/readyz';

@@ -1824,8 +1824,9 @@ adapter 仍以 JSON 对象传递，调用方不得据此形成新的跨服务证
 
 当前可执行版本为 `cpp-wasm-0.2.0`，实现 runtime ABI v1 的八个 C++/WASM 导出；
 Adapter 负责字符串编解码与生命周期，场景状态机、导航、计分、作答与序列化在 WASM 内。
-`/readyz` 必须从实际产物自省 `wasmAbiComplete`；完整产物报告
-`executionEngine="cpp-wasm-shell"`。`runtimeMode` 只有在 WASM ABI 完整且服务端会话回调
+RenderService 启动时必须从实际产物自省 `wasmAbiComplete`，但公开的 `/readyz` 仅返回
+`status="ready"`，不得暴露执行引擎、存储模式或活动会话数。运行时 manifest 可报告客户端
+加载所必需的 ABI 与模式能力。`runtimeMode` 只有在 WASM ABI 完整且服务端会话回调
 身份已配置时为 `FULL`，否则为 `SHELL`。Compose 基线配置回调身份，因此应提供服务端
 ReviewSession、进度、事件与同步 evidence 提交。
 
@@ -1967,7 +1968,7 @@ Render runtime 资源。manifest 为 `runtimeMode=SHELL` 时只在浏览器本�
 
 | 组件 | 容器监听 | 宿主默认发布 | 说明 |
 |---|---:|---:|---|
-| Gateway | `5000` | `5000` | `GATEWAY_HOST_PORT`；浏览器和服务间调用的唯一入口，绑定地址由 `GATEWAY_BIND_ADDRESS` 配置 |
+| Gateway | `5000` | `127.0.0.1:5000` | `GATEWAY_HOST_PORT`；默认仅本机发布，绑定地址由 `GATEWAY_BIND_ADDRESS` 配置 |
 | UserService | `5101` | 不发布 | 集成环境可使用 `MOONSTONE_MODE=Mock` |
 | AuthService | `5102` | 不发布 | 集成环境可使用 `MOONSTONE_MODE=Mock` |
 | FileService | `5103` | 不发布 | 使用 MongoDB + GridFS；只由 Gateway 访问 |

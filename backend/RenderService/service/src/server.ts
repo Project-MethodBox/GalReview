@@ -24,6 +24,9 @@ const port = Number.parseInt(portText, 10)
 if (!/^\d+$/.test(portText) || port < 0 || port > 65_535) {
   throw new RangeError('PORT must be an integer between 0 and 65535')
 }
+// Keep native deployments private by default. The container image explicitly
+// overrides this because container-to-container traffic needs all interfaces.
+const host = process.env.RENDER_HOST?.trim() || '127.0.0.1'
 const gatewayBaseUrl = process.env.Gateway__BaseUrl || ''
 const gatewayServiceName = process.env.Gateway__ServiceName || 'RenderService'
 const gatewayServiceKey = process.env.Gateway__ServiceKey || ''
@@ -301,15 +304,9 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
     return
   }
   if (request.method === 'GET' && pathname === '/readyz') {
-    writeJson(response, 200, success({
-      status: 'ready',
-      runtimeMode,
-      executionEngine: artifact.executionEngine,
-      wasmAbiComplete: artifact.wasmAbiComplete,
-      reviewSessionsAvailable: sessionsEnabled,
-      storage: 'ephemeral-memory',
-      activeSessions: sessionService ? sessionService.stats().sessions : 0,
-    }, correlationId), correlationId)
+    // Readiness is intentionally minimal: runtime/storage/session diagnostics
+    // are internal implementation details and must not be exposed publicly.
+    writeJson(response, 200, success({ status: 'ready' }, correlationId), correlationId)
     return
   }
   if (request.method === 'GET' && pathname === '/api/v1/render-runtime/manifest') {
@@ -383,10 +380,10 @@ const server = createServer((request, response) => {
   })
 })
 
-server.listen(port, '0.0.0.0', () => {
+server.listen(port, host, () => {
   const address = server.address()
   const boundPort = address !== null && typeof address === 'object' ? address.port : port
   console.log(`render-service shell listening on port ${boundPort} `
-    + `(engine=${artifact.executionEngine}, wasmAbiComplete=${artifact.wasmAbiComplete}, `
+    + `(host=${host}, engine=${artifact.executionEngine}, wasmAbiComplete=${artifact.wasmAbiComplete}, `
     + `reviewSessions=${sessionsEnabled ? 'enabled' : 'disabled'})`)
 })
