@@ -42,7 +42,17 @@ export function readWorkflow(): StudyWorkflow {
 
 export function updateWorkflow(patch: Partial<StudyWorkflow>): StudyWorkflow {
   const next = { ...readWorkflow(), ...patch }
-  localStorage.setItem(WORKFLOW_KEY, JSON.stringify(next))
+  try {
+    localStorage.setItem(WORKFLOW_KEY, JSON.stringify(next))
+  } catch (error) {
+    console.warn('无法保存完整工作流状态', error)
+    try {
+      const minimal = { projectId: next.projectId, material: next.material, graph: next.graph }
+      localStorage.setItem(WORKFLOW_KEY, JSON.stringify(minimal))
+    } catch {
+      // 最终降级：静默失败
+    }
+  }
   window.dispatchEvent(new Event('galreview:workflow'))
   return next
 }
