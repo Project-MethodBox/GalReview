@@ -2,6 +2,17 @@ server {
     listen 80;
     server_name galreview.example.com;
 
+    # 安全 HTTP 头
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # gzip 压缩
+    gzip on;
+    gzip_types text/css application/javascript application/json;
+    gzip_min_length 1024;
+
     # Practice 项目包最大 50 MiB，额外空间留给 multipart 边界和字段。
     client_max_body_size 52m;
 
