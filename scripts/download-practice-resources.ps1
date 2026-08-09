@@ -135,12 +135,86 @@ function Protect-CommandError([string]$message) {
     return $message
 }
 
-function Invoke-OsCaAws([string[]]$Arguments) {
-    $output = & $script:awsExecutable @Arguments 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0) {
-        throw (Protect-CommandError "OSCA S3 request failed: $($output.Trim())")
+function ConvertTo-NativeCommandLineArgument([AllowEmptyString()][string]$Argument) {
+    if ([string]::IsNullOrEmpty($Argument)) { return '""' }
+    if ($Argument -notmatch '[\s"]') { return $Argument }
+
+    # Quote according to the Windows CommandLineToArgvW escaping rules. This is
+    # required for Windows PowerShell 5.1, where ProcessStartInfo.ArgumentList
+    # is not available yet.
+    $builder = [Text.StringBuilder]::new()
+    [void]$builder.Append('"')
+    $backslashCount = 0
+    foreach ($character in $Argument.ToCharArray()) {
+        if ($character -eq '\') {
+            $backslashCount++
+            continue
+        }
+        if ($character -eq '"') {
+            [void]$builder.Append(('\' * (($backslashCount * 2) + 1)))
+            [void]$builder.Append('"')
+            $backslashCount = 0
+            continue
+        }
+        if ($backslashCount -gt 0) {
+            [void]$builder.Append(('\' * $backslashCount))
+            $backslashCount = 0
+        }
+        [void]$builder.Append($character)
     }
-    return $output
+    if ($backslashCount -gt 0) {
+        [void]$builder.Append(('\' * ($backslashCount * 2)))
+    }
+    [void]$builder.Append('"')
+    return $builder.ToString()
+}
+
+function Invoke-OsCaAws([string[]]$Arguments) {
+    $startInfo = [Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $script:awsExecutable
+    $startInfo.Arguments = (($Arguments | ForEach-Object {
+        ConvertTo-NativeCommandLineArgument ([string]$_)
+    }) -join ' ')
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.StandardOutputEncoding = [Text.Encoding]::UTF8
+    $startInfo.StandardErrorEncoding = [Text.Encoding]::UTF8
+
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    try {
+        if (-not $process.Start()) { throw 'The AWS CLI process did not start.' }
+        $standardOutputTask = $process.StandardOutput.ReadToEndAsync()
+        $standardErrorTask = $process.StandardError.ReadToEndAsync()
+        $process.WaitForExit()
+        $standardOutput = $standardOutputTask.GetAwaiter().GetResult()
+        $standardError = $standardErrorTask.GetAwaiter().GetResult()
+        $exitCode = $process.ExitCode
+    }
+    catch {
+        throw (Protect-CommandError "Unable to run AWS CLI: $($_.Exception.Message)")
+    }
+    finally {
+        $process.Dispose()
+    }
+
+    if ($exitCode -ne 0) {
+        $details = @($standardError.Trim(), $standardOutput.Trim()) |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        $detailText = if ($details.Count -gt 0) {
+            $details -join [Environment]::NewLine
+        } else {
+            'AWS CLI returned no diagnostic output.'
+        }
+        throw (Protect-CommandError "OSCA S3 request failed with exit code ${exitCode}: $detailText")
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($standardError)) {
+        Write-Warning (Protect-CommandError $standardError.Trim())
+    }
+    return $standardOutput
 }
 
 function Resolve-SafeResourcePath([string]$relativePath) {
