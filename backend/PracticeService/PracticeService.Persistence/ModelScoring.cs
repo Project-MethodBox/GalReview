@@ -32,6 +32,7 @@ public sealed class ModelAssetCatalog(string root) : IModelStatusReader
 public sealed class OnnxAnswerScorer(ModelAssetCatalog assets, ILogger<OnnxAnswerScorer> logger) : IAnswerScorer
 {
     private readonly Lazy<IEmbeddingGenerator<string, Embedding<float>>?> _embedding = new(() => CreateEmbedding(assets, logger));
+    private readonly Lazy<InferenceSession> _qualitySession = new(() => new InferenceSession(assets.QualityPath));
     public async Task<ScoreResult> ScoreAsync(PracticeQuestion question, IReadOnlyList<string> raw, int responseTimeMs, CancellationToken ct)
     {
         var answer = raw.Select(PracticeRules.NormalizeAnswer).ToArray(); var expected = question.CorrectAnswers.Select(PracticeRules.NormalizeAnswer).ToArray();
@@ -70,7 +71,7 @@ public sealed class OnnxAnswerScorer(ModelAssetCatalog assets, ILogger<OnnxAnswe
         if (!assets.QualityReady) return ((int)Math.Round(similarity * 5), true);
         try
         {
-            using var session = new InferenceSession(assets.QualityPath); var tensor = new DenseTensor<float>(new[] { (float)rate, (float)(similarity * 100) }, new[] { 1, 2 });
+            var session = _qualitySession.Value; var tensor = new DenseTensor<float>(new[] { (float)rate, (float)(similarity * 100) }, new[] { 1, 2 });
             var values = new List<NamedOnnxValue> { NamedOnnxValue.CreateFromTensor("float_input", tensor) }; using var results = session.Run(values);
             var probabilities = results.First(x => x.Name == "probabilities").AsEnumerable<float>().ToArray(); return (Array.IndexOf(probabilities, probabilities.Max()), false);
         }
