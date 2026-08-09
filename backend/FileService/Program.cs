@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Cryptography;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.Configure<Microsoft.AspNetCore.Routing.RouteHandlerOptions>(
@@ -16,10 +17,12 @@ var extractedTextAllowedServices = InternalServiceAccessPolicy.CreateAllowlist(
 var ocrBaseUri = new Uri(
     builder.Configuration["Ocr:BaseUrl"] ?? "http://127.0.0.1:5110/",
     UriKind.Absolute);
+var ocrGatewayKey = builder.Configuration["Ocr:GatewayKey"] ?? gatewayKey;
 builder.Services.AddHttpClient("ocr", client =>
 {
     client.BaseAddress = ocrBaseUri;
     client.Timeout = TimeSpan.FromMinutes(builder.Configuration.GetValue<int?>("Ocr:TimeoutMinutes") ?? 20);
+    client.DefaultRequestHeaders.Add("X-Gateway-Key", ocrGatewayKey);
 }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { UseProxy = false });
 builder.Services.AddSingleton<MongoFileStore>();
 builder.Services.AddSingleton<IFileStore>(serviceProvider => serviceProvider.GetRequiredService<MongoFileStore>());
@@ -180,7 +183,22 @@ app.MapGet("/internal/v1/materials/{materialId}/extracted-text", (string materia
 });
 app.Run();
 
-static string? GatewayUser(HttpContext context, string key) => context.Request.Headers["X-Gateway-Key"] == key && Guid.TryParse(context.Request.Headers["X-User-Id"], out _) ? context.Request.Headers["X-User-Id"].ToString() : null;
+static string? GatewayUser(HttpContext context, string key)
+{
+    var gatewayKeyHeader = context.Request.Headers["X-Gateway-Key"];
+    if (gatewayKeyHeader.Count != 1) return null;
+    var keyBytes = System.Text.Encoding.UTF8.GetBytes(key);
+    var headerBytes = System.Text.Encoding.UTF8.GetBytes(gatewayKeyHeader[0]!);
+    var length = Math.Max(keyBytes.Length, headerBytes.Length);
+    var paddedKey = new byte[length];
+    var paddedHeader = new byte[length];
+    keyBytes.CopyTo(paddedKey, 0);
+    headerBytes.CopyTo(paddedHeader, 0);
+    if (!CryptographicOperations.FixedTimeEquals(paddedKey, paddedHeader) || keyBytes.Length != headerBytes.Length)
+        return null;
+    var userId = context.Request.Headers["X-User-Id"];
+    return Guid.TryParse(userId, out _) ? userId.ToString() : null;
+}
 static string? NormalizeSubjectCode(string? value)
 {
     if (value is null) return null;

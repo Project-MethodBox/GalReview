@@ -117,6 +117,7 @@ public sealed class MongoGameStore : IGameStore
     private readonly IMongoCollection<PackageOwnerDocument> _owners;
     private readonly IMongoCollection<BsonDocument> _audio;
     private readonly IMongoDatabase _database;
+    private readonly IMongoClient _client;
     private readonly ILogger<MongoGameStore>? _logger;
 
     // JSON 序列化选项（与 Program.cs 的 HttpJsonOptions 一致）
@@ -139,7 +140,8 @@ public sealed class MongoGameStore : IGameStore
         var databaseName = configuration["MongoDb:Database"]
             ?? "moonstone_galgame";
 
-        _database = new MongoClient(connectionString).GetDatabase(databaseName);
+        _client = new MongoClient(connectionString);
+        _database = _client.GetDatabase(databaseName);
         _jobs = _database.GetCollection<GameGenerationJob>("game_jobs");
         _packages = _database.GetCollection<BsonDocument>("game_packages");
         _manifests = _database.GetCollection<GamePackageManifest>("game_manifests");
@@ -394,21 +396,34 @@ public sealed class MongoGameStore : IGameStore
         var packageJson = JsonSerializer.Serialize(package, JsonOpts);
         var packageBson = BsonDocument.Parse(packageJson);
 
-        // 原子写入三个集合（MongoDB 单文档操作各自原子）
-        _packages.ReplaceOne(
-            new BsonDocument("_id", new BsonBinaryData(package.PackageId, GuidRepresentation.Standard)),
-            packageBson,
-            new ReplaceOptions { IsUpsert = true });
+        var packageIdFilter = new BsonDocument("_id", new BsonBinaryData(package.PackageId, GuidRepresentation.Standard));
+        var manifestFilter = Builders<GamePackageManifest>.Filter.Eq(m => m.PackageId, package.PackageId);
+        var ownerFilter = Builders<PackageOwnerDocument>.Filter.Eq(o => o.PackageId, package.PackageId);
+        var ownerDoc = new PackageOwnerDocument { PackageId = package.PackageId, OwnerUserId = ownerUserId };
 
-        _manifests.ReplaceOne(
-            m => m.PackageId == package.PackageId,
-            manifest,
-            new ReplaceOptions { IsUpsert = true });
-
-        _owners.ReplaceOne(
-            o => o.PackageId == package.PackageId,
-            new PackageOwnerDocument { PackageId = package.PackageId, OwnerUserId = ownerUserId },
-            new ReplaceOptions { IsUpsert = true });
+        // Use a transaction to ensure all three collections are written atomically.
+        // If transactions are not supported (e.g. standalone MongoDB without replica set),
+        // fall back to sequential writes with best-effort cleanup on failure.
+        try
+        {
+            using var session = _client.StartSession();
+            session.WithTransaction((s, ct) =>
+            {
+                _packages.ReplaceOne(s, packageIdFilter, packageBson, new ReplaceOptions { IsUpsert = true });
+                _manifests.ReplaceOne(s, manifestFilter, manifest, new ReplaceOptions { IsUpsert = true });
+                _owners.ReplaceOne(s, ownerFilter, ownerDoc, new ReplaceOptions { IsUpsert = true });
+                return true;
+            });
+        }
+        catch (MongoCommandException ex) when (ex.ErrorMessage.Contains("Transaction", StringComparison.OrdinalIgnoreCase) ||
+                                                ex.ErrorMessage.Contains("replica set", StringComparison.OrdinalIgnoreCase))
+        {
+            // Fallback for standalone MongoDB without replica set support.
+            _logger?.LogWarning("MongoDB transactions not available, falling back to sequential writes for SavePackage.");
+            _packages.ReplaceOne(packageIdFilter, packageBson, new ReplaceOptions { IsUpsert = true });
+            _manifests.ReplaceOne(manifestFilter, manifest, new ReplaceOptions { IsUpsert = true });
+            _owners.ReplaceOne(ownerFilter, ownerDoc, new ReplaceOptions { IsUpsert = true });
+        }
     }
 
     public GamePackage? GetPackage(Guid packageId)

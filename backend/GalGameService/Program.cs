@@ -482,7 +482,7 @@ app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, Ht
                 catch (Exception releaseError) { logger.LogError(releaseError, "Unable to release credits for failed job {GenerationId}", job.GenerationId); }
             }
             store.TryTransitionJob(job.GenerationId, JobStatus.RUNNING,
-                j => j with { Status = JobStatus.FAILED, Error = new ApiError("INTERNAL_ERROR", ex.Message, new Dictionary<string, string>()) });
+                j => j with { Status = JobStatus.FAILED, Error = new ApiError("INTERNAL_ERROR", "生成任务处理失败，请稍后重试或联系支持团队", new Dictionary<string, string>()) });
         }
     });
 

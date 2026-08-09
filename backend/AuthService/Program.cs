@@ -20,7 +20,10 @@ var gatewayKey = builder.Configuration["Gateway:ServiceKey"] ?? throw new Invali
 var gatewayBaseUrl = builder.Configuration["Gateway:BaseUrl"] ?? "http://localhost:5000";
 var gatewayUri = new Uri(gatewayBaseUrl, UriKind.Absolute);
 var adminUsername = builder.Configuration["Admin:Username"] ?? throw new InvalidOperationException("Admin:Username must be configured.");
-var adminPassword = builder.Configuration["Admin:Password"] ?? throw new InvalidOperationException("Admin:Password must be configured.");
+var adminPasswordHash = builder.Configuration["Admin:PasswordHash"];
+var adminPasswordLegacy = builder.Configuration["Admin:Password"];
+if (string.IsNullOrWhiteSpace(adminPasswordHash) && string.IsNullOrWhiteSpace(adminPasswordLegacy))
+    throw new InvalidOperationException("Admin:PasswordHash (preferred) or Admin:Password (legacy plaintext) must be configured.");
 var isDevelopment = builder.Environment.IsDevelopment();
 var storageName = isMockMode ? "memory" : "mysql";
 builder.Services.AddSingleton<PasswordResetEmailSender>();
@@ -157,10 +160,31 @@ app.MapPost("/api/v1/auth/sessions", (LoginRequest request, HttpContext c, IAuth
     var session = repository.CreateSession(credential.UserId, request.DeviceName);
     return Results.Created($"/api/v1/auth/sessions/{session.SessionId}", ApiSuccess.Create(session.ToResponse(), c.TraceIdentifier));
 });
-app.MapPost("/api/v1/admin/sessions", (AdminLoginRequest request, HttpContext c, IAuthRepository repository) =>
+app.MapPost("/api/v1/admin/sessions", (AdminLoginRequest request, HttpContext c, IAuthRepository repository, IPasswordHasher<Credential> hasher) =>
 {
-    if (!FixedTimeEquals(request.Username?.Trim() ?? string.Empty, adminUsername) ||
-        !FixedTimeEquals(request.Password ?? string.Empty, adminPassword))
+    if (!FixedTimeEquals(request.Username?.Trim() ?? string.Empty, adminUsername))
+        return Failure(c, 401, "AUTH_REQUIRED", "管理员账号或密码错误");
+
+    // Prefer hashed password (Admin:PasswordHash). Fall back to legacy plaintext
+    // (Admin:Password) only if the hash is not configured, using FixedTimeEquals.
+    var password = request.Password ?? string.Empty;
+    var passwordValid = false;
+    if (!string.IsNullOrWhiteSpace(adminPasswordHash))
+    {
+        var adminCredential = new Credential(AdminIdentity.UserId, "admin", adminPasswordHash);
+        try
+        {
+            passwordValid = hasher.VerifyHashedPassword(adminCredential, adminPasswordHash, password) is not PasswordVerificationResult.Failed;
+        }
+        catch (FormatException) { passwordValid = false; }
+        catch (ArgumentException) { passwordValid = false; }
+    }
+    else
+    {
+        passwordValid = FixedTimeEquals(password, adminPasswordLegacy!);
+    }
+
+    if (!passwordValid)
         return Failure(c, 401, "AUTH_REQUIRED", "管理员账号或密码错误");
     var session = repository.CreateSession(AdminIdentity.UserId, "MoonStone admin");
     return Results.Created($"/api/v1/auth/sessions/{session.SessionId}", ApiSuccess.Create(session.ToResponse(), c.TraceIdentifier));
@@ -269,10 +293,14 @@ app.MapPost("/api/v1/auth/password-reset-requests", async (PasswordResetRequest 
 {
     if (!ValidEmail(request.Email)) return Failure(c, 400, "VALIDATION_ERROR", "请输入有效的邮箱地址");
     var credential = repository.FindCredential(request.Email.Trim().ToLowerInvariant());
-    if (credential is null) return Failure(c, 404, "RESOURCE_NOT_FOUND", "该邮箱未注册");
-    var resetToken = repository.CreatePasswordReset(credential.UserId);
-    var delivered = await emailSender.SendAsync(credential.Email, resetToken, c.TraceIdentifier, c.RequestAborted);
-    if (!delivered) repository.DeletePasswordReset(resetToken);
+    // Always return 202 Accepted to prevent email enumeration.
+    // If the email is registered, a reset token is sent; otherwise, no action is taken.
+    if (credential is not null)
+    {
+        var resetToken = repository.CreatePasswordReset(credential.UserId);
+        var delivered = await emailSender.SendAsync(credential.Email, resetToken, c.TraceIdentifier, c.RequestAborted);
+        if (!delivered) repository.DeletePasswordReset(resetToken);
+    }
     return Results.Accepted();
 });
 app.MapPost("/api/v1/auth/password-resets", (PasswordResetConfirmation request, HttpContext c, IAuthRepository repository, IPasswordHasher<Credential> hasher) =>
@@ -528,6 +556,7 @@ public sealed class MySqlAuthRepository(AuthDatabase database) : IAuthRepository
     public string CreatePasswordReset(string userId)
     {
         var token = PasswordResetToken();
+        var normalizedToken = token.ToUpperInvariant();
         using var c = database.OpenConnection();
         using var tx = c.BeginTransaction();
         using var q = c.CreateCommand();
@@ -537,18 +566,29 @@ public sealed class MySqlAuthRepository(AuthDatabase database) : IAuthRepository
         q.ExecuteNonQuery();
         q.Parameters.Clear();
         q.CommandText = "INSERT INTO auth_password_resets (token_hash,user_id,expires_at,used_at) VALUES (@hash,@user,@expires,NULL);";
-        q.Parameters.AddWithValue("@hash", Hash(token));
+        q.Parameters.AddWithValue("@hash", Hash(normalizedToken));
         q.Parameters.AddWithValue("@user", userId);
         q.Parameters.AddWithValue("@expires", DateTime.UtcNow.AddMinutes(10));
         q.ExecuteNonQuery();
         tx.Commit();
         return token;
     }
-    public void DeletePasswordReset(string token){using var c=database.OpenConnection();using var q=c.CreateCommand();q.CommandText="DELETE FROM auth_password_resets WHERE token_hash=@hash AND used_at IS NULL;";q.Parameters.AddWithValue("@hash",Hash(token));q.ExecuteNonQuery();}
-    public Credential? ConsumePasswordReset(string token){if(token.Length!=6||token.Any(character=>!char.IsAsciiDigit(character)))return null;using var c=database.OpenConnection();using var tx=c.BeginTransaction();using var q=c.CreateCommand();q.Transaction=tx;q.CommandText="SELECT CAST(user_id AS CHAR) FROM auth_password_resets WHERE token_hash=@hash AND used_at IS NULL AND expires_at>UTC_TIMESTAMP(6) LIMIT 1 FOR UPDATE;";q.Parameters.AddWithValue("@hash",Hash(token));var rawUser=q.ExecuteScalar();var user=rawUser is null?null:DbText(rawUser);if(user is null){tx.Rollback();return null;}q.Parameters.Clear();q.CommandText="UPDATE auth_password_resets SET used_at=UTC_TIMESTAMP(6) WHERE token_hash=@hash;";q.Parameters.AddWithValue("@hash",Hash(token));q.ExecuteNonQuery();tx.Commit();using var q2=c.CreateCommand();q2.CommandText="SELECT CAST(user_id AS CHAR),email,password_hash FROM auth_credentials WHERE user_id=@id;";q2.Parameters.AddWithValue("@id",user);using var r=q2.ExecuteReader();return r.Read()?new Credential(DbText(r.GetValue(0)),r.GetString(1),r.GetString(2)):null;}
+    public void DeletePasswordReset(string token){using var c=database.OpenConnection();using var q=c.CreateCommand();q.CommandText="DELETE FROM auth_password_resets WHERE token_hash=@hash AND used_at IS NULL;";q.Parameters.AddWithValue("@hash",Hash(token.ToUpperInvariant()));q.ExecuteNonQuery();}
+    public Credential? ConsumePasswordReset(string token){if(string.IsNullOrWhiteSpace(token)||token.Length<6||token.Length>32)return null;using var c=database.OpenConnection();using var tx=c.BeginTransaction();using var q=c.CreateCommand();q.Transaction=tx;q.CommandText="SELECT CAST(user_id AS CHAR) FROM auth_password_resets WHERE token_hash=@hash AND used_at IS NULL AND expires_at>UTC_TIMESTAMP(6) LIMIT 1 FOR UPDATE;";q.Parameters.AddWithValue("@hash",Hash(token.ToUpperInvariant()));var rawUser=q.ExecuteScalar();var user=rawUser is null?null:DbText(rawUser);if(user is null){tx.Rollback();return null;}q.Parameters.Clear();q.CommandText="UPDATE auth_password_resets SET used_at=UTC_TIMESTAMP(6) WHERE token_hash=@hash;";q.Parameters.AddWithValue("@hash",Hash(token.ToUpperInvariant()));q.ExecuteNonQuery();tx.Commit();using var q2=c.CreateCommand();q2.CommandText="SELECT CAST(user_id AS CHAR),email,password_hash FROM auth_credentials WHERE user_id=@id;";q2.Parameters.AddWithValue("@id",user);using var r=q2.ExecuteReader();return r.Read()?new Credential(DbText(r.GetValue(0)),r.GetString(1),r.GetString(2)):null;}
     private void InsertSession(StoredSession s){using var c=database.OpenConnection();using var q=c.CreateCommand();q.CommandText="INSERT INTO auth_sessions (session_id,user_id,access_hash,refresh_hash,created_at,access_expires_at,refresh_expires_at,revoked_at) VALUES (@id,@user,@access,@refresh,@created,@accessExpires,@refreshExpires,NULL);";q.Parameters.AddWithValue("@id",s.SessionId);q.Parameters.AddWithValue("@user",s.UserId);q.Parameters.AddWithValue("@access",Hash(s.AccessToken));q.Parameters.AddWithValue("@refresh",Hash(s.RefreshToken));q.Parameters.AddWithValue("@created",s.CreatedAt.UtcDateTime);q.Parameters.AddWithValue("@accessExpires",s.AccessExpiresAt.UtcDateTime);q.Parameters.AddWithValue("@refreshExpires",s.RefreshExpiresAt.UtcDateTime);q.ExecuteNonQuery();}
     private StoredSession? FindSession(string column,string value,bool hashed){using var c=database.OpenConnection();using var q=c.CreateCommand();q.CommandText=$"SELECT CAST(session_id AS CHAR),CAST(user_id AS CHAR),created_at,access_expires_at,refresh_expires_at,revoked_at FROM auth_sessions WHERE {column}=@value LIMIT 1;";q.Parameters.AddWithValue("@value",value);using var r=q.ExecuteReader();return r.Read()?new StoredSession(DbText(r.GetValue(0)),DbText(r.GetValue(1)),string.Empty,string.Empty,AsUtc(r.GetDateTime(2)),AsUtc(r.GetDateTime(3)),AsUtc(r.GetDateTime(4)),r.IsDBNull(5)?null:AsUtc(r.GetDateTime(5))):null;}
-    private static string Token()=>Convert.ToBase64String(RandomNumberGenerator.GetBytes(48)).Replace('+','-').Replace('/','_').TrimEnd('='); private static string PasswordResetToken()=>RandomNumberGenerator.GetInt32(1_000_000).ToString("D6"); private static string Hash(string value)=>Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value)));private static string DbText(object value)=>value is Guid guid?guid.ToString():Convert.ToString(value)!;private static DateTimeOffset AsUtc(DateTime value)=>new(DateTime.SpecifyKind(value,DateTimeKind.Utc));
+    private static string Token()=>Convert.ToBase64String(RandomNumberGenerator.GetBytes(48)).Replace('+','-').Replace('/','_').TrimEnd('='); private static string PasswordResetToken()=>GenerateResetToken(); private static string Hash(string value)=>Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value)));private static string DbText(object value)=>value is Guid guid?guid.ToString():Convert.ToString(value)!;private static DateTimeOffset AsUtc(DateTime value)=>new(DateTime.SpecifyKind(value,DateTimeKind.Utc));
+    private const string ResetTokenAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    private static string GenerateResetToken()
+    {
+        // 8 characters from a 30-symbol alphabet ≈ 39 bits of entropy
+        // (vs. ~20 bits for a 6-digit numeric code).
+        var bytes = RandomNumberGenerator.GetBytes(8);
+        var chars = new char[8];
+        for (var i = 0; i < 8; i++)
+            chars[i] = ResetTokenAlphabet[bytes[i] % ResetTokenAlphabet.Length];
+        return new string(chars);
+    }
 }
 
 public sealed class MySqlAdminRepository(AuthDatabase database) : IAdminRepository
