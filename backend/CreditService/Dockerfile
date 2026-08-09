@@ -1,7 +1,12 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
+COPY ["CreditService.Domain/CreditService.Domain.csproj", "CreditService.Domain/"]
+COPY ["CreditService.Application/CreditService.Application.csproj", "CreditService.Application/"]
+COPY ["CreditService.Persistence/CreditService.Persistence.csproj", "CreditService.Persistence/"]
+COPY ["CreditService.API/CreditService.API.csproj", "CreditService.API/"]
+RUN dotnet restore CreditService.API/CreditService.API.csproj
 COPY . .
-RUN dotnet restore CreditService.API/CreditService.API.csproj && dotnet publish CreditService.API/CreditService.API.csproj -c Release -o /app/publish --no-restore
+RUN dotnet publish CreditService.API/CreditService.API.csproj -c Release -o /app/publish --no-restore
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
