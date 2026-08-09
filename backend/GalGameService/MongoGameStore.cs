@@ -135,7 +135,7 @@ public sealed class MongoGameStore : IGameStore
         MongoGameStoreMappings.EnsureRegistered();
 
         var connectionString = configuration.GetConnectionString("GameDatabase")
-            ?? "mongodb://127.0.0.1:5253";
+            ?? "mongodb://127.0.0.1:27017";
         var databaseName = configuration["MongoDb:Database"]
             ?? "moonstone_galgame";
 
@@ -333,7 +333,7 @@ public sealed class MongoGameStore : IGameStore
             UpdatedAt: now);
 
         // 容量保护：超限时清理最旧已完成 job
-        var count = (int)_jobs.CountDocuments(FilterDefinition<GameGenerationJob>.Empty);
+        var count = (int)_jobs.EstimatedDocumentCount();
         if (count >= MaxJobs)
             EvictOldestCompletedJobs();
 
