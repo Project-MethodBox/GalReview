@@ -401,9 +401,16 @@ public sealed class MongoGameStore : IGameStore
         var ownerFilter = Builders<PackageOwnerDocument>.Filter.Eq(o => o.PackageId, package.PackageId);
         var ownerDoc = new PackageOwnerDocument { PackageId = package.PackageId, OwnerUserId = ownerUserId };
 
+        void SaveSequentially()
+        {
+            _packages.ReplaceOne(packageIdFilter, packageBson, new ReplaceOptions { IsUpsert = true });
+            _manifests.ReplaceOne(manifestFilter, manifest, new ReplaceOptions { IsUpsert = true });
+            _owners.ReplaceOne(ownerFilter, ownerDoc, new ReplaceOptions { IsUpsert = true });
+        }
+
         // Use a transaction to ensure all three collections are written atomically.
         // If transactions are not supported (e.g. standalone MongoDB without replica set),
-        // fall back to sequential writes with best-effort cleanup on failure.
+        // fall back to the same idempotent upserts without claiming cross-document atomicity.
         try
         {
             using var session = _client.StartSession();
@@ -415,14 +422,18 @@ public sealed class MongoGameStore : IGameStore
                 return true;
             });
         }
-        catch (MongoCommandException ex) when (ex.ErrorMessage.Contains("Transaction", StringComparison.OrdinalIgnoreCase) ||
-                                                ex.ErrorMessage.Contains("replica set", StringComparison.OrdinalIgnoreCase))
+        catch (NotSupportedException ex)
         {
-            // Fallback for standalone MongoDB without replica set support.
-            _logger?.LogWarning("MongoDB transactions not available, falling back to sequential writes for SavePackage.");
-            _packages.ReplaceOne(packageIdFilter, packageBson, new ReplaceOptions { IsUpsert = true });
-            _manifests.ReplaceOne(manifestFilter, manifest, new ReplaceOptions { IsUpsert = true });
-            _owners.ReplaceOne(ownerFilter, ownerDoc, new ReplaceOptions { IsUpsert = true });
+            _logger?.LogWarning(ex, "MongoDB transactions are unavailable; SavePackage is using idempotent sequential upserts.");
+            SaveSequentially();
+        }
+        catch (MongoCommandException ex) when (
+            ex.Code is 20 or 303 ||
+            ex.ErrorMessage.Contains("Transaction", StringComparison.OrdinalIgnoreCase) ||
+            ex.ErrorMessage.Contains("replica set", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger?.LogWarning(ex, "MongoDB transactions are unavailable; SavePackage is using idempotent sequential upserts.");
+            SaveSequentially();
         }
     }
 

@@ -8,9 +8,9 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddPracticePersistence(this IServiceCollection services, IConfiguration configuration, string contentRoot)
     {
-        services.AddSingleton(new ModelAssetCatalog(Path.Combine(contentRoot, "Resources")));
-        services.AddSingleton<IModelStatusReader>(sp => sp.GetRequiredService<ModelAssetCatalog>());
-        services.AddSingleton<IAnswerScorer, OnnxAnswerScorer>();
+        _ = contentRoot;
+        services.AddSingleton<IFacetAdjudicator, GatewayModelFacetAdjudicator>();
+        services.AddSingleton<IAnswerScorer, AutomaticAnswerScorer>();
         services.AddSingleton<IPracticeQuestionGenerator, ReciteQuestionGenerator>();
         services.AddSingleton<IPracticeGateway, GatewayClient>();
         services.AddSingleton<ICreditBilling>(sp => sp.GetRequiredService<IPracticeGateway>() as GatewayClient ?? throw new InvalidOperationException("GatewayClient registration is invalid."));

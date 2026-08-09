@@ -8,6 +8,9 @@ public enum PracticeSessionStatus { Created, Active, Completed, Abandoned }
 public enum PracticeJobKind { QuestionGeneration, ExamImport }
 public enum PracticeJobStatus { Queued, Running, Succeeded, PartiallySucceeded, Failed }
 public enum PackageVisibility { Private, Unlisted, Public }
+public enum GradingStatus { Decided, Abstained }
+public enum RecallOutcome { Perfect, Correct, Partial, WrongRelated, NoRecall, Abstained }
+public enum FacetVerdict { Entailed, Omitted, Contradicted, Indeterminate }
 
 public sealed record StudyProject(
     Guid ProjectId, Guid OwnerUserId, string Name, string? SubjectCode,
@@ -27,10 +30,19 @@ public sealed record PracticeQuestion(
     IReadOnlyList<SourceReference> SourceReferences, QuestionStatus Status, int Version,
     DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
 
+public sealed record FacetAssessment(string Claim, FacetVerdict Verdict, double EntailmentProbability,
+    double NeutralProbability, double ContradictionProbability);
+
 public sealed record PracticeAnswer(
     Guid AttemptId, Guid QuestionId, Guid IdempotencyKey, IReadOnlyList<string> Answer,
-    bool Correct, double? Similarity, int Quality, decimal AwardedScore,
-    int ResponseTimeMs, int AttemptNumber, string AnswerJudgeVersion, DateTimeOffset AnsweredAt);
+    bool? Correct, double? Similarity, int? Quality, decimal? AwardedScore,
+    int ResponseTimeMs, int AttemptNumber, string AnswerJudgeVersion, DateTimeOffset AnsweredAt)
+{
+    public GradingStatus GradingStatus { get; init; } = GradingStatus.Decided;
+    public RecallOutcome Outcome { get; init; } = RecallOutcome.NoRecall;
+    public string? AbstainReason { get; init; }
+    public IReadOnlyList<FacetAssessment> Facets { get; init; } = [];
+}
 
 public sealed record PracticeSession(
     Guid SessionId, Guid OwnerUserId, Guid ProjectId, Guid QuestionBankId,
@@ -63,7 +75,6 @@ public sealed record PlanGraphSnapshot(
     string Status,
     string AlgorithmVersion,
     IReadOnlyList<PlanGraphPoint> Points);
-public sealed record ModelState(string Name, string Status, string ExpectedSha256, string? ActualSha256, string? Detail);
 public sealed record PracticeJobDiagnostic(Guid? MaterialId, string Code, string Message, bool Retryable);
 public sealed record PracticeJob(
     Guid JobId, Guid OwnerUserId, Guid ProjectId, Guid IdempotencyKey, string PayloadHash, PracticeJobKind Kind,

@@ -581,12 +581,21 @@ public sealed class MySqlAuthRepository(AuthDatabase database) : IAuthRepository
     private const string ResetTokenAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     private static string GenerateResetToken()
     {
-        // 8 characters from a 30-symbol alphabet ≈ 39 bits of entropy
-        // (vs. ~20 bits for a 6-digit numeric code).
-        var bytes = RandomNumberGenerator.GetBytes(8);
+        // Reject the top 16 byte values before modulo reduction so every one of
+        // the 30 symbols is selected with equal probability.
         var chars = new char[8];
-        for (var i = 0; i < 8; i++)
-            chars[i] = ResetTokenAlphabet[bytes[i] % ResetTokenAlphabet.Length];
+        Span<byte> bytes = stackalloc byte[16];
+        var written = 0;
+        while (written < chars.Length)
+        {
+            RandomNumberGenerator.Fill(bytes);
+            foreach (var value in bytes)
+            {
+                if (value >= 240) continue;
+                chars[written++] = ResetTokenAlphabet[value % ResetTokenAlphabet.Length];
+                if (written == chars.Length) break;
+            }
+        }
         return new string(chars);
     }
 }

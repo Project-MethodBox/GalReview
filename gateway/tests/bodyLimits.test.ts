@@ -26,6 +26,7 @@ const baseConfig: GatewayConfig = {
     renderService: { name: 'RenderService', url: 'http://127.0.0.1:5256' },
     practiceService: { name: 'PracticeService', url: 'http://127.0.0.1:5257' },
     creditService: { name: 'CreditService', url: 'http://127.0.0.1:5258' },
+    modelService: { name: 'ModelService', url: 'http://127.0.0.1:5259' },
   },
   rateLimit: {
     anonymous: { windowMs: 60_000, max: 100 },

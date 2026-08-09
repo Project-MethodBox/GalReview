@@ -3187,6 +3187,7 @@ input[type="password"]::-webkit-credentials-auto-fill-button { visibility: hidde
 .practice-result { display: grid; gap: 8px; margin-top: 24px; padding: 22px; border-left: 4px solid var(--surface-strong); background: var(--surface-soft); }
 .practice-result.is-correct { border-left-color: #277a55; }
 .practice-result.is-wrong { border-left-color: var(--danger); }
+.practice-result.is-neutral { border-left-color: var(--surface-strong); }
 .practice-result span { color: var(--muted); }
 .practice-result .button { justify-self: start; margin-top: 8px; }
 .practice-help { display: grid; gap: 10px; margin: 10px 0; padding: 16px; border: 1px solid var(--rule); border-radius: 14px; background: var(--surface); }

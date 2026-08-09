@@ -106,6 +106,8 @@ public static class PracticeRules
         _ => null
     };
     public static string NormalizeAnswer(string value) => string.Join(' ', (value ?? string.Empty).Normalize(NormalizationForm.FormC).Trim().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+    public static bool AreFillBlankAnswersEquivalent(string actual, string expected) =>
+        FillBlankAnswerEquivalence.AreEquivalent(actual, expected);
     public static string NormalizeOptionId(string value)
     {
         var id = NormalizeAnswer(value).ToUpperInvariant();

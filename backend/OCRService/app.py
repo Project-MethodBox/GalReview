@@ -20,6 +20,7 @@ os.environ.setdefault("PADDLE_PDX_MODEL_SOURCE", "BOS")
 
 import fitz
 from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi.responses import JSONResponse
 from paddleocr import FormulaRecognitionPipeline, PaddleOCR
 
 app = FastAPI(title="MoonStone Local OCR", version="1.0")
@@ -50,7 +51,10 @@ async def authenticate_gateway_requests(request: Request, call_next):
         return await call_next(request)
     gateway_key = request.headers.get("X-Gateway-Key")
     if not _verify_gateway_key(gateway_key):
-        raise HTTPException(401, "A valid X-Gateway-Key header is required.")
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "A valid X-Gateway-Key header is required."},
+        )
     return await call_next(request)
 
 

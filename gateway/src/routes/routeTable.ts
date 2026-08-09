@@ -70,6 +70,13 @@ export const ROUTE_TABLE: RouteEntry[] = [
     auth: 'service',
     rateLimitCategory: 'general',
   },
+  {
+    path: '/internal/v1/model-inference',
+    service: 'modelService',
+    auth: 'service',
+    rateLimitCategory: 'general',
+    timeoutMs: 60_000,
+  },
 
   // ===== 浏览器公开路由（无需令牌，精确方法匹配） =====
   {

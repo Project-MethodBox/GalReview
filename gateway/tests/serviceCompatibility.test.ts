@@ -207,6 +207,11 @@ function createConfig(
         url: 'http://127.0.0.1:5258',
         serviceKey: 'credit-key',
       },
+      modelService: {
+        name: 'ModelService',
+        url: 'http://127.0.0.1:5259',
+        serviceKey: 'model-key',
+      },
     },
     rateLimit: {
       anonymous: { windowMs: 60_000, max: 100 },

@@ -43,8 +43,8 @@ Node.js / TypeScript API Gateway
 | 五类题目 | 单选、填空、判断、名词解释、简答 | 原样保留类型；公共枚举改为大写稳定值 |
 | 资料导入 | PDF、DOCX、PPTX、TXT、MEG 合并 | FileService 增补 PPTX/MHTML；多资料通过项目引用组合，不复制文件 |
 | 题目生成 | 分章、并发生成、失败重放、规范化 | PracticeService 异步生成任务；输入只取 FileService 规范化文本 |
-| 语义判分 | SBERT + 字符重合 + 编辑距离兜底 | PracticeService 本地 ONNX 推理；分数统一为 `[0,1]` 后再映射 quality |
-| 个性化记忆 | XGBoost 估计 quality、EF 排序 | XGBoost 只估计 `quality`；SM-2 与 mastery 仍由 KnowledgeService 写入 |
+| 语义判分 | SBERT + 字符重合 + 编辑距离兜底 | 逐必要事实的本地多语种 NLI；低置信自动 `ABSTAINED`，不产生学习证据 |
+| 个性化记忆 | XGBoost 估计 quality、EF 排序 | XGBoost 退出生产；Domain 由离散可观察内容状态产生 q，KnowledgeService 忠实推进 SM-2 |
 | 智能复习 | 按 EF/新题比例选题 | 按 KnowledgeService 到期/薄弱点 + PracticeService 未作答题组合 |
 | 错题帮助 | 向量 Top 3 + 受材料约束的解释 | 优先检索题目关联知识点和出处；可选解释不得脱离检索证据 |
 | 整卷导入 | PDF/TXT/HTML/MHTML，识别题目与答案 | FileService 负责文本；PracticeService 负责试卷结构化和人工校对状态 |
@@ -57,6 +57,8 @@ Node.js / TypeScript API Gateway
 
 - `SbertModelJudge` 查找 `Resources/vocab.txt`；该文件没有出现在源码资源目录，却存在于用户指出的完整运行时目录 `ReciteHelper.Wpf/bin/Debug/net10.0-windows7.0/Resources`。迁移必须同时带入并校验 `vocab.txt`，不能只按 Git 跟踪文件清单判断模型不可用；`tokenizer.json` 作为同一模型的可复核 tokenizer 资产保留。
 - 旧 `QuizService` 混用了 `[0,1]` 与 `[0,100]` 的相似度尺度，存在 `Math.Max(similarity, 83)` 和再次乘以 100 的路径。新契约只接受 `[0,1]`，边界处一次性换算。
+- 旧 XGBoost 可恢复的明示训练样本仅约 40 条、来自单个用户且类别失衡；训练速度是字符/分钟，生产输入却是字符/秒，另外还存在相似度 `0..1`、`0..100` 与 `8300` 三重尺度。它不能被修补为可靠 q 预测器，已从生产判分链移除。
+- 原实现只更新 EF 并按 EF 排序，没有 SM-2 的 repetitions、interval 和 next due date；迁移只保留 ReciteHelper 的答题用户故事，调度统一由 KnowledgeService 的完整 SM-2 状态负责。
 - 旧视觉小说路径执行模型生成的 C#。迁移后禁止动态编译和执行生成代码，统一复用 GalGame `schema 1.0` 和 Render runtime ABI。
 - 旧 Resource Center 的 HTTP 接口没有随仓库提供服务端契约，且默认配置为明文 HTTP。迁移后不调用该地址，改成本项目内有契约、有鉴权的共享包资源。
 - ReciteHelper WPF 的 Hosted Activation 属于独立部署能力，且本机配置已禁用；它不属于学习领域，首版不迁移到浏览器应用。
@@ -105,10 +107,13 @@ PracticeService.Application  Command/Query Handler、应用端口、事务编排
         |
 PracticeService.Domain       聚合、值对象、领域不变量（零基础设施依赖）
         ^
-PracticeService.Persistence  Mongo、Gateway client、ONNX、模型资产状态
+PracticeService.Persistence  Mongo、Gateway client
 ```
 
-API 不直接注入仓储或模型实现；Persistence 不引用 API；Domain 不引用 MediatR、Mongo、HTTP 或 ONNX。
+模型能力另由同样四层的 ModelService 承载：API 只暴露 INTERNAL 契约，Application 用 MediatR
+发送推理命令与 readiness 查询，Domain 定义输入/verdict 边界，Persistence 独占 ONNX、
+SentencePiece、词典与资产校验且不使用数据库。两服务的 API 都不直接注入仓储或推理实现；
+Persistence 不引用 API；Domain 不引用 MediatR、Mongo、HTTP 或 ONNX。
 
 ```text
                          +-----------------------+
@@ -117,10 +122,10 @@ Browser -> Gateway ----> | PracticeService :5107 | ---- MongoDB qzwl_practice
                                      |
                     only via Gateway /internal/v1
                  +-------------------+-------------------+
-                 |                   |                   |
-                 v                   v                   v
-          FileService        KnowledgeService     GalGameService
-       normalized text       PlanGraph / SM-2      GamePackage
+                 |                   |                   |                 |
+                 v                   v                   v                 v
+          FileService        KnowledgeService     GalGameService   ModelService :5109
+       normalized text       PlanGraph / SM-2      GamePackage      facet NLI only
                  |                   ^                   |
                  |                   | evidence          v
                  +-------------------+------------ RenderService
@@ -174,7 +179,7 @@ PracticeService 不拥有：
    次模边际收益选择目标；禁止任意设置“SM-2 60% + 图谱 40%”之类混合权重。
 3. PracticeService 按 PlanGraph 目标顺序，每个知识点确定性选择一道 READY 题；缺题点被跳过并继续扫描
    后续计划点，不换入计划外题，也不在同次计分会话重复同一知识点。只有计划与题库零交集时才报错。
-4. 客观题确定性判分；解释题由本地语义模型评分，并保留相似度与规则版本。
+4. 客观题确定性判分；解释题按标准答案必要事实做方向性 NLI。只有全部必要事实可靠蕴含才算完整掌握；遗漏、矛盾与空白由 Domain 离散映射 q，低置信/模型故障自动拒判且不写掌握度。用户不承担自评、答案对照或 q 标注。
 5. 完成会话后，PracticeService 使用现有 `PUT /internal/v1/review-evidence/{resultId}` 提交证据。
 6. 对 PracticeService 调用，该契约的 `packageId` 表示 `questionBankId`，`sessionId` 表示 PracticeSession；KnowledgeService 仍校验 plan、snapshot、用户、题目知识点范围和幂等键。
 
@@ -215,8 +220,8 @@ PracticeService 不代理、不复制也不转换 GamePackage。这样普通刷�
   前重跑同一规则；来源/checksum/答案支持不成立时禁止自动转 READY。
 - PlanGraph 是复习目标的优先顺序，不是“任一点缺题就整次失败”的全有或全无清单。PracticeService 按
   顺序跳过缺题点并选择后续有 READY 题的计划点；只有计划与题库完全没有交集时才返回覆盖错误。
-- `similarity` 取值 `[0,1]`；`quality` 为整数 `[0,5]`；`responseTimeMs >= 0`。
-- 客观题不调用 LLM 判分。主观题即使调用解释模型，最终证据也必须保存本地模型分数、规则版本与正确答案摘要，保证可审计。
+- `similarity` 只保留为可空兼容诊断字段，不参与判分或 SM-2；`quality` 在 `DECIDED` 时为整数 `[0,5]`，在 `ABSTAINED` 时必须为空；`responseTimeMs >= 0` 但不参与 q。
+- 客观题不调用模型。主观题保存模型/规则版本、逐事实标签与置信诊断；概率只作为拒判门禁，不做加权分数。任何不确定、模型缺失或推理失败均自动 `ABSTAINED`，不得用编辑距离降级判错。
 - PracticeService 不允许客户端上传 `userId` 冒充他人；用户身份只接受 Gateway 注入的 `X-User-Id`。
 - PracticeService 调用内部接口使用 `X-Service-Name: PracticeService` 和独立密钥，密钥只在 Gateway 验证，转发前剥离。
 
@@ -263,11 +268,13 @@ ReciteHelper 的功能信息架构迁移到 GalReview，而不是复刻 WPF 外�
 
 | 资产 | 本机 SHA-256 | 用途 | 迁移规则 |
 |---|---|---|---|
-| `sbert.onnx` | `994a58868f7abacacbf2192aa0aae8f56da8c4505dbde2740c861b24426ede6b` | 中文答案向量 | 与 `tokenizer.json` 成对校验；推理失败时显式降级 |
-| `xgboost_qvalue.onnx` | `53b563e2df2c6026f7a996b4d8f63e83c63bbf64d1dde5e03a3c7f9dbf688ea0` | quality 估计 | 输入固定为 `[relativeRate, similarityPercent]`，输出类别 0-5 |
-| `vocab.txt` | `45bbac6b341c319adc98a532532882e91a9cefc0329aa57bac9ae761c27b291c` | SBERT WordPiece 词表（21,128 行） | 从完整运行时目录迁移；必须与 SBERT 一起进入镜像 |
+| `Models/multilingual-minilm-nli/model.onnx` | `79f8cda2b1230585a95ea0514a6f1bd21c5c986ba0529bb3261213a3e195fa6e` | 逐事实中文 NLI 主判器 | 固定上游 revision 与 SHA-256；和 SentencePiece、严格同义词词典共同通过 readiness |
+| `Models/multilingual-minilm-nli/sentencepiece.bpe.model` | `cfc8146abe2a0488e9e2a0c56de7952f7c11ab059eca145a0a727afce0db2865` | XLM-R tokenizer | 原始 SentencePiece ID 必须按 XLM-R/fairseq 约定整体 `+1`；已有回归测试锁定 |
+| `cn_synonym.txt` | `de0d4c74e18633cc758f3d35d9479cb63d2e80abe77f2a7f49dba30fed2a482e` | 严格同义词二次复核 | 只读取 `=` 组；只允许把 `OMITTED` 复核为 `ENTAILED`，不覆盖矛盾 |
+| `sbert.onnx` / `vocab.txt` | `994a…26ede6b` / `45bb…b291c` | 兼容与离线诊断 | 不参与 correct、quality 或 SM-2 |
+| `xgboost_qvalue.onnx` | `53b5…88ea0` | 旧资产兼容 | 生产禁用，不加载、不作为当前算法证据 |
 
-模型与词表来自 ReciteHelper 完整本机副本，其中 `vocab.txt` 由运行时输出目录补齐。这些大文件不进入 Git，而是按原目录结构保存于 OSCA 私有储桶 `20277-gal-res`；开发和部署必须先运行仓库内的 `scripts/download-practice-resources.ps1`，再按受版本控制的 `backend/PracticeService/resources.manifest.json` 校验全部 14 个文件。下载器顶部凭据的权限由储桶策略限制为 `20277-gal-res` 的读取和列举，不能访问其他储桶或写入对象，因此下载器与清单一并进入仓库。构建不得静默从其他 URL 下载模型；缺失或哈希不符时 Docker 构建前置检查失败，运行时 `/readyz` 报告降级状态，服务仍可用确定性规则判分，但不能宣称 SBERT 已启用。
+ReciteHelper 兼容模型与词表来自完整本机副本，其中 `vocab.txt` 由运行时输出目录补齐。新 NLI 来自 MIT 许可的 `MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli` 固定 revision `0a71e92a985b6e1ad1828cf67ce9c459639c1dca`。这些大文件统一归 `backend/ModelService/Resources`，不进入 Git。OSCA 私有储桶 `20277-gal-res` 当前按 `Resources` 同构目录保存完整 `Models/multilingual-minilm-nli`；`scripts/download-model-resources.ps1` 以该镜像为主源，但不把 OSCA 可用性当成构建单点：旧模型及词典固定到 ReciteHelper 审计提交，`vocab.txt` 固定到历史提交，新 NLI 固定到 Hugging Face revision，并可先从受信同构离线副本逐文件恢复。所有来源最终统一校验大小与 SHA-256。全部灾备均失败时 ModelService Docker 构建前置检查失败；运行时主观题自动 `ABSTAINED`，绝不退回编辑距离判错。
 
 ReciteHelper 使用 AGPL-3.0。迁移的源代码、提示词、模型和兼容格式必须保留来源、版权与许可证说明；本项目的分发方式需要由维护者确认整体许可证兼容性。本文记录事实，不替代法律意见。
 
@@ -313,6 +320,13 @@ ReciteHelper 使用 AGPL-3.0。迁移的源代码、提示词、模型和兼容�
 | 2026-08-09 | Knowledge/Practice/Frontend/Deploy | 图谱切分与抽取升级为 `chapter-segmenter-v3` / `knowledge-extractor-v3`：识别无空格章节、裸题型栏、数字起始术语和真实绪论；普通长文按完整句切成不超过 1400 字符的模型证据块；题目绑定使用离散的题干精确优先级而非混合权重；前端显式请求 v3 | 修复微生物 PDF 仅 15 个图谱点导致 240 题中 231 题不可练，以及单行长文只形成一个 8 题模型分片；保持 DRAFT/READY 证据门禁 | Knowledge 115/115、Practice 38/38、Frontend build；同款 26,513 字符 PDF 本地探针得到 10 章、210 点、240 题中 220 READY，见 test_report §34 | VERIFIED |
 | 2026-08-09 | Practice/Docs | 将“独立 QA”校正为同一 provider/model 也可执行的“分离第二遍来源回验”；按原始论文、命题指南与 retrieval-practice 研究补齐证据等级、运行参数边界和项目级盲评/学习实验验收协议 | 防止把研究启发、自动门禁或单元测试夸大为当前中文领域组合系统已被证明有效 | 实现—文献映射复核；Practice 回归与结论见 test_report §35 | VERIFIED |
 | 2026-08-09 | Knowledge/Practice/Frontend/Deploy | 复用题目 PATCH 和图谱 scope 接口自动修复来源可验证的无签草稿；名词解释增加焦点/别名与唯一来源区间离散绑定；SMART/EXAM 跳过计划内缺题点并继续取后续已覆盖点，只有零交集才报错 | 消除“请解释第二性比仍待补签”和单个覆盖缺口使温习永久不可进入的问题，同时保留逐字来源、唯一点和计划内证据边界 | Practice 44/44、Knowledge 115/115、Frontend production build；见 test_report §36 | VERIFIED |
+| 2026-08-09 | Practice/Frontend/Deploy/Docs | 旧混合相似度与 XGBoost q 退出生产；新增必要事实 NLI、严格同义词复核、选择性拒判、nullable evidence 与三态结果 UI；拒判不写 SM-2，用户无需自评或标注 | 修复完整释义被低相似度误判与错误 q 污染复习日程，同时把模型不确定性留给系统 | Practice 54/54；3 份真实 PDF、60 金标样本中决定 42、决定性误判 0，未见土壤集决定 15/20 且误判 0；Frontend build 与全链结果见 test_report §37 | VERIFIED |
+| 2026-08-10 | Git/Integration | 识别远端从已推送 `3fc0d9d` 到 `7ae0fd7` 的 forced-update；以 tree 身份确认旧 130 提交仅被改 committer/GPG 后整体重写，从保护分支将被丢弃的自动绑题提交精确重放到 PR #18 之后，再恢复判分 WIP | 消除 130 ahead / 131 behind 和零共同祖先，避免 unrelated-histories 双历史合并 | 修复后 `main...origin/main [ahead 1]`，新提交 `65e1248` 直接以 `7ae0fd7` 为父；无 unmerged path | VERIFIED |
+| 2026-08-10 | Auth/File/OCR/Deploy | 合入 PR #18 的密码哈希、重置码、固定时序密钥比较、OCR 网关鉴权和 PDF 页数门禁；修复 PR 中无效 Identity 哈希、空 Compose 默认、重置码模偏差与 FastAPI 中间件 500；OSCA 凭据改为环境注入并同步当前部署文档 | 保留安全改进，同时保证干净部署、管理员登录和 OCR 错误语义可用 | Auth 18/18；File Release build；管理员登录 201/错密 401；OCR health 200、无密钥 401、带密钥 200；Compose config PASS | VERIFIED |
+| 2026-08-10 | GalGame/Persistence/Credit | Mongo 包写入优先使用事务，standalone 的 `NotSupportedException`/已知 Mongo 错误码自动降为幂等顺序 upsert；credits 结算移至音频和包持久化之后 | 修复 PR #18 在默认 standalone Mongo 上使所有故事生成失败且持久化失败后仍可能先扣费的问题 | GalGame 362/362；standalone Mongo 全链生成 3 题、故事包、Render 回写及 credits 结算通过，见 test_report §38 | VERIFIED |
+| 2026-08-10 | Practice/Deploy | 填空从逐字相等升级为 `deterministic-fill-equivalence-v1`，离散处理数值、数值元组格式与封闭专业别名；NLI 补充下载进一步锁定模型仓库和固定 revision | 接受 `两个/二/2`、坐标空白差异和 `G+/革兰氏阳性`，同时避免模糊相似度放过反义、换序或区间边界错误 | 填空专项 27/27；完整 Practice 回归见 test_report §40；下载脚本 AST、固定来源与本地 19 文件哈希门禁通过 | VERIFIED |
+| 2026-08-10 | Model/Practice/Gateway/Deploy | 新增四层 ModelService，以 MediatR CQRS 承载 NLI、SentencePiece、词典、哈希就绪与 `5109` INTERNAL 接口；Practice 只保留 rubric 与离散判分，通过 Gateway 消费 verdict；资源、清单和下载器迁至 ModelService | 模型运行时不属于研习册/练习聚合，继续置于 PracticeService 会扩大其边界并耦合部署 | Model 8/8、Practice 68/68、Gateway 204/204；16 个默认容器 healthy；真实主观题与填空 HTTP 见 test_report §41 | VERIFIED |
+| 2026-08-10 | Model/Deploy | 模型资源恢复升级为本地缓存、OSCA、受信离线副本、固定远端版本四级容灾；19 个文件全部有固定灾备，覆盖旧 SBERT、旧 q 模型、词典、vocab 与新 NLI，且不能关闭最终哈希门禁 | 避免不稳定对象存储成为开发和部署单点，同时不以未校验下载或算法降级换取可用性 | 本地缓存 19/19；空目录离线恢复 19/19；ReciteHelper 与 Hugging Face 固定源真实下载探针通过；两份大模型 URL/长度 HEAD 通过，见 test_report §41 | VERIFIED |
 
 状态只使用 `SPECIFIED | IMPLEMENTED | VERIFIED | BLOCKED`。代码合入后必须逐项更新，测试未运行或失败时不得写 `VERIFIED`。
 

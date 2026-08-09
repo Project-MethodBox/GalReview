@@ -1535,3 +1535,263 @@ KnowledgeService 的生产切分/抽取器和 PracticeService 的生产 `ReciteQ
 `dockerDesktopLinuxEngine` pipe 不存在，故未声称容器态 HTTP 已复验。engine 恢复后须按
 `docs/deploy.md` 的发布顺序重建 Knowledge/Practice/Frontend，并使用新册或明确准备的 DRAFT 样本执行
 §36.2 三条不变量的 HTTP 冒烟。
+
+## 37. 2026-08-09 主观题判分、quality 与 SM-2 输入重写
+
+### 37.1 ReciteHelper 原算法审计
+
+本轮完整读取 `D:\Projects\ReciteHelper` 的生产依赖注入、`QuizWindow -> QuizService ->
+SbertModelJudge/SuperMemoService` 调用链、训练脚本和历史可恢复样本。结论不是“阈值偏低”，而是旧算法
+不能作为可靠基线：
+
+- 主观题把 SBERT cosine 与字符 Jaccard 按答案长度混合，权重在 `0.6..0.9`，固定阈值 `0.70`；没有
+  训练、消融、校准或领域金标依据。词表缺失时还会静默退化为 Levenshtein，使干净构建和开发机运行
+  不同算法。
+- q 模型生产特征只有相对速度和相似度。可恢复的明示数据约 40 条、来自单一用户且严重失衡；训练没有
+  train/test split、交叉验证、校准或正式指标。训练速度为字符/分钟，生产输入为字符/秒，存在 60 倍
+  量纲差；相似度又在 `0..1`、`0..100` 和 `8300` 三种尺度间混用。
+- 旧复习只更新 EF 并按 EF 排序，没有 SM-2 的 repetitions、interval 与 next due date；不能把它称为
+  完整 SM-2。模拟考试又使用另一套 overlap/Jieba 和 `0.8/0.2` 混合规则。
+
+因此 SBERT 仅保留诊断资产，XGBoost q 与全部混合权重退出生产。此决定也避免拿 ReciteHelper 自身没有
+验证过的实现去“证明”迁移算法。
+
+### 37.2 研究依据与证据边界
+
+本轮只用原始论文、任务论文、算法作者资料与模型作者模型卡确定方法边界：
+
+| 来源 | 原始结论 | 本项目采用方式 | 明确不推断的内容 |
+|---|---|---|---|
+| [SemEval-2013 Task 7](https://aclanthology.org/S13-2045/) | 短答案应区分 correct、partial/incomplete、contradictory、irrelevant、non-domain，并评估未见答案/题目/领域 | 冻结五类离线金标，重点包含遗漏、反转和邻近概念 | 不把单一语义相似度当正确率 |
+| [Nielsen et al. 2008](https://aclanthology.org/L08-1166/) 与 [Mohler et al. 2011](https://aclanthology.org/P11-1076/) | 可把参考答案拆成 facets，判断学生答案覆盖了哪些必要内容 | 标准答案拆为必要事实，逐事实判断 | 不声称当前自动拆分达到人工 rubric 质量 |
+| [Sentence-BERT](https://aclanthology.org/D19-1410/) | bi-encoder/cosine 面向语义相似检索与 STS | SBERT 仅保留诊断/检索职责 | cosine 不等于方向性正确性、遗漏或矛盾 |
+| [Semantic Answer Similarity](https://aclanthology.org/2021.mrqa-1.15/) | 成对 cross-encoder 可直接交互比较答案语义 | 使用方向性成对 NLI，而非两个独立句向量相加权 | 该论文不直接证明本项目完整组合 |
+| [OCNLI](https://aclanthology.org/2020.findings-emnlp.314/) | 中文 NLI 有人工数据，强模型与人类仍有明显差距 | NLI 作为候选主判器，同时强制本域拒判与金标验证 | OCNLI/XNLI 成绩不能替代农学/社科本域测试 |
+| [SelectiveNet](https://proceedings.mlr.press/v97/geifman19a.html) | 选择性预测以降低覆盖率换取更低的已决定风险 | 低 top probability 或 margin 自动 `ABSTAINED` | 拒判阈值不能凭直觉，需要冻结校准集 |
+| [Guo et al. 2017](https://proceedings.mlr.press/v70/guo17a.html) | 现代神经网络置信常失准；temperature scaling 是简单有效基线 | 当前只把概率用于拒判并在本域冻结门禁；保留未来独立校准入口 | softmax 数字不展示为“正确率” |
+| [SuperMemo SM-2 原始说明](https://super-memory.org/archive/english/ol/sm2.htm) | q 是离散回忆质量；EF、间隔和失败重置有固定步骤 | Domain 只给离散 q，KnowledgeService 是完整 SM-2 唯一写入方 | q 不是 cosine、模型信心或打字速度；原作者也说明 EF 公式带启发式来源 |
+| [BEA 2024 零/少样本 LLM 评分研究](https://aclanthology.org/2024.bea-1.25/) | 零/少样本 LLM 自动评分在不同领域和复杂推理上表现不足 | 不让裸 LLM 直接写 correct/q/SM-2 | 不把“模型会解释”当可靠主判证据 |
+| [模型作者模型卡](https://huggingface.co/MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli) | 多语种 MiniLM NLI，模型卡给出 XNLI 中文结果与 MIT 许可 | 固定 revision `0a71e92a985b6e1ad1828cf67ce9c459639c1dca`、ONNX/Tokenizer 哈希与许可证 | 上游 XNLI 指标不代替本项目金标 |
+
+“必要事实 + 多语种 NLI + 严格同义词复核 + 选择性拒判”以及“图谱只约束 SM-2 到期集合后的选题”是
+基于上述研究作出的工程组合，不是任何单篇论文已经证明的整体算法。本节验证的是：组合不是随意加权，
+生产实现符合所述离散规则，并在当前农学/社科边界的冻结资料集上达到发布门槛；不把它夸大为所有学科、
+所有答案或长期学习效果的普遍证明。
+
+### 37.3 生产算法
+
+1. 单选/判断规范化后精确匹配；填空逐位置精确匹配，不使用编辑距离阈值。
+2. 名词解释/简答先对标准答案精确一致短路；否则从已核对答案拆出 1-12 个必要事实。
+3. 固定 NLI 以 `premise=用户答案, hypothesis=必要事实` 逐项输出 entailment/neutral/contradiction。
+   SentencePiece 原始 ID 按 XLM-R/fairseq 词表约定整体 `+1`；专项测试锁定相同、否定与无关三类。
+4. top probability `<0.75` 或前两类 margin `<0.20` 即 `INDETERMINATE`。`cn_synonym.txt` 只读取
+   `=` 严格同义组；原始为 `OMITTED` 且替换标准事实后可靠 `ENTAILED` 才接受，不覆盖矛盾。
+5. Domain 状态机固定：全蕴含 `q=5`；部分蕴含且其余遗漏 `q=2`；可靠矛盾 `q=1`；空白/零覆盖
+   `q=0`；任一不确定或模型故障 `q=null`。当前不伪造 q=3/4，不使用响应时间。
+6. `ABSTAINED` 的 correct/quality/score 均为空；完成会话自动过滤，不调用 KnowledgeService，用户只看到
+   中性说明并继续下一题。没有用户自评、人工对照、q 按钮或补标流程。
+
+### 37.4 真实 PDF 冻结集与结果
+
+资料页已经逐页提取并渲染核对；测试运行读取受版本控制的金标 JSON，不在测试中依赖本机 PDF 文件：
+
+- `D:\AppData\农业生态学\农业生态学.pdf`：PDF p4/p5/p13/p16；
+- `D:\AppData\微生物学B.pdf`：PDF p3/p18/p30；
+- `D:\AppData\土壤肥料学\土壤肥料学.pdf`：PDF p19/p21/p65（PDF 页码比部分印刷页码大 1）。
+
+共 12 题、每题 5 个答案：原文完整、完整同义改写、部分遗漏、关键矛盾、邻近概念干扰，共 60 条。
+冻结文件为 `backend/PracticeService/PracticeService.Tests/TestData/answer-judging-real-pdf-v1.json`。
+农业生态学与微生物学 40 条用于门禁/同义词规则校准；土壤肥料学 20 条在规则冻结后作为未见资料保留集。
+
+| 指标 | 校准资料 40 条 | 未见土壤资料 20 条 | 合计 60 条 |
+|---|---:|---:|---:|
+| 自动决定数 / 覆盖率 | 27 / 67.5% | 15 / 75.0% | 42 / 70.0% |
+| 已决定样本误判 | 0 / 27 | 0 / 15 | 0 / 42 |
+| 完整同义改写自动决定 | 5 / 8 | 4 / 4 | 9 / 12 |
+| 完整同义改写被判错 | 0 | 0 | 0 |
+
+未决定的 18 条全部自动拒判，不产生错误 q 或 SM-2 证据。未开拒判时首轮 whole/facet NLI 的二元结果为
+53/60，包含把部分答案当完整与把完整改写当部分的风险；加入冻结门禁后不再用覆盖率掩盖误判。严格
+同义词复核修复了“基础/根基”完整改写，未降低未见土壤集的已决定精度。用户报告的“腐食性食物链”
+完整同义改写专项用例得到 `DECIDED + quality=5`，相似度字段为 null。
+
+### 37.5 自动测试与发布边界
+
+| 项目 | 结果 |
+|---|---|
+| PracticeService | PASS，54 / 54；含领域 q 状态机、NLI pair encoding、同义改写、真实 PDF risk/coverage 门禁 |
+| 模型资产 | 固定 NLI revision、ONNX/SentencePiece/Synonym SHA-256；Dockerfile 改为缺失即构建失败 |
+| 前端三态 | PASS，TypeScript + Vite production build（1401 modules）；隐藏 similarity/quality，拒判可继续且完成页不计错，禁止用户自评 |
+| Gateway | PASS，15 files、203 / 203；TypeScript build PASS |
+| 主观题 HTTP 全链 | PASS：资料上传/解析、先立册后构图、计划、三道真实语义样本、会话完成；`PERFECT q=5` 与 `WRONG_RELATED q=1` 各写一次 mastery，`ABSTAINED` 的 point version 保持 0 |
+| 容器 | Practice/Frontend 当前镜像构建通过；NLI `/readyz` 为 READY；与 §38 安全批次合并后完整全链再次通过 |
+
+允许的结论是：在当前“中文农学/社科/人文事实与概念题”边界内，判分组合有明确研究依据、没有任意
+混合权重，并已在三个真实 PDF 的冻结集上以选择性风险门槛验证；对已决定样本没有观察到误判。它仍需
+持续扩充未见资料、对抗否定/关系反转集并监控 risk-coverage，才可降低拒判率。计算题、复杂推导、跨段
+开放论述和长期学习效果不在本次证据范围内。
+
+## 38. 2026-08-10 远端历史重写、PR #18 合并审计与全链复验
+
+### 38.1 Git 根因与修复
+
+本地 remote reflog 明确记录 `origin/main` 从已推送的 `3fc0d9d` 到 `7ae0fd7` 为
+`forced-update`。本地旧根 `3614976` 与远端新根 `a3f54fc` 的 tree 都是 `3dc9967`；本地
+PR 前基线 `c4ff9f9` 与远端 `5c543bc` 的 tree 都是 `65b0ba3`，两组 snapshot 无文件差异。
+但远端每个旧 commit 都保留原 author、改为 `committer=missile <3397241346@qq.com>` 并增加 GPG
+签名，从而重建全部 commit object 和 parent 链。原 commit message 中没有新增 `Co-authored-by:` trailer；
+GitHub 的多人归属来自 author/committer 分离。仅凭对象不能断言执行过的具体命令，但可以确认“重写整条
+历史并 force-push”的效果，而不是普通 merge。
+
+重写使用的 `5c543bc` 只等同于 `3fc0d9d` 的父提交，因此把已经推送的自动绑题修复也从远端主线删除。
+修复前先创建 `codex/pre-pr18-reconcile-20260810` 指向旧 HEAD，并将全部 tracked/untracked WIP 保存到
+`stash@{0}`；随后只把 `3fc0d9d` 的一个 patch 重放到 `7ae0fd7`，得到 `65e1248`，再无冲突地恢复 WIP。
+最终拓扑为 `main...origin/main [ahead 1]`，没有 merge/rebase/cherry-pick 状态和 unmerged path，也没有用
+`--allow-unrelated-histories` 生成双份历史。
+
+### 38.2 PR #18 代码审计与追加修复
+
+`5cb9132` 是实际安全代码提交（10 files，159 insertions / 47 deletions）；`7ae0fd7` 是二父 merge
+commit，文件树与 `5cb9132` 相同。保留了固定时序服务密钥比较、管理员哈希、8 位重置码、防邮箱枚举、
+OCR 鉴权与 50 页门禁、错误脱敏和 Mongo 包事务等修改，同时修复以下实测缺陷：
+
+- PR 写入的 54-byte 管理员 hash 被 .NET 10 `PasswordHasher` 验证为 `Failed`，Compose 默认 hash 又为空；
+  现改为实际生成/验证的 Identity V3 hash，生产变量统一为 `GALREVIEW_ADMIN_PASSWORD_HASH`，增加
+  `scripts/new-admin-password-hash.ps1` 与回归测试。
+- 重置码原实现对随机 byte 直接 `% 30`，与“30 个符号等概率”描述不符；现拒绝 `>=240` 的 byte 后再
+  映射，不引入任意权重。
+- FastAPI user middleware 直接抛 `HTTPException` 可能绕过异常处理中间件；现直接返回稳定 401 JSON。
+- Mongo driver 在 standalone 上实际抛 `NotSupportedException: Standalone servers do not support
+  transactions.`，原 catch 只接 `MongoCommandException`，导致默认 Compose 的每个故事包都失败。现同时
+  处理该异常和已知 Mongo transaction 错误码，在 standalone 上使用幂等顺序 upsert，在 replica set 上
+  继续使用事务。
+- credits 原先在音频/包落库前结算，后续持久化失败仍可能扣费；现只有持久化成功后才结算，失败路径释放
+  reservation。
+- OSCA access/secret 从脚本移除，改由 `OSCA_ACCESS_KEY_ID` / `OSCA_SECRET_ACCESS_KEY` 进程环境或 CI
+  secret store 注入；README、部署文档和 Windows 生产模板已同步。
+
+### 38.3 验证结果
+
+| 项目 | 结果 |
+|---|---|
+| AuthService | PASS，18 / 18；开发 hash 由生产同型 `PasswordHasher` 验证 |
+| FileService | PASS，Release build，0 warning / 0 error |
+| GalGameService | PASS，362 / 362 |
+| PracticeService | PASS，54 / 54 |
+| 管理员与密码恢复 | 管理员正确密码 201、错误密码 401；未注册有效邮箱的 reset request 202 |
+| OCR | `/healthz` 无密钥 200；受保护路径无密钥 401 JSON；正确 `X-Gateway-Key` 200；容器内 `app.py` SHA-256 与工作树相同 |
+| NLI HTTP 冒烟 | PASS；两条确定性答案更新 mastery，一条自动弃判不更新且不要求用户自评 |
+| 完整产品链 | PASS：注册、1 credit、上传/解析、先立册后构图、PlanGraph、3 道来源题、SMART/SM-2、credits 实扣、批量制码/兑换、故事包、Render 事件/进度/结果幂等、第二次 mastery 回写 |
+| 完整链余额 | `1.0 -> 0.99999 -> 3.99999`，最终 held 为 0 |
+| Compose | 主栈 15 个容器 healthy；额外启用 `ocr` profile 后 OCR 也 healthy，均按要求保持运行 |
+| 静态检查 | Compose config、PowerShell AST、Python AST、`git diff --check` PASS |
+
+Docker Hub token endpoint 起初两次连接超时，后续已成功拉取官方 `python:3.12-bookworm`；canonical
+OCR rebuild 在依赖安装阶段按用户“本轮 OCR 不用测”的指示终止，因此不列为本轮接受门槛。此前为诊断
+鉴权行为而使用本机既有、requirements 未变化的 OCR 镜像作为基础，仅替换当前 `app.py`；文件 hash 与
+401/200 行为已经核对，但不能冒充一次完整的干净 OCR image build。其余受 PR 影响的 Auth、File、
+GalGame 镜像均由当前 Dockerfile 完整重建。
+
+## 39. 2026-08-10 当前正误判分专项复验
+
+本轮不测试 OCR。专项测试直接使用当前工作树的 `AutomaticAnswerScorer`、本地固定版本 NLI 资产与正在
+运行的 Gateway/Practice/Knowledge 主链，分别提交确定正确、确定错误和不确定样本；不以字符串相似度
+作为正确率，也不要求用户自评。
+
+| 类别 | 样本 | 预期 | 实际 |
+|---|---|---|---|
+| 完整同义正确 | 腐食性食物链：从尸体或排泄物开始，经细菌和原生动物分解，最终还原成无机物并获取能量 | 判对 | `DECIDED / PERFECT / correct=true / quality=5` |
+| 关键关系反转 | 土壤缓冲性能：加入少量酸或碱后，土壤 pH 会立刻剧烈变化 | 判错 | `DECIDED / WRONG_RELATED / correct=false / quality=1` |
+| 置信不足边界 | 第二性比的完整同义改写 | 不得误判 | `ABSTAINED`，`correct/quality/similarity=null` |
+
+HTTP 会话正常完成。正确与错误两条确定性答案各使对应知识点 mastery version 从 0 变为 1；弃判样本
+保持 version 0，证明其未污染掌握度、quality 或 SM-2 证据。专项策略/模型/真实 PDF 测试 10/10 通过，
+随后完整 PracticeService 回归 54/54 通过。真实 PDF 门禁仍为 60 条中自动决定 42 条、已决定误判 0；
+其中未见土壤资料 20 条自动决定 15 条、已决定误判 0。该结论只说明当前冻结样本和已声明业务边界内
+未观察到误判，不等同于所有未来资料上的绝对正确率。
+
+## 40. 2026-08-10 填空确定性等价与 NLI 资源脚本复验
+
+填空不再只做规范化字符串逐字相等，也不引入模糊相似度。新增
+`deterministic-fill-equivalence-v1`，按位置对数值、纯数值元组格式及封闭专业别名做确定性规范化。
+首轮专项 27 条中，`g⁺菌 / Gram-positive bacteria` 暴露英文带连字符复数别名遗漏；补齐该明确别名后
+27/27 通过。正例覆盖 `两个/二/2/2.0`、全角数字、`(1, 3)/( 1，3 )`、中文数字元组、
+`G+/革兰氏阳性` 和 `G-/革兰阴性菌`；反例锁定 `2 != 3`、元组换序、圆/方括号、`G+ != G-`、
+`二氧化碳 != 2氧化碳` 及普通近义词不得自动相等。应用层多空测试同时确认全部等价为
+`PERFECT quality=5`，仅部分位置等价为 `PARTIAL quality=2`，且填空路径不会调用 NLI。
+
+新增 NLI 模型此前已进入 `resources.manifest.json` 与统一下载器。本轮进一步将补充下载白名单从泛化的
+`huggingface.co` 主机收紧为 `MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli` 固定 revision
+`0a71e92a985b6e1ad1828cf67ce9c459639c1dca` 路径；模型、SentencePiece 与三个配置文件仍逐项执行
+长度和 SHA-256 校验。随后 §41 将这些资产整体迁入独立 ModelService；本节结论保留为迁移前的
+填空规则与下载来源验证记录。OCR 不在测试范围。
+
+## 41. 2026-08-10 ModelService 边界拆分与全链复验
+
+### 41.1 架构与资源归属
+
+新增 `backend/ModelService`，按 API、Application、Domain、Persistence 四层拆分；Application
+使用 MediatR 的 `AdjudicateFacetsCommand` 与 readiness query。Persistence 只拥有 ONNX Runtime、
+SentencePiece、严格同义词词典与资产 SHA-256 校验，不使用数据库。唯一生产推理入口为
+`POST /internal/v1/model-inference/facet-adjudications`，只允许精确 `PracticeService` 身份经 Gateway
+调用。ModelService 只产生逐事实 verdict 与概率诊断；`correct/quality/score/SM-2` 仍由
+PracticeService.Domain 的离散状态机决定。
+
+`Resources`、19 文件 manifest、模型许可证和下载脚本已迁至 ModelService。manifest schema 升级为
+`qzwl-model-resources-1`；默认路径为 `backend/ModelService/Resources`，下载器名为
+`scripts/download-model-resources.ps1`。旧 `backend/PracticeService/Resources` 不存在，Practice
+Persistence 已移除 ONNX Runtime、Tokenizers、模型目录和本地资产 readiness；其 `/readyz` 只报告
+`storage=mongodb` 与 `modelInference=gateway:model-service`。
+
+### 41.2 自动化结果
+
+| 范围 | 结果 |
+|---|---|
+| ModelService tests | PASS，8/8；含输入边界、真实 NLI pair、完整释义和 3 份真实 PDF 的 60 条冻结金标基准 |
+| PracticeService tests | PASS，68/68；模型测试移出后保留复习聚合、拒判状态机、填空确定性等价与模型超时自动拒判回归 |
+| Gateway tests / TypeScript build | PASS，204/204；INTERNAL 模型路由、默认 URL/key/readiness 和所有测试配置已同步 |
+| PowerShell AST | PASS；`download-model-resources.ps1`、`deploy-windows.ps1`、`start_dev.ps1` 均为 0 syntax error |
+| Model resource manifest | PASS，19/19 文件长度与 SHA-256 一致；固定 NLI revision/source path 门禁仍生效 |
+| Compose config | PASS；默认 16 个服务，新增 `model-service:5109`，Gateway readiness 共检查 9 个应用服务 |
+| Linux image build | PASS；`model-service`、`practice-service`、`gateway` 均从当前工作树成功构建 |
+| 容器健康 | PASS；16 个默认容器 healthy；此前已启动的可选 OCR 容器也保持 healthy，但未调用 OCR 接口 |
+
+ModelService `/readyz` 返回 `ready`，三个必需资产 NLI ONNX、SentencePiece、同义词词典均为
+`READY` 且实际哈希等于预期；可选 SBERT/vocab 同样为 `READY`。Practice `/readyz` 不再泄漏或重复
+扫描模型状态。Gateway `/readyz` 为 `200 ready`。
+
+维护者在本轮末确认 OSCA 已创建 `multilingual-minilm-nli` 文件夹并按 `Resources` 同构路径上传相关
+模型和配置。考虑 OSCA 稳定性，下载器不再把成功列举作为单点前提，恢复顺序改为已校验本地缓存、OSCA、
+受信同构离线副本、manifest 固定远端版本。灾备覆盖全部 19 个文件：NLI 固定 Hugging Face revision，旧
+`sbert.onnx`、旧 q 模型、tokenizer 与词典固定 ReciteHelper 审计提交，`vocab.txt` 固定历史提交；所有
+URL 均经过主机和精确路径白名单，最终仍强制长度与 SHA-256。
+
+新增容灾探针结果：空临时目录、无 OSCA 凭据时，从同构离线副本恢复并复验 19/19，随后完成临时目录
+清理；另从固定远端实际下载 NLI `onnx/config.json` 与 ReciteHelper `prob_trans.json`，两者均通过
+manifest 哈希，其中旧文本资源执行显式 LF→CRLF 规范化。两份大模型固定 URL 的 HEAD 均为 200，
+`sbert.onnx` 报告 90,445,823 bytes，NLI `model.onnx` 报告 428,127,016 bytes。首次探针还发现根目录
+`config.json` 与 ONNX 导出配置不是同一文件，现已把 NLI 配置、SentencePiece 和 tokenizer 配置统一锁定
+到 revision 内的 `onnx/` 目录；没有为通过测试而放宽校验。本会话未把 OSCA 凭据写入命令或仓库，也未
+重新执行远端列举，故 OSCA 上传状态仅记为维护者确认；本地哈希、固定源探针、镜像构建和容器 readiness
+分别独立验证。
+
+### 41.3 真实 HTTP 判分与身份边界
+
+主观题脚本从公开 Gateway 完成无邀请码注册、非 OCR 文本上传、解析、立册、本册构图、评估计划、
+READY 题录、SMART_REVIEW、逐题提交、会话完成和 mastery 查询。三条结果为：
+
+- 明显矛盾：`DECIDED / WRONG_RELATED / correct=false / quality=1`，mastery version 1；
+- 完整正确释义：`DECIDED / PERFECT / correct=true / quality=5`，mastery version 1；
+- 低置信同义改写：自动 `ABSTAINED`，`correct/quality/score=null`，mastery version 0。
+
+三条 `similarity` 均为 null；拒判自动继续且不要求用户对照、标注或选择 q。该链路只能在
+Practice → Gateway → ModelService 成功时取得 NLI verdict，证明容器测试没有绕过新服务边界。
+
+填空 HTTP 专项通过 6/6：`2/两个`、`(1,3)/( 1, 3 )`、`G+/革兰氏阳性` 均为
+`PERFECT quality=5`；`G+/G-`、元组换序和圆/方括号变化均为 `NO_RECALL quality=0`。所有响应版本为
+`deterministic-fill-equivalence-v1+facet-sm2-observation-v1`，`similarity=null` 且 `facets=[]`，
+确认填空没有误调 NLI 或模糊相似度。
+
+INTERNAL 身份探针结果为：无服务身份 `403`、正确密钥但调用方为 KnowledgeService `403`、
+精确 PracticeService 身份 `200`；成功响应保持统一 `data/meta/traceId` 信封。OCR 识别准确率、模型加载
+与接口均未测试，本节不作任何 OCR 声明。Docker 按用户要求保持运行。

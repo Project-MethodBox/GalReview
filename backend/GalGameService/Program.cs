@@ -458,12 +458,14 @@ app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, Ht
                 $"/api/v1/game-packages/{package.PackageId}/content",
                 userId, DateTimeOffset.UtcNow);
 
-            await billing.SettleAsync(job.GenerationId, actualTokenUnits, CancellationToken.None);
-            reservationSettled = true;
-
             foreach (var audio in voiceResult.AudioAssets)
                 store.SaveAudio(audio);
             store.SavePackage(package, manifest, userId);
+
+            // A failed persistence step must release the reservation instead of
+            // charging for a package that the user cannot retrieve.
+            await billing.SettleAsync(job.GenerationId, actualTokenUnits, CancellationToken.None);
+            reservationSettled = true;
             ReportProgress(97);
 
             // 原子状态转换：RUNNING → SUCCEEDED

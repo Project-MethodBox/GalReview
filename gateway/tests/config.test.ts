@@ -39,11 +39,13 @@ describe('loadConfig', () => {
     expect(cfg.services.renderService.url).toBe('http://localhost:5106');
     expect(cfg.services.practiceService.url).toBe('http://localhost:5107');
     expect(cfg.services.creditService.url).toBe('http://localhost:5108');
+    expect(cfg.services.modelService.url).toBe('http://localhost:5109');
     expect(cfg.readinessServices).toEqual([
       'userService',
       'authService',
       'fileService',
       'knowledgeService',
+      'modelService',
     ]);
     // 每服务 key 回退到全局 gatewayKey
     expect(cfg.services.userService.serviceKey).toBe(cfg.gatewayKey);
@@ -150,5 +152,6 @@ describe('loadConfig', () => {
     expect(cfg.services.renderService.name).toBe('RenderService');
     expect(cfg.services.practiceService.name).toBe('PracticeService');
     expect(cfg.services.creditService.name).toBe('CreditService');
+    expect(cfg.services.modelService.name).toBe('ModelService');
   });
 });

@@ -12,7 +12,7 @@ $runtimeDirectory = Join-Path $projectRoot '.runtime'
 $bugReportDirectory = Join-Path $projectRoot 'logs'
 $gatewayPort = 5000
 $gatewayBaseUrl = "http://127.0.0.1:$gatewayPort"
-$moonStonePorts = $gatewayPort, 5101, 5102, 5103, 5104, 5105, 5106, 5107, 5108, 5121
+$moonStonePorts = $gatewayPort, 5101, 5102, 5103, 5104, 5105, 5106, 5107, 5108, 5109, 5121
 $isMockMode = [string]::Equals($env:MOONSTONE_MODE, 'Mock', [System.StringComparison]::OrdinalIgnoreCase)
 $useGalGameMock = $isMockMode -or $GalGameMock
 $neo4jPassword = if ([string]::IsNullOrWhiteSpace($env:NEO4J_PASSWORD)) { 'knowledge-dev-password' } else { $env:NEO4J_PASSWORD }
@@ -291,6 +291,8 @@ function Start-MoonStoneStack {
     $env:Gateway__ServiceName = 'RenderService'
     $env:Gateway__ServiceKey = 'moonstone-local-gateway-key'
     $services += Start-LocalService -Name 'render-service' -FilePath 'npm.cmd' -Arguments 'run start' -HealthUrl 'http://127.0.0.1:5106/healthz' -WorkingDirectory $renderServiceRoot
+    $modelArguments = "run --project `"$backendRoot\ModelService\ModelService.API\ModelService.API.csproj`" -- --urls http://127.0.0.1:5109 --Gateway:ServiceKey moonstone-local-gateway-key"
+    $services += Start-LocalService -Name 'model-service' -FilePath 'dotnet' -Arguments $modelArguments -HealthUrl 'http://127.0.0.1:5109/readyz'
     $practiceArguments = "run --project `"$backendRoot\PracticeService\PracticeService.API\PracticeService.API.csproj`" -- --urls http://127.0.0.1:5107 --Gateway:BaseUrl $gatewayBaseUrl --Gateway:ServiceName PracticeService --Gateway:ServiceKey moonstone-local-gateway-key"
     if ($isMockMode) { $practiceArguments += ' --PracticeStore:Provider Memory' }
     $services += Start-LocalService -Name 'practice-service' -FilePath 'dotnet' -Arguments $practiceArguments -HealthUrl 'http://127.0.0.1:5107/healthz'
@@ -356,6 +358,7 @@ try {
         Write-Host '  RenderService:     http://localhost:5106'
         Write-Host '  PracticeService:   http://localhost:5107'
         Write-Host '  CreditService:     http://localhost:5108'
+        Write-Host '  ModelService:      http://localhost:5109'
         Write-Host '  Frontend:          http://localhost:5121'
         Write-Host ''
         Write-Host 'Press Ctrl+R to restart, or Enter to stop services.'

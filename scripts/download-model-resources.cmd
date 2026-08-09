@@ -2,7 +2,7 @@
 setlocal
 
 for %%I in ("%~dp0..") do set "PROJECT_ROOT=%%~fI"
-set "DOWNLOAD_SCRIPT=%~dp0download-practice-resources.ps1"
+set "DOWNLOAD_SCRIPT=%~dp0download-model-resources.ps1"
 
 if not exist "%DOWNLOAD_SCRIPT%" (
     echo [ERROR] Download script was not found:
@@ -12,7 +12,7 @@ if not exist "%DOWNLOAD_SCRIPT%" (
 )
 
 cd /d "%PROJECT_ROOT%"
-echo [download] Restoring PracticeService resources...
+echo [download] Restoring ModelService resources...
 echo.
 
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%DOWNLOAD_SCRIPT%" %*
@@ -20,7 +20,7 @@ set "DOWNLOAD_EXIT_CODE=%ERRORLEVEL%"
 
 echo.
 if "%DOWNLOAD_EXIT_CODE%"=="0" (
-    echo [OK] PracticeService resources are ready.
+    echo [OK] ModelService resources are ready.
 ) else (
     echo [ERROR] Resource download failed with exit code %DOWNLOAD_EXIT_CODE%.
     echo         Read the PowerShell error above for the required action.

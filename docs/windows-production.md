@@ -7,7 +7,7 @@
 - Windows Server 已安装 Node.js 22 和 .NET 10 SDK；
 - MySQL、MongoDB 和 Neo4j 已作为 Windows 服务启动；
 - MySQL 中已创建 `galreview_user`、`galreview_auth`、`qzwl_credit` 数据库；
-- `backend/PracticeService/Resources` 已按 `resources.manifest.json` 恢复；
+- `backend/ModelService/Resources` 已通过 `scripts/download-model-resources.ps1` 按 `backend/ModelService/resources.manifest.json` 恢复并通过哈希校验；
 - 公网入口可由本脚本自动安装和配置 IIS，也可自行使用 Nginx/Caddy 反向代理至 `127.0.0.1:5120`。
 
 ## 配置
@@ -18,7 +18,7 @@
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\deploy-windows.ps1
 ```
 
-不带参数运行时会进入中文管理菜单。首次运行会从 `deploy/.env.windows.production.example` 复制生产配置模板，自动生成九个相互独立的 256-bit 服务密钥，然后打开记事本。服务密钥不需要手动修改，但 Neo4j 密码、管理员信息和正式域名等其余 `CHANGE_ME` 必须填写。实际配置仍保存为项目根目录的 `.env.windows.production`，且不应提交到 Git。
+不带参数运行时会进入中文管理菜单。首次运行会从 `deploy/.env.windows.production.example` 复制生产配置模板，自动生成十个相互独立的 256-bit 服务密钥，然后打开记事本。服务密钥不需要手动修改，但 Neo4j 密码、管理员用户名、管理员密码哈希和正式域名等其余 `CHANGE_ME` 必须填写；管理员哈希通过仓库根目录的 `.\scripts\new-admin-password-hash.ps1` 生成，不得在配置中填写明文。实际配置仍保存为项目根目录的 `.env.windows.production`，且不应提交到 Git。
 
 按当前部署约定，三个 MySQL 连接首次生成时默认使用 `root/root`。脚本会允许启动但显示安全警告；公网正式运行前，建议分别创建只拥有对应数据库权限的账户并替换连接字符串。
 
@@ -88,7 +88,7 @@ HTTPS 地址要求证书已导入 `LocalMachine\My`。脚本会自动查找覆�
 .\deploy-windows.ps1 -Action Direct -PublicUrl http://203.0.113.10:5120
 ```
 
-脚本会把 `FRONTEND_BIND_ADDRESS` 设置为 `0.0.0.0`，同步更新 `ACCOUNT_FRONTEND_BASE_URL` 和 `CORS_ORIGINS`，开放 Windows 防火墙的 `FRONTEND_PORT`，并重启已有正式环境。Gateway 与 `5101-5108` 内部服务仍只监听 `127.0.0.1`。之后正常的 `Start`、`Restart` 和 `Deploy` 都会保持直连模式；重新执行菜单 `9` 会切回仅本机监听和 IIS 反向代理。
+脚本会把 `FRONTEND_BIND_ADDRESS` 设置为 `0.0.0.0`，同步更新 `ACCOUNT_FRONTEND_BASE_URL` 和 `CORS_ORIGINS`，开放 Windows 防火墙的 `FRONTEND_PORT`，并重启已有正式环境。Gateway 与 `5101-5109` 内部服务仍只监听 `127.0.0.1`。之后正常的 `Start`、`Restart` 和 `Deploy` 都会保持直连模式；重新执行菜单 `9` 会切回仅本机监听和 IIS 反向代理。
 
 该模式只提供 HTTP，不提供 TLS。云安全组仍需手动放行 TCP 5120；云厂商的备案或域名白名单限制可能继续拦截，切换端口不能替代 ICP 备案。
 
@@ -128,4 +128,4 @@ OCR 是可选服务，不由本脚本安装。需要 OCR 时，先运行 `backen
 
 ## 网络边界
 
-脚本将 Frontend、Gateway 和全部内部服务绑定到 `127.0.0.1`。Windows 防火墙只需允许 IIS/Nginx/Caddy 的 `80/443`，不要对公网放行 `5000`、`5101-5108`、`5120-5122`。
+脚本将 Frontend、Gateway 和全部内部服务绑定到 `127.0.0.1`。Windows 防火墙只需允许 IIS/Nginx/Caddy 的 `80/443`，不要对公网放行 `5000`、`5101-5109`、`5120-5122`。

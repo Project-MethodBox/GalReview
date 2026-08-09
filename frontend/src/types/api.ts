@@ -511,11 +511,21 @@ export interface PracticeSessionQuestion {
 export interface PracticeAnswer {
   attemptId: Uuid
   questionId: Uuid
-  correct: boolean
+  gradingStatus: 'DECIDED' | 'ABSTAINED'
+  outcome: 'PERFECT' | 'CORRECT' | 'PARTIAL' | 'WRONG_RELATED' | 'NO_RECALL' | 'ABSTAINED'
+  correct: boolean | null
   similarity: number | null
-  quality: number
-  awardedScore: number
+  quality: number | null
+  awardedScore: number | null
   answerJudgeVersion: string
+  abstainReason: string | null
+  facets: Array<{
+    claim: string
+    verdict: 'ENTAILED' | 'OMITTED' | 'CONTRADICTED' | 'INDETERMINATE'
+    entailmentProbability: number
+    neutralProbability: number
+    contradictionProbability: number
+  }>
 }
 export interface PracticeSession {
   sessionId: Uuid

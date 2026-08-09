@@ -119,7 +119,7 @@ services:
       Gateway__BaseUrl: http://gateway:5000
       Gateway__ServiceKey: ${AUTH_SERVICE_KEY:-moonstone-local-gateway-key}
       Admin__Username: ${GALREVIEW_ADMIN_USERNAME:-integration-admin}
-      Admin__PasswordHash: ${GALREVIEW_ADMIN_PASSWORD_HASH:-}
+      Admin__PasswordHash: ${GALREVIEW_ADMIN_PASSWORD_HASH:-AQAAAAIAAYagAAAAEOIs88DOZMchn4fIBwH9hLGMtw0+x+Y9rfbC1PiqJV76ncVm45+6INHh0elONRn5cg==}
       Email__SmtpHost: ${SMTP_HOST:-}
       Email__SmtpPort: ${SMTP_PORT:-465}
       Email__UseSsl: ${SMTP_USE_SSL:-true}
@@ -235,6 +235,18 @@ services:
       Gateway__ServiceKey: ${RENDER_SERVICE_KEY:-moonstone-local-gateway-key}
     restart: unless-stopped
 
+  model-service:
+    build:
+      context: ./backend/ModelService
+      dockerfile: ModelService.API/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:5109
+      Gateway__ServiceKey: ${MODEL_SERVICE_KEY:-moonstone-local-gateway-key}
+      Nli__MinimumTopProbability: ${MODEL_NLI_MIN_TOP_PROBABILITY:-0.75}
+      Nli__MinimumMargin: ${MODEL_NLI_MIN_MARGIN:-0.20}
+    restart: unless-stopped
+
   practice-service:
     build:
       context: ./backend/PracticeService
@@ -277,6 +289,7 @@ services:
       RENDER_SERVICE_KEY: ${RENDER_SERVICE_KEY:-moonstone-local-gateway-key}
       PRACTICE_SERVICE_KEY: ${PRACTICE_SERVICE_KEY:-moonstone-local-gateway-key}
       CREDIT_SERVICE_KEY: ${CREDIT_SERVICE_KEY:-moonstone-local-gateway-key}
+      MODEL_SERVICE_KEY: ${MODEL_SERVICE_KEY:-moonstone-local-gateway-key}
       USER_SERVICE_URL: http://user-service:5101
       AUTH_SERVICE_URL: http://auth-service:5102
       FILE_SERVICE_URL: http://file-service:5103
@@ -285,7 +298,8 @@ services:
       RENDER_SERVICE_URL: http://render-service:5106
       PRACTICE_SERVICE_URL: http://practice-service:5107
       CREDIT_SERVICE_URL: http://credit-service:5108
-      READINESS_SERVICES: userService,authService,fileService,knowledgeService,galGameService,renderService,practiceService,creditService
+      MODEL_SERVICE_URL: http://model-service:5109
+      READINESS_SERVICES: userService,authService,fileService,knowledgeService,galGameService,renderService,practiceService,creditService,modelService
       DEFAULT_TIMEOUT_MS: 30000
       UPLOAD_TIMEOUT_MS: 120000
       # 未设置时不采信 X-Forwarded-For（匿名限流按 socket 对端计量）。网关端口
@@ -308,6 +322,8 @@ services:
       practice-service:
         condition: service_healthy
       credit-service:
+        condition: service_healthy
+      model-service:
         condition: service_healthy
     ports:
       - "${GATEWAY_BIND_ADDRESS:-127.0.0.1}:${GATEWAY_HOST_PORT:-5000}:5000"

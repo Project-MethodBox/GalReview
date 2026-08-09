@@ -7,7 +7,7 @@ PracticeService 承载产品主线的 ReciteHelper 复习内核，负责研习�
 - `PracticeService.API`：HTTP、Gateway 身份、请求/响应 DTO 和统一信封；只向 MediatR 发送 Command/Query。
 - `PracticeService.Application`：MediatR Handler、应用端口、所有权校验和跨资源编排。
 - `PracticeService.Domain`：聚合、值对象、题型/组卷/规范化不变量；零基础设施依赖。
-- `PracticeService.Persistence`：MongoDB repository、共享包 GridFS、Gateway client、SBERT/XGBoost 推理与资产状态。
+- `PracticeService.Persistence`：MongoDB repository、共享包 GridFS 与 Gateway client；本进程不装载模型。
 
 引用方向由项目引用固定：API → Application/Domain/Persistence，Persistence → Application/Domain，Application → Domain。Domain 不引用其他层；API 不直接访问 repository、Mongo、模型或 Gateway client。
 
@@ -15,8 +15,10 @@ PracticeService 承载产品主线的 ReciteHelper 复习内核，负责研习�
 
 - MongoDB `qzwl_practice` 只保存 Practice 聚合；不保存文件正文、知识图谱、mastery 或 GamePackage。
 - 读取 PlanGraph、提交证据都携带 `PracticeService` 身份经 Gateway。
-- 本地 SBERT/XGBoost 模型只参与答案相似度和 quality 估计；KnowledgeService 仍是 SM-2 唯一写入方。
-- 未配置/损坏的模型显式降级，`/readyz` 返回逐资产状态，答题响应 `meta.degraded=true`。
+- 主观题按已核对标准答案拆分必要事实，经 Gateway 调用 ModelService，由固定多语种 NLI 逐项给出蕴含、遗漏、矛盾或不确定；Practice Domain 的离散状态机才产生 correct/quality。SBERT 只保留兼容诊断，XGBoost q 已退出生产。
+- 填空题使用 Domain 的版本化确定性等价规则：接受数值、结构空白/全半角和封闭专业别名的等价写法，不调用 NLI、不做编辑距离或任意相似度；多空数量与位置仍必须一致。
+- NLI 置信不足、模型未配置/损坏或推理失败时自动 `ABSTAINED`，`correct/quality` 均为空，不写 KnowledgeService evidence。用户无需自评、对照标准答案或标注 q。
+- `/readyz` 只报告 Practice 存储状态和 `gateway:model-service` 依赖标识；逐模型资产状态归 ModelService `/readyz`。拒判响应 `meta.degraded=true`；严禁降级为编辑距离后判错。KnowledgeService 仍是 SM-2 唯一写入方。
 - `.rhproj`、`.rhp` 与 `.qzwlp` 导入要求映射到当前用户自己的 READY material；旧包不会变成脱离资料库的第二套聚合。
 - 题目生成在读取资料和 PlanGraph 后，通过 Gateway 向 CreditService 预授权；成功按实际输入与生成内容结算，失败或无产物释放 held。credits 不足的 `402` 与详情原样交给前端处理。
 - 图谱归研习册而不是归藏书阁资料。浏览器先创建 `graphId=null` 的新册，再以 `studyProjectId + materialId` 请求 KnowledgeService 为本册识网，最后通过乐观并发 PATCH 绑定返回图谱；PracticeService 会反查 `studyProjectId` 与资料范围，拒绝跨册或旧 material-scoped 图谱。
@@ -27,25 +29,12 @@ PracticeService 承载产品主线的 ReciteHelper 复习内核，负责研习�
 - SMART 与模拟试卷严格按 PlanGraph 目标顺序“一点一题”；计划内缺题点被跳过并继续扫描后续已覆盖点，不以计划外题目凑数，只有计划与 READY 题库零交集才返回 `QUESTION_COVERAGE_GAP`。普通答题、试卷和故事回响都通过同一 KnowledgeService evidence 入口更新 mastery。
 - PracticeService 不复制 SM-2 或图谱排序。`sm2-graph-v2` 由 KnowledgeService 先用 SM-2 的 `nextReviewAt` 形成到期集合，再用图谱次模覆盖选点，不存在“SM-2 百分比 + 图谱百分比”的混合分。
 
-## 本地资产（开发前必做）
+## 模型服务依赖
 
-`Resources` 中的 ONNX 模型、tokenizer、词表和 Jieba 数据不进入 Git。新检出仓库后，开发、测试、发布或构建 PracticeService 镜像之前，必须先安装 AWS CLI v2，并直接运行仓库内的下载脚本。脚本顶部已配置仅能读取和列举 `20277-gal-res` 的凭据，不能访问其他储桶或写入对象：
-
-```powershell
-.\scripts\download-practice-resources.ps1
-```
-
-下载脚本和哈希清单受版本控制，开发者无需另行配置凭据。若云端权限策略发生扩大，必须先重新评估该凭据是否仍适合随仓库分发。
-
-下载脚本使用 OSCA 的 S3 兼容 endpoint、Path-Style 和 `us-east-1`，默认将 `20277-gal-res` 储桶根目录同步到 `backend\PracticeService\Resources`，不会删除目标目录中的额外文件。若云端保留了顶层 `Resources/` 目录，则加 `-RemotePrefix Resources`；若要下载到其他位置，则传 `-DestinationPath <目录>`。下载完成后会按 `resources.manifest.json` 对全部 14 个文件校验长度和 SHA-256，任一缺失或不一致都会失败。
-
-维护者可在没有云存储的受信本机使用下列离线回退，但它不是开发者默认流程：
-
-```powershell
-.\scripts\import-recitehelper-assets.ps1 -ReciteHelperRoot D:\Projects\ReciteHelper
-```
-
-只有资源目标目录被 Git 忽略；下载脚本必须随仓库保留。不得通过 `-SkipHashVerification` 为正常开发或部署绕过校验。
+PracticeService 不持有 `Resources`。开发主观题判分或构建完整 Compose 前，按
+`backend/ModelService/README.md` 运行 `scripts/download-model-resources.ps1`，再启动独立
+ModelService。模型、tokenizer、许可证、哈希清单、NLI 门禁和资产就绪检查全部归该服务；
+PracticeService 只通过 Gateway 的 INTERNAL 接口消费逐事实 verdict。
 
 ## 运行
 

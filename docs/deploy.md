@@ -17,8 +17,9 @@
 | KnowledgeService | `knowledge-service` | `8080` | `5104`（`KNOWLEDGE_HOST_PORT`），仅诊断 | Neo4j |
 | GalGameService | `galgame-service` | `5105` | 不暴露 | MongoDB；可选 DeepSeek 叙事生成 |
 | RenderService | `render-service` | `5106` | 不暴露 | C++/WASM runtime 与 TypeScript 会话/证据服务 |
-| PracticeService | `practice-service` | `5107` | 不暴露 | MongoDB `qzwl_practice`；本地 SBERT/XGBoost 资产 |
+| PracticeService | `practice-service` | `5107` | 不暴露 | MongoDB `qzwl_practice`；复习业务与离散判分决策，不装载模型 |
 | CreditService | `credit-service` | `5108` | 不暴露 | 独立 MySQL `qzwl_credit`；credits、兑换码、预授权与账本 |
+| ModelService | `model-service` | `5109` | 不暴露 | 无数据库；本地多语种 NLI、模型资产与选择性推理 |
 | Frontend | `frontend` | `8080` | `5120`（`FRONTEND_HOST_PORT`） | Node 静态站点；同源代理 `/api` 到 Gateway |
 | User MySQL | `user-mysql` | `3306` | 不暴露 | `user-mysql-data` 卷 |
 | Auth MySQL | `auth-mysql` | `3306` | 不暴露 | `auth-mysql-data` 卷 |
@@ -50,7 +51,7 @@ Gateway `5000`、KnowledgeService 诊断 `5104`、Frontend `5120`、Neo4j Browse
 
 - Docker Engine 24 或更新版本，或已启用 Linux 容器的 Docker Desktop。
 - Docker Compose v2；使用 `docker compose version` 检查。
-- PowerShell 7（`pwsh`）与 AWS CLI v2，用于在构建 PracticeService 前从 OSCA 恢复本地模型和字典。
+- PowerShell 7（`pwsh`）与 AWS CLI v2，用于在构建 ModelService 前从 OSCA 恢复本地模型和字典。
 - 能够访问项目使用的基础镜像与 NuGet、npm、PyPI 软件源。
 - 服务器部署建议使用独立数据盘保存 Docker 镜像和卷，并在首次构建前配置好 Docker 数据目录。
 - 若启用 OCR，需要为 PaddleOCR 镜像、模型和运行内存预留额外空间；首次构建和首次识别通常较慢。
@@ -101,10 +102,13 @@ Copy-Item .\.env.deploy.example .\.env
 | `RENDER_SERVICE_KEY` | Gateway 转发到 RenderService 的目标密钥；未来 INTERNAL 回调继续复用该身份 |
 | `PRACTICE_SERVICE_KEY` | Gateway 与 PracticeService 的目标密钥；Practice 经 Gateway 读取资料/PlanGraph 与提交证据时复用该身份 |
 | `CREDIT_SERVICE_KEY` | Gateway 与 CreditService 的目标密钥；Auth、Practice、GalGame 经 Gateway 调用 credits INTERNAL 接口时分别使用自己的调用方密钥 |
+| `MODEL_SERVICE_KEY` | Gateway 与 ModelService 的目标密钥；Practice 经 Gateway 调用推理 INTERNAL 接口时仍使用自己的调用方身份 |
 | `DEEPSEEK_API_KEY` | GalGameService 与 PracticeService 共享的 DeepSeek API key；Compose 分别注入两个容器，不得写入日志、镜像或版本控制文件 |
 | `PRACTICE_QUESTION_ENDPOINT` | PracticeService 的 OpenAI-compatible Chat Completions endpoint，默认 DeepSeek |
 | `PRACTICE_QUESTION_MODEL` | PracticeService 题目生成模型，默认 `deepseek-v4-flash` |
 | `PRACTICE_QUESTION_PARALLELISM` | 普通正文分片并行度，范围 1-8，默认 4 |
+| `MODEL_NLI_MIN_TOP_PROBABILITY` | ModelService NLI 自动决定的 top probability 门禁，冻结默认 `0.75`；修改须升级算法版本并重跑金标集 |
+| `MODEL_NLI_MIN_MARGIN` | ModelService NLI 前两类概率差门禁，冻结默认 `0.20`；修改须升级算法版本并重跑金标集 |
 | `GALGAME_NARRATIVE_ENABLED` | 是否启用模型叙事；关闭或 key 缺失时使用确定性回退 |
 | `GALGAME_NARRATIVE_ENDPOINT` | DeepSeek Chat Completions HTTPS endpoint |
 | `GALGAME_NARRATIVE_MODEL` | 叙事模型，默认 `deepseek-v4-pro` |
@@ -116,7 +120,7 @@ Copy-Item .\.env.deploy.example .\.env
 | `CREDIT_MYSQL_ROOT_PASSWORD` | CreditService 专用 MySQL 实例的 root 密码，仅数据库容器使用 |
 | `CREDIT_MYSQL_PASSWORD` | CreditService 连接 `qzwl_credit` 的应用用户密码 |
 | `GALREVIEW_ADMIN_USERNAME` | 初始管理员用户名 |
-| `GALREVIEW_ADMIN_PASSWORD` | 初始管理员密码 |
+| `GALREVIEW_ADMIN_PASSWORD_HASH` | 初始管理员密码的 ASP.NET Core Identity V3 哈希；用 `scripts/new-admin-password-hash.ps1` 生成，禁止填写明文 |
 | `SMTP_HOST`、`SMTP_PORT`、`SMTP_USE_SSL` | AuthService 密码重置邮件的 SMTP 连接配置 |
 | `SMTP_USERNAME`、`SMTP_PASSWORD` | SMTP 认证信息；`SMTP_PASSWORD` 通常是授权码 |
 | `SMTP_FROM_ADDRESS`、`SMTP_FROM_NAME` | 密码重置邮件的发件地址和显示名 |
@@ -155,39 +159,47 @@ docker compose --env-file .env -f compose.integration.yaml config --profiles
 
 ## 4. 本机启动
 
-### PracticeService 模型资产（首次构建前必做）
+### ModelService 模型资产（首次构建前必做）
 
-`backend/PracticeService/Resources` 不进入 Git。每次在新的检出目录构建、部署或开发 PracticeService 前，必须先从 OSCA 私有储桶恢复资源；缺少关键文件时 Dockerfile 会在发布阶段之前直接失败。仓库内的 `scripts/download-practice-resources.ps1` 已包含仅能读取和列举 `20277-gal-res` 的凭据，不能访问其他储桶或写入对象。在仓库根目录执行：
+`backend/ModelService/Resources` 不进入 Git。每次在新的检出目录构建、部署或开发 ModelService 前，必须先运行统一下载器；缺少关键文件时 Dockerfile 会在发布阶段之前直接失败。下载器先从 OSCA 私有储桶恢复资源；所需凭据必须由维护者通过受控渠道分发，并限制为读取和列举 `20277-gal-res`，不能访问其他储桶或写入对象。在仓库根目录执行：
 
 ```powershell
-.\scripts\download-practice-resources.ps1
+$env:OSCA_ACCESS_KEY_ID = '<read-only access key>'
+$env:OSCA_SECRET_ACCESS_KEY = '<read-only secret key>'
+.\scripts\download-model-resources.ps1
+Remove-Item Env:OSCA_ACCESS_KEY_ID, Env:OSCA_SECRET_ACCESS_KEY
 ```
 
-下载脚本与哈希清单受版本控制，不需要 `.env`、Compose 变量或额外凭据注入。CI 在检出仓库并安装 AWS CLI v2 后直接运行该脚本；脚本只参与构建前资产恢复，不进入 PracticeService 运行容器。若储桶权限未来不再严格限制为读取和列举，应先撤下仓库内凭据并改回外部注入。
+下载脚本与哈希清单受版本控制，但访问凭据不受版本控制。CI 在检出仓库并安装 AWS CLI v2 后，必须从 secret store 注入 `OSCA_ACCESS_KEY_ID` 与 `OSCA_SECRET_ACCESS_KEY` 再运行脚本；脚本只参与构建前资产恢复，不进入 ModelService 运行容器。不得把凭据写回脚本、`.env` 模板、构建参数或日志；权限边界若发生扩大，应立即轮换凭据。
 
-下载器固定使用 OSCA S3 兼容 endpoint `https://fgws3-ocloud.ihep.ac.cn`、Path-Style、区域 `us-east-1` 和私有储桶 `20277-gal-res`。默认认为对象直接位于储桶根目录；如果上传时保留了 `Resources/` 顶层目录，执行 `download-practice-resources.ps1 -RemotePrefix Resources`。脚本先列举对象并拒绝危险路径，再同步到 `backend/PracticeService/Resources`，最后按受版本控制的 `resources.manifest.json` 校验全部 14 个文件的长度和 SHA-256。不得在正常开发或部署中使用 `-SkipHashVerification`。
+下载器固定使用 OSCA S3 兼容 endpoint `https://fgws3-ocloud.ihep.ac.cn`、Path-Style、区域 `us-east-1` 和私有储桶 `20277-gal-res`。对象目录树与 `Resources` 一致，当前 `Models/multilingual-minilm-nli` 及其模型、SentencePiece 和配置文件均已镜像到 OSCA。默认认为对象直接位于储桶根目录；如果上传时保留了 `Resources/` 顶层目录，执行 `download-model-resources.ps1 -RemotePrefix Resources`。
+
+资源恢复按确定的容灾顺序执行：先接受已通过 manifest 的本地缓存；缓存不完整时尝试 OSCA 主镜像；OSCA 无凭据、无法列举、同步失败、对象缺失或文件校验失败时，再逐文件使用 `-FallbackSourcePath` 指定的受信离线副本，最后才访问 manifest 白名单中的固定远端版本。NLI 五个文件固定到 Hugging Face revision `0a71e92a985b6e1ad1828cf67ce9c459639c1dca`；旧 `sbert.onnx`、`xgboost_qvalue.onnx`、tokenizer 和词典固定到 ReciteHelper 审计提交 `21288821229eb8a1da7f5a38d248fdfd10104f80`，`vocab.txt` 固定到仍含该文件的提交 `7f0fefb68e92311d297c558a35a2a72557031d41`。脚本仅允许这些 HTTPS 主机与精确提交路径，并对全部 19 个文件重新校验长度和 SHA-256；使用灾备会明确输出警告及来源统计，不会用未经校验的文件掩盖镜像故障。`-SkipHashVerification` 仅为命令兼容保留，实际不会关闭完整性校验。
 
 维护者在 OSCA 不可达时可从用户确认的完整副本离线恢复：
 
 ```powershell
 .\scripts\import-recitehelper-assets.ps1 -ReciteHelperRoot D:\Projects\ReciteHelper
+.\scripts\download-model-resources.ps1 `
+  -FallbackSourcePath D:\TrustedBackups\GalReview-ModelService-Resources
 ```
 
-该回退会从 `ReciteHelper.Wpf\bin\Debug\net10.0-windows7.0\Resources` 导入模型、`vocab.txt`、tokenizer 和 Jieba 资源，但目标仍被 Git 忽略；不得把恢复后的二进制资源提交或复制进制品仓库以外的源码分发渠道。
-PracticeService publish 与容器镜像同时包含 `THIRD_PARTY_LICENSES/ReciteHelper.LICENSE` 和
+导入脚本只会从 `ReciteHelper.Wpf\bin\Debug\net10.0-windows7.0\Resources` 导入旧模型、`vocab.txt`、tokenizer 和 Jieba 资源，不包含新的 NLI；第二条命令可从一份完整、同构的 `Resources` 离线备份逐文件补齐。完全离线环境必须准备含 NLI 的完整备份。无论使用哪条路径，文件只有在与 manifest 完全一致时才会被接纳。目标仍被 Git 忽略；不得把恢复后的二进制资源提交到源码仓库。
+ModelService publish 与容器镜像同时包含 `THIRD_PARTY_LICENSES/ReciteHelper.LICENSE`、
+`THIRD_PARTY_LICENSES/MultilingualMiniLMNli.LICENSE` 和
 `NOTICE.md`；部署裁剪镜像时不得只复制 DLL/模型而移除许可证文件。
 
 ### 经典复习项目主线更新的部署顺序
 
-本版没有新增容器、端口或数据库；新增 PracticeService 题目模型变量，并收紧了 PracticeService 与 KnowledgeService 的业务契约，把
+本版新增无数据库的 ModelService 容器与内部端口 `5109`，将答案 NLI、模型资产和门禁从 PracticeService 移出；同时收紧 PracticeService 与 KnowledgeService 的业务契约，把
 KnowledgeService mastery 算法升级为 `sm2-graph-v2`，并把前端入口
 从全局 GalReview 计划切到研习册上下文。图谱所有权同时由 material 改为 StudyProject，新增
 KnowledgeService ↔ PracticeService 的两条受信作用域核验路由；Gateway 路由表也随之更新。四者必须
 作为一个发布单元。推荐顺序：
 
 ```bash
-docker compose --env-file .env -f compose.integration.yaml build knowledge-service practice-service gateway frontend
-docker compose --env-file .env -f compose.integration.yaml up -d --wait knowledge-service practice-service gateway frontend
+docker compose --env-file .env -f compose.integration.yaml build knowledge-service model-service practice-service gateway frontend
+docker compose --env-file .env -f compose.integration.yaml up -d --wait knowledge-service model-service practice-service gateway frontend
 ```
 
 兼容与回滚边界：
@@ -287,7 +299,7 @@ Invoke-WebRequest http://127.0.0.1:5120/healthz
 
 `/healthz` 只表示进程存活；`/readyz` 才表示 Gateway 配置中的关键依赖可用。内部服务未映射到宿主机时，以容器的 `healthy` 状态为准，也可查看具体结果：
 
-当前 Compose 的 Gateway readiness 会检查 UserService、AuthService、FileService、KnowledgeService、GalGameService、RenderService、PracticeService 和 CreditService；Frontend 自身通过容器 `/healthz` 检查。CreditService `/readyz` 必须报告 `storage=MySQL`，其镜像通过端口 `5108` 的 readiness healthcheck 后，Auth/Practice/GalGame 才启动。PracticeService `/readyz` 同时列出 `sbert.onnx`、`xgboost_qvalue.onnx` 和 `vocab.txt` 的 `READY/MISSING/HASH_MISMATCH/LOAD_FAILED` 状态；模型降级不冒充模型可用。OCRService 是可选 profile，不进入 Gateway readiness。
+当前 Compose 的 Gateway readiness 会检查 UserService、AuthService、FileService、KnowledgeService、GalGameService、RenderService、PracticeService、CreditService 和 ModelService；Frontend 自身通过容器 `/healthz` 检查。CreditService `/readyz` 必须报告 `storage=MySQL`，其镜像通过端口 `5108` 的 readiness healthcheck 后，Auth/Practice/GalGame 才启动。ModelService `/readyz` 列出 NLI ONNX、SentencePiece、严格同义词词典，以及仅用于兼容诊断的 SBERT/vocab 的 `READY/MISSING/HASH_MISMATCH/LOAD_FAILED` 状态；任一必需资产不可用时返回 `503`。PracticeService 不重复装载或扫描模型，模型调用失败时主观题自动拒判。OCRService 是可选 profile，不进入 Gateway readiness。
 
 ```bash
 docker inspect --format '{{json .State.Health}}' "$(docker compose --env-file .env -f compose.integration.yaml ps -q file-service)"
@@ -367,8 +379,9 @@ docker compose --env-file .env -f compose.integration.yaml up -d --no-deps --wai
 | `knowledge-service` | `backend/KnowledgeService/KnowledgeService.API/Dockerfile` | 依赖 `neo4j`，构图时经 Gateway 读取 FileService 文本；向 PracticeService 的既有图谱 scope 响应附带本册补签候选点 |
 | `galgame-service` | `backend/GalGameService/Dockerfile` | 经 Gateway 读取 KnowledgeService PlanGraph，并在生成前后调用 CreditService 预授权/结算；任务和包持久化到 `qzwl_galgame` |
 | `render-service` | `backend/RenderService/Dockerfile` | 编译并自检 `cpp-wasm-0.2.0` runtime，公开 WASM 与 JS Adapter，并提供 ReviewSession、进度快照、作答和同步证据提交 |
-| `practice-service` | `backend/PracticeService/Dockerfile` | 发布 `PracticeService.API`；内部为 API/Application/Domain/Persistence 四层并由 MediatR CQRS 解耦；依赖 `mongo`、Gateway、File/Knowledge/Credit 内部契约及本地模型资产；按 PlanGraph 目标生成带知识点/原文证据的 READY 题，并自动修复来源可验证的旧草稿绑定；SMART/EXAM 只选择计划内已覆盖点但不被单个缺口阻断；章节练习和试卷完成后提交 mastery；题库生成预授权并按实际内容结算；共享 `.qzwlp` 存 GridFS |
+| `practice-service` | `backend/PracticeService/Dockerfile` | 发布 `PracticeService.API`；内部为 API/Application/Domain/Persistence 四层并由 MediatR CQRS 解耦；依赖 `mongo`、Gateway、File/Knowledge/Credit/Model 内部契约，但不装载模型；按 PlanGraph 目标生成带知识点/原文证据的 READY 题，并自动修复来源可验证的旧草稿绑定；SMART/EXAM 只选择计划内已覆盖点但不被单个缺口阻断；章节练习和试卷完成后提交 mastery；题库生成预授权并按实际内容结算；共享 `.qzwlp` 存 GridFS |
 | `credit-service` | `backend/CreditService/Dockerfile` | API/Application/Domain/Persistence 四层，Application 使用 MediatR CQRS；依赖 `credit-mysql`，内部端口 `5108`，不向宿主发布 |
+| `model-service` | `backend/ModelService/ModelService.API/Dockerfile` | API/Application/Domain/Persistence 四层，Application 使用 MediatR CQRS；无数据库，独占本地模型资产，内部端口 `5109`，只接受 PracticeService 经 Gateway 调用 |
 | `frontend` | `frontend/Dockerfile` | 生产静态构建；容器内 Node 服务通过 `GATEWAY_UPSTREAM` 同源代理 `/api` |
 | `ocr-service` | `backend/OCRService/Dockerfile` | `ocr` profile；只允许 FileService 在内部网络调用 |
 | `user-mysql` | `mysql:8.4` | 只供 UserService；使用独立数据卷，不映射宿主端口 |
@@ -414,6 +427,51 @@ PracticeService，最后发布 Frontend。新 PracticeService 在暂时连接旧
 
 回滚时 Frontend、PracticeService、KnowledgeService 逆序整体回滚。自动补签已写入 Mongo 的题目只是
 增加合法 pointId、READY 状态和版本，不应删除；旧版本可继续读取。不要回滚 Mongo/Neo4j 数据卷。
+
+### Practice 主观题 NLI 判分升级
+
+本升级新增无数据库的 ModelService 与内部端口 `5109`，并把 `PracticeAnswer.correct/quality/awardedScore` 扩宽为 nullable，
+并新增 `gradingStatus/outcome/abstainReason/facets`。旧前端会把 `correct=null` 误绘成错题，因此
+PracticeService 与 Frontend 必须在暂停新答题会话的短维护窗口内作为一个发布单元替换：
+
+```bash
+pwsh ./scripts/download-model-resources.ps1
+docker compose --env-file .env -f compose.integration.yaml build model-service practice-service gateway frontend
+docker compose --env-file .env -f compose.integration.yaml up -d --wait model-service practice-service gateway frontend
+```
+
+发布后先查看 ModelService `/readyz`，确认 `nli-model.onnx`、`nli-sentencepiece.model` 与
+`nli-synonym-lexicon` 都为 `READY`。随后至少用一题真实名词解释验证三条路径：完整同义改写形成
+`DECIDED + quality=5`；明显矛盾形成 `DECIDED + quality=1`；临时使模型不可用时形成
+`ABSTAINED + correct=null + quality=null`，完成会话后该题不得出现在 Knowledge evidence 中。前端不得显示
+相似度、quality 技术值或任何用户自评按钮；拒判文案必须明确“不影响掌握度与复习时间”。
+
+填空等价规则升级只需重新构建并滚动替换 PracticeService，不新增容器、环境变量、模型资产或数据库
+迁移。发布后至少验证 `两个/二/2`、`(1, 3)/(1,3)`、`G+/革兰氏阳性` 判为正确，同时验证
+`G+/G-`、`(1,3)/(3,1)` 和圆括号/方括号不会被合并。
+
+回滚应用前应暂停新会话并等待活动提交完成。已有 `ABSTAINED` 记录可被旧后端反序列化为 nullable 字段，
+但旧前端无法正确表达三态，因此 Practice 与 Frontend 必须一同回滚；不得用数据库脚本把拒判记录改成错题。
+
+### PR #18 安全批次与兼容部署
+
+Auth、OCR、File 与 GalGame 的安全修改必须作为同一发布批次验证：
+
+- AuthService 新部署只注入 `Admin__PasswordHash` / `GALREVIEW_ADMIN_PASSWORD_HASH`。在受控终端运行
+  `.\scripts\new-admin-password-hash.ps1` 生成 Identity V3 hash；不要把管理员明文写入 `.env`、命令行或
+  `Admin__Password`。旧明文键仅为短期兼容保留。
+- OCRService 除 `/healthz` 外要求 `X-Gateway-Key`；Compose 使用 `FILE_SERVICE_KEY` 同时注入 OCR 的
+  `GATEWAY_KEY` 和 FileService 的调用端。更新时应一起重建 `ocr-service` 与 `file-service`，先验证无密钥
+  401、正确密钥 200，再开放扫描件入口。
+- GalGameService 在 replica set 上用事务保存 package/manifest/owner；仓库默认 standalone Mongo 不支持
+  事务，服务会记录 warning 并使用相同 packageId 的幂等顺序 upsert。credits 只有在音频与包持久化成功
+  后结算；若日志出现 package persistence 失败，应确认 reservation 已释放，不能手工重复扣费。
+- 密码重置码改为 8 位无歧义大写字母/数字；消费端仍接受迁移窗口内已签发的旧 6 位码。未注册邮箱请求
+  与已注册邮箱统一返回 202，运维排障不得恢复可枚举的 404。
+
+发布后至少执行管理员正确/错误密码、密码重置不存在邮箱、OCR 双路径、standalone Mongo 故事生成与
+最终 held=0 的冒烟。回滚不得回滚数据库卷；若回滚到无 OCR 鉴权的旧镜像，应同时停止 OCR profile，
+不能把未鉴权服务继续留在容器网络中。
 
 基础设施可以单独恢复：
 
@@ -561,12 +619,11 @@ docker compose --env-file .env -f compose.integration.yaml logs --tail=200 gatew
 
 检查 `neo4j` 健康状态、`NEO4J_PASSWORD` 是否一致以及卷权限。修改密码后，已有 Neo4j 数据卷不会自动重置旧密码；应使用原密码迁移或在确认数据可删除后重新初始化，不能直接删除未知卷。
 
-### PracticeService 模型显示降级
+### ModelService 模型显示降级
 
-先查看 `practice-service` 的 `/readyz` 或容器日志，区分 `MISSING`、`HASH_MISMATCH` 与
-`LOAD_FAILED`。重新执行仓库内的 `scripts/download-practice-resources.ps1`，确认清单
-验证通过再重建镜像；只有 OSCA 不可达时才使用受信本机导入回退。不要把哈希检查改成警告，也不要用空模型占位。降级时客观题仍可确定性判分，
-主观题会明确使用 Levenshtein fallback；只有三项状态均为 `READY` 才能宣称本地模型启用。
+先查看 `model-service` 的 `/readyz` 或容器日志，区分 `MISSING`、`HASH_MISMATCH` 与
+`LOAD_FAILED`。重新执行仓库内的 `scripts/download-model-resources.ps1`，确认清单
+验证通过再重建镜像；OSCA 不稳定时按上文使用受信离线副本或固定提交灾备。不要把哈希检查改成警告，也不要用空模型占位。降级时客观题仍可确定性判分，主观题返回 `ABSTAINED`、不写 mastery 或 SM-2；严禁恢复 Levenshtein fallback。只有 NLI 模型、SentencePiece 与同义词词典均为 `READY` 才能宣称主观题自动判分启用。
 
 ### MySQL 密码修改后服务无法启动
 
@@ -605,7 +662,7 @@ OCR 镜像较大，首次加载模型也需要时间。检查容器资源、模�
 - 前端只调用 Gateway，不出现后端服务直连地址；
 - 无邀请码注册、初始 1 credit、余额查询、兑换码单次兑换、批量创建/撤销，以及登录、文件上传、文本提取、构图、计划生成按 `contract.md` 返回；
 - Practice 题目生成与 GalGame 游戏生成在开始前预授权，credits 不足时返回 402；成功按实际用量扣除，失败释放 held，页面不展示内部 token 换算；
-- PracticeService 四层项目构建和测试通过，`/readyz` 模型哈希状态与镜像内资产一致；
+- PracticeService 与 ModelService 四层项目分别构建和测试通过；ModelService `/readyz` 模型哈希状态与镜像内资产一致，PracticeService 进程中不存在 ONNX/SentencePiece 依赖；
 - 普通 Practice 会话和 Render 视觉小说会话都只能经受信身份向 KnowledgeService 提交证据，重复提交不二次更新 mastery；
 - 一次完成会关闭对应评估计划；若同一研习册先做普通练习再做故事复习，应从该册 graph 新建第二个不可变评估计划，不能复用已完成计划，否则应得到 `REVIEW_PLAN_NOT_OPEN`；相同资料建立的另一研习册必须使用自己的 graph；
 - RenderService 检查 C++/WASM 自检、manifest、会话、同步证据与掌握度更新；异步消息总线未实现时明确标注未测；
@@ -615,7 +672,7 @@ OCR 镜像较大，首次加载模型也需要时间。检查容器资源、模�
 
 具体测试结果记录在 [`test_report.md`](test_report.md)，不能用本部署文档代替实际测试。
 
-2026-08-08 的发布候选已在 15 容器持久化栈上完成注册、初始 credits、上传、解析、构图、
+2026-08-10 的发布候选应在新增 ModelService 后的 16 容器持久化栈上重新完成注册、初始 credits、上传、解析、构图、
 PlanGraph 题目生成、SMART_REVIEW、SM-2 回写、批量制码、兑换、故事生成、Render 事件/进度/
 结果幂等和第二次 mastery 回写。部署基线还包含 Practice Mongo `_id` 兼容、Credit MySQL UUID
 读取兼容、GalGame credits 错误持久化修复；三项必须随对应镜像一起发布，不应只更新 Gateway。

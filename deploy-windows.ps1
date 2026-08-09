@@ -643,7 +643,7 @@ function Initialize-ProductionEnvironment {
     $keyNames = @(
         'GATEWAY_KEY', 'USER_SERVICE_KEY', 'AUTH_SERVICE_KEY', 'FILE_SERVICE_KEY',
         'KNOWLEDGE_SERVICE_KEY', 'GALGAME_SERVICE_KEY', 'RENDER_SERVICE_KEY',
-        'PRACTICE_SERVICE_KEY', 'CREDIT_SERVICE_KEY'
+        'PRACTICE_SERVICE_KEY', 'CREDIT_SERVICE_KEY', 'MODEL_SERVICE_KEY'
     )
     $content = Get-Content -LiteralPath $resolvedEnvironmentPath -Raw -Encoding utf8
     if ($content -match '(?m)^DSAPI=' -and $content -notmatch '(?m)^DEEPSEEK_API_KEY=') {
@@ -843,6 +843,7 @@ function Invoke-EnvironmentCheck {
         @{ Name = 'FileService'; Port = 5103 }, @{ Name = 'KnowledgeService'; Port = 5104 },
         @{ Name = 'GalGameService'; Port = 5105 }, @{ Name = 'RenderService'; Port = 5106 },
         @{ Name = 'PracticeService'; Port = 5107 }, @{ Name = 'CreditService'; Port = 5108 },
+        @{ Name = 'ModelService'; Port = 5109 },
         @{ Name = 'OCRService'; Port = 5110 },
         @{ Name = 'Frontend'; Port = [int](Get-Setting 'FRONTEND_PORT' '5120') }
     )
@@ -869,9 +870,9 @@ function Assert-ProductionSettings {
     $required = @(
         'GATEWAY_KEY', 'USER_SERVICE_KEY', 'AUTH_SERVICE_KEY', 'FILE_SERVICE_KEY',
         'KNOWLEDGE_SERVICE_KEY', 'GALGAME_SERVICE_KEY', 'RENDER_SERVICE_KEY',
-        'PRACTICE_SERVICE_KEY', 'CREDIT_SERVICE_KEY', 'USER_DATABASE_CONNECTION',
+        'PRACTICE_SERVICE_KEY', 'CREDIT_SERVICE_KEY', 'MODEL_SERVICE_KEY', 'USER_DATABASE_CONNECTION',
         'AUTH_DATABASE_CONNECTION', 'CREDIT_DATABASE_CONNECTION', 'MONGO_CONNECTION_STRING',
-        'NEO4J_PASSWORD', 'GALREVIEW_ADMIN_USERNAME', 'GALREVIEW_ADMIN_PASSWORD',
+        'NEO4J_PASSWORD', 'GALREVIEW_ADMIN_USERNAME', 'GALREVIEW_ADMIN_PASSWORD_HASH',
         'ACCOUNT_FRONTEND_BASE_URL', 'CORS_ORIGINS'
     )
 
@@ -885,7 +886,7 @@ function Assert-ProductionSettings {
     $serviceKeyNames = @(
         'GATEWAY_KEY', 'USER_SERVICE_KEY', 'AUTH_SERVICE_KEY', 'FILE_SERVICE_KEY',
         'KNOWLEDGE_SERVICE_KEY', 'GALGAME_SERVICE_KEY', 'RENDER_SERVICE_KEY',
-        'PRACTICE_SERVICE_KEY', 'CREDIT_SERVICE_KEY'
+        'PRACTICE_SERVICE_KEY', 'CREDIT_SERVICE_KEY', 'MODEL_SERVICE_KEY'
     )
     $uniqueKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
     foreach ($name in $serviceKeyNames) { [void]$uniqueKeys.Add((Get-Setting $name)) }
@@ -974,8 +975,8 @@ function Build-ProductionRelease {
     Assert-Command 'node'
     Assert-Command 'npm.cmd'
 
-    if (-not (Test-Path -LiteralPath (Join-Path $projectRoot 'backend\PracticeService\Resources') -PathType Container)) {
-        throw 'PracticeService Resources are missing. Run scripts\download-practice-resources.ps1 before building.'
+    if (-not (Test-Path -LiteralPath (Join-Path $projectRoot 'backend\ModelService\Resources') -PathType Container)) {
+        throw 'ModelService Resources are missing. Run scripts\download-model-resources.ps1 before building.'
     }
 
     New-Item -ItemType Directory -Force -Path $releasesRoot | Out-Null
@@ -993,7 +994,8 @@ function Build-ProductionRelease {
         @{ Name = 'knowledge-service'; Project = 'backend\KnowledgeService\KnowledgeService.API\KnowledgeService.API.csproj' },
         @{ Name = 'galgame-service'; Project = 'backend\GalGameService\GalGame.GalGameService.csproj' },
         @{ Name = 'practice-service'; Project = 'backend\PracticeService\PracticeService.API\PracticeService.API.csproj' },
-        @{ Name = 'credit-service'; Project = 'backend\CreditService\CreditService.API\CreditService.API.csproj' }
+        @{ Name = 'credit-service'; Project = 'backend\CreditService\CreditService.API\CreditService.API.csproj' },
+        @{ Name = 'model-service'; Project = 'backend\ModelService\ModelService.API\ModelService.API.csproj' }
     )
 
     Write-Host '  [1/4] Publishing .NET services...' -ForegroundColor DarkCyan
@@ -1005,7 +1007,7 @@ function Build-ProductionRelease {
             '-o', $destination, '--nologo'
         ) $projectRoot
     }
-    Write-Host '        7 backend services published.' -ForegroundColor DarkGreen
+    Write-Host '        8 backend services published.' -ForegroundColor DarkGreen
 
     Write-Host '  [2/4] Building API Gateway...' -ForegroundColor DarkCyan
     $gatewaySource = Join-Path $projectRoot 'gateway'
@@ -1255,7 +1257,7 @@ function Start-ProductionServices {
     }
     $gatewayBaseUrl = "http://127.0.0.1:$gatewayPort"
 
-    $ports = @(5101, 5102, 5103, 5104, 5105, 5106, 5107, 5108, $gatewayPort, $frontendPort) | Select-Object -Unique
+    $ports = @(5101, 5102, 5103, 5104, 5105, 5106, 5107, 5108, 5109, $gatewayPort, $frontendPort) | Select-Object -Unique
     foreach ($port in $ports) {
         if (Test-TcpPort '127.0.0.1' $port 300) {
             throw "TCP port $port is already in use. Stop the existing service before starting production."
@@ -1292,12 +1294,16 @@ function Start-ProductionServices {
                 Env = @{ NODE_ENV = 'production'; PORT = '5106'; RENDER_HOST = '127.0.0.1'; Gateway__BaseUrl = $gatewayBaseUrl; Gateway__ServiceName = 'RenderService'; Gateway__ServiceKey = Get-Setting 'RENDER_SERVICE_KEY' }
             },
             @{
+                Name = 'model-service'; File = Join-Path $releaseRoot 'services\model-service\ModelService.API.exe'; Work = Join-Path $releaseRoot 'services\model-service'; Health = 'http://127.0.0.1:5109/readyz';
+                Env = $commonAspNet + @{ ASPNETCORE_URLS = 'http://127.0.0.1:5109'; Gateway__ServiceKey = Get-Setting 'MODEL_SERVICE_KEY'; Nli__MinimumTopProbability = Get-Setting 'MODEL_NLI_MIN_TOP_PROBABILITY' '0.75'; Nli__MinimumMargin = Get-Setting 'MODEL_NLI_MIN_MARGIN' '0.20' }
+            },
+            @{
                 Name = 'practice-service'; File = Join-Path $releaseRoot 'services\practice-service\PracticeService.API.exe'; Work = Join-Path $releaseRoot 'services\practice-service'; Health = 'http://127.0.0.1:5107/readyz';
                 Env = $commonAspNet + @{ ASPNETCORE_URLS = 'http://127.0.0.1:5107'; Gateway__BaseUrl = $gatewayBaseUrl; Gateway__ServiceName = 'PracticeService'; Gateway__ServiceKey = Get-Setting 'PRACTICE_SERVICE_KEY'; ConnectionStrings__PracticeDatabase = $mongoConnection; MongoDb__Database = 'qzwl_practice'; PracticeStore__Provider = 'MongoDB'; QuestionGeneration__ApiKey = Get-Setting 'DEEPSEEK_API_KEY'; QuestionGeneration__Endpoint = Get-Setting 'PRACTICE_QUESTION_ENDPOINT' 'https://api.deepseek.com/chat/completions'; QuestionGeneration__Model = Get-Setting 'PRACTICE_QUESTION_MODEL' 'deepseek-v4-flash'; QuestionGeneration__Parallelism = Get-Setting 'PRACTICE_QUESTION_PARALLELISM' '4' }
             },
             @{
                 Name = 'auth-service'; File = Join-Path $releaseRoot 'services\auth-service\GalGame.AuthService.exe'; Work = Join-Path $releaseRoot 'services\auth-service'; Health = 'http://127.0.0.1:5102/readyz';
-                Env = $commonAspNet + @{ ASPNETCORE_URLS = 'http://127.0.0.1:5102'; MOONSTONE_MODE = Get-Setting 'AUTH_SERVICE_MODE' 'MySql'; Gateway__BaseUrl = $gatewayBaseUrl; Gateway__ServiceKey = Get-Setting 'AUTH_SERVICE_KEY'; Admin__Username = Get-Setting 'GALREVIEW_ADMIN_USERNAME'; Admin__Password = Get-Setting 'GALREVIEW_ADMIN_PASSWORD'; Email__SmtpHost = Get-Setting 'SMTP_HOST'; Email__SmtpPort = Get-Setting 'SMTP_PORT' '465'; Email__UseSsl = Get-Setting 'SMTP_USE_SSL' 'true'; Email__Username = Get-Setting 'SMTP_USERNAME'; Email__Password = Get-Setting 'SMTP_PASSWORD'; Email__FromAddress = Get-Setting 'SMTP_FROM_ADDRESS'; Email__FromName = Get-Setting 'SMTP_FROM_NAME' '千知万理'; AccountFrontend__BaseUrl = Get-Setting 'ACCOUNT_FRONTEND_BASE_URL'; ConnectionStrings__AuthDatabase = Get-Setting 'AUTH_DATABASE_CONNECTION' }
+                Env = $commonAspNet + @{ ASPNETCORE_URLS = 'http://127.0.0.1:5102'; MOONSTONE_MODE = Get-Setting 'AUTH_SERVICE_MODE' 'MySql'; Gateway__BaseUrl = $gatewayBaseUrl; Gateway__ServiceKey = Get-Setting 'AUTH_SERVICE_KEY'; Admin__Username = Get-Setting 'GALREVIEW_ADMIN_USERNAME'; Admin__PasswordHash = Get-Setting 'GALREVIEW_ADMIN_PASSWORD_HASH'; Email__SmtpHost = Get-Setting 'SMTP_HOST'; Email__SmtpPort = Get-Setting 'SMTP_PORT' '465'; Email__UseSsl = Get-Setting 'SMTP_USE_SSL' 'true'; Email__Username = Get-Setting 'SMTP_USERNAME'; Email__Password = Get-Setting 'SMTP_PASSWORD'; Email__FromAddress = Get-Setting 'SMTP_FROM_ADDRESS'; Email__FromName = Get-Setting 'SMTP_FROM_NAME' '千知万理'; AccountFrontend__BaseUrl = Get-Setting 'ACCOUNT_FRONTEND_BASE_URL'; ConnectionStrings__AuthDatabase = Get-Setting 'AUTH_DATABASE_CONNECTION' }
             }
         )
 
@@ -1310,9 +1316,9 @@ function Start-ProductionServices {
 
         $gatewayEnvironment = @{
             NODE_ENV = 'production'; GATEWAY_HOST = '127.0.0.1'; GATEWAY_PORT = [string]$gatewayPort;
-            GATEWAY_KEY = Get-Setting 'GATEWAY_KEY'; USER_SERVICE_KEY = Get-Setting 'USER_SERVICE_KEY'; AUTH_SERVICE_KEY = Get-Setting 'AUTH_SERVICE_KEY'; FILE_SERVICE_KEY = Get-Setting 'FILE_SERVICE_KEY'; KNOWLEDGE_SERVICE_KEY = Get-Setting 'KNOWLEDGE_SERVICE_KEY'; GALGAME_SERVICE_KEY = Get-Setting 'GALGAME_SERVICE_KEY'; RENDER_SERVICE_KEY = Get-Setting 'RENDER_SERVICE_KEY'; PRACTICE_SERVICE_KEY = Get-Setting 'PRACTICE_SERVICE_KEY'; CREDIT_SERVICE_KEY = Get-Setting 'CREDIT_SERVICE_KEY';
-            USER_SERVICE_URL = 'http://127.0.0.1:5101'; AUTH_SERVICE_URL = 'http://127.0.0.1:5102'; FILE_SERVICE_URL = 'http://127.0.0.1:5103'; KNOWLEDGE_SERVICE_URL = 'http://127.0.0.1:5104'; GALGAME_SERVICE_URL = 'http://127.0.0.1:5105'; RENDER_SERVICE_URL = 'http://127.0.0.1:5106'; PRACTICE_SERVICE_URL = 'http://127.0.0.1:5107'; CREDIT_SERVICE_URL = 'http://127.0.0.1:5108';
-            READINESS_SERVICES = 'userService,authService,fileService,knowledgeService,galGameService,renderService,practiceService,creditService'; DEFAULT_TIMEOUT_MS = Get-Setting 'DEFAULT_TIMEOUT_MS' '30000'; UPLOAD_TIMEOUT_MS = Get-Setting 'UPLOAD_TIMEOUT_MS' '120000'; TRUST_PROXY = Get-Setting 'TRUST_PROXY' 'loopback'; CORS_ORIGINS = Get-Setting 'CORS_ORIGINS'
+            GATEWAY_KEY = Get-Setting 'GATEWAY_KEY'; USER_SERVICE_KEY = Get-Setting 'USER_SERVICE_KEY'; AUTH_SERVICE_KEY = Get-Setting 'AUTH_SERVICE_KEY'; FILE_SERVICE_KEY = Get-Setting 'FILE_SERVICE_KEY'; KNOWLEDGE_SERVICE_KEY = Get-Setting 'KNOWLEDGE_SERVICE_KEY'; GALGAME_SERVICE_KEY = Get-Setting 'GALGAME_SERVICE_KEY'; RENDER_SERVICE_KEY = Get-Setting 'RENDER_SERVICE_KEY'; PRACTICE_SERVICE_KEY = Get-Setting 'PRACTICE_SERVICE_KEY'; CREDIT_SERVICE_KEY = Get-Setting 'CREDIT_SERVICE_KEY'; MODEL_SERVICE_KEY = Get-Setting 'MODEL_SERVICE_KEY';
+            USER_SERVICE_URL = 'http://127.0.0.1:5101'; AUTH_SERVICE_URL = 'http://127.0.0.1:5102'; FILE_SERVICE_URL = 'http://127.0.0.1:5103'; KNOWLEDGE_SERVICE_URL = 'http://127.0.0.1:5104'; GALGAME_SERVICE_URL = 'http://127.0.0.1:5105'; RENDER_SERVICE_URL = 'http://127.0.0.1:5106'; PRACTICE_SERVICE_URL = 'http://127.0.0.1:5107'; CREDIT_SERVICE_URL = 'http://127.0.0.1:5108'; MODEL_SERVICE_URL = 'http://127.0.0.1:5109';
+            READINESS_SERVICES = 'userService,authService,fileService,knowledgeService,galGameService,renderService,practiceService,creditService,modelService'; DEFAULT_TIMEOUT_MS = Get-Setting 'DEFAULT_TIMEOUT_MS' '30000'; UPLOAD_TIMEOUT_MS = Get-Setting 'UPLOAD_TIMEOUT_MS' '120000'; TRUST_PROXY = Get-Setting 'TRUST_PROXY' 'loopback'; CORS_ORIGINS = Get-Setting 'CORS_ORIGINS'
         }
         $gatewayRoot = Join-Path $releaseRoot 'gateway'
         $processes += Start-ProductionProcess 'gateway' (Get-Command 'node').Source 'dist/index.js' $gatewayRoot $gatewayEnvironment "$gatewayBaseUrl/readyz" $startupTimeout

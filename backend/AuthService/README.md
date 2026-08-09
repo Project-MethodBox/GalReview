@@ -54,7 +54,7 @@ GET http://localhost:5102/readyz  # 当前返回 MySQL 就绪状态
 | `Gateway__ServiceKey` | 是 | 与 Gateway、UserService 完全相同的内部共享密钥 |
 | `Gateway__BaseUrl` | 否 | Gateway 内部地址；默认 `http://localhost:5000` |
 | `Admin__Username` | 是 | 管理员用户名，仅服务端保存 |
-| `Admin__Password` | 是 | 管理员密码，仅服务端保存 |
+| `Admin__PasswordHash` | 是 | ASP.NET Core Identity V3 管理员密码哈希，仅服务端保存；生产禁止使用明文回退 |
 | `Email__SmtpHost` | 密码恢复需要 | SMTP 主机 |
 | `Email__SmtpPort` | 否 | SMTP 供应商端口，默认 `465`；这是出站协议配置，不受 Docker 宿主发布端口范围限制 |
 | `Email__UseSsl` | 否 | 默认 `true`；为真时使用 SSL 直连 |
@@ -72,8 +72,10 @@ $env:ConnectionStrings__AuthDatabase = "Server=127.0.0.1;Port=3306;Database=moon
 $env:Gateway__BaseUrl = "http://127.0.0.1:5000"
 $env:Gateway__ServiceKey = "REPLACE_WITH_ONE_LONG_RANDOM_SHARED_KEY"
 $env:Admin__Username = "REPLACE_ADMIN_USERNAME"
-$env:Admin__Password = "REPLACE_ADMIN_PASSWORD"
+$env:Admin__PasswordHash = "REPLACE_WITH_ASPNET_IDENTITY_V3_HASH"
 ```
+
+在仓库根目录运行 `.\scripts\new-admin-password-hash.ps1`，按安全提示输入密码并把输出写入密钥管理器或未提交的部署环境文件。脚本只输出 Identity V3 哈希，不把明文写入命令行历史。`Admin__Password` 只为旧部署迁移保留；新部署和文档基线不得再使用该明文配置。
 
 根目录 Compose 中 AuthService 专用 MySQL 保持原生端口 `3306`，且不发布到宿主机。
 数据库连接串和 Gateway 服务间 URL 不属于 Docker 宿主 published 端口

@@ -43,11 +43,13 @@ public sealed class GatewayClient(IHttpClientFactory clients, IConfiguration con
     public async Task<object> SubmitEvidenceAsync(PracticeSession session, IReadOnlyList<PracticeQuestion> questions, Guid resultId, Guid key, CancellationToken ct)
     {
         if (session.ReviewPlanId is null || string.IsNullOrWhiteSpace(session.SnapshotVersion)) return new { skipped = true, reason = "NO_PLAN" };
+        var decidedAnswers = session.Answers.Where(answer => answer.GradingStatus == GradingStatus.Decided).ToArray();
+        if (decidedAnswers.Length == 0) return new { skipped = true, reason = "NO_DECISIVE_ANSWERS" };
         var completedAt = DateTimeOffset.UtcNow;
         var payload = new { resultId, idempotencyKey = key, reviewPlanId = session.ReviewPlanId, snapshotVersion = session.SnapshotVersion,
             sessionId = session.SessionId, packageId = session.QuestionBankId, userId = session.OwnerUserId, completedAt,
             durationSeconds = Math.Min(86400, Math.Max(0, session.Answers.Sum(x => x.ResponseTimeMs) / 1000)),
-            answerResults = session.Answers.Select(answer => { var question = questions.Single(x => x.QuestionId == answer.QuestionId); return new {
+            answerResults = decidedAnswers.Select(answer => { var question = questions.Single(x => x.QuestionId == answer.QuestionId); return new {
                 attemptId = answer.AttemptId, questionId = answer.QuestionId, knowledgePointId = question.KnowledgePointId,
                 answerKind = question.Kind switch { PracticeQuestionKind.SingleChoice => "CHOICE", PracticeQuestionKind.FillBlank => "FILL_BLANK", PracticeQuestionKind.TrueFalse => "TRUE_FALSE", _ => "SHORT_ANSWER" },
                 correct = answer.Correct, quality = answer.Quality, responseTimeMs = answer.ResponseTimeMs, hintsUsed = 0,

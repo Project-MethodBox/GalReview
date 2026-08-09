@@ -12,6 +12,29 @@ public sealed class PracticeRulesTests
     public void True_false_normalization_preserves_ReciteHelper_compatibility(string input, string expected) =>
         Assert.Equal(expected, PracticeRules.NormalizeTrueFalse(input));
 
+    [Theory]
+    [InlineData("两个", "2")]
+    [InlineData("二", "2.0")]
+    [InlineData("２ 个", "两")]
+    [InlineData("(1, 3)", "( 1，3 )。")]
+    [InlineData("(一,三)", "(1.0,03)")]
+    [InlineData("G+", "革兰氏阳性")]
+    [InlineData("g⁺菌", "Gram-positive bacteria")]
+    [InlineData("G−", "革兰阴性菌")]
+    public void Fill_blank_equivalence_accepts_only_canonical_variants(string actual, string expected) =>
+        Assert.True(PracticeRules.AreFillBlankAnswersEquivalent(actual, expected));
+
+    [Theory]
+    [InlineData("2", "3")]
+    [InlineData("(1,3)", "(3,1)")]
+    [InlineData("(1,3)", "[1,3]")]
+    [InlineData("G+", "G-")]
+    [InlineData("革兰氏阳性", "革兰氏阴性")]
+    [InlineData("二氧化碳", "2氧化碳")]
+    [InlineData("提高", "增加")]
+    public void Fill_blank_equivalence_rejects_non_equivalent_answers(string actual, string expected) =>
+        Assert.False(PracticeRules.AreFillBlankAnswersEquivalent(actual, expected));
+
     [Fact]
     public void Choice_answer_must_reference_an_existing_option()
     {

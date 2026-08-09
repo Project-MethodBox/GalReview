@@ -11,7 +11,6 @@
     <ProjectReference Include="..\PracticeService.Persistence\PracticeService.Persistence.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <Content Include="..\Resources\**\*.*" Link="Resources\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\THIRD_PARTY_LICENSES\**\*.*" Link="THIRD_PARTY_LICENSES\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\NOTICE.md" Link="NOTICE.md" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

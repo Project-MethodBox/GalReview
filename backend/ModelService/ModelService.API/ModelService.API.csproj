@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ModelService.Application\ModelService.Application.csproj" />
+    <ProjectReference Include="..\ModelService.Domain\ModelService.Domain.csproj" />
+    <ProjectReference Include="..\ModelService.Persistence\ModelService.Persistence.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="..\Resources\**\*.*" Link="Resources\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\THIRD_PARTY_LICENSES\**\*.*" Link="THIRD_PARTY_LICENSES\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\NOTICE.md" Link="NOTICE.md" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

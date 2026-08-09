@@ -6,11 +6,11 @@ using System.Text.RegularExpressions;
 namespace PracticeService.Application;
 
 public sealed record GetReadinessQuery(string Storage) : IRequest<Readiness>;
-public sealed record Readiness(string Status, string Storage, IReadOnlyList<ModelState> Models);
-public sealed class GetReadinessHandler(IModelStatusReader models) : IRequestHandler<GetReadinessQuery, Readiness>
+public sealed record Readiness(string Status, string Storage, string ModelInference);
+public sealed class GetReadinessHandler : IRequestHandler<GetReadinessQuery, Readiness>
 {
     public Task<Readiness> Handle(GetReadinessQuery request, CancellationToken cancellationToken) =>
-        Task.FromResult(new Readiness("ready", request.Storage, models.Inspect()));
+        Task.FromResult(new Readiness("ready", request.Storage, "gateway:model-service"));
 }
 
 public sealed record GenerateQuestionsCommand(Guid OwnerUserId, Guid ProjectId, Guid IdempotencyKey, Guid? ReviewPlanId,
@@ -416,12 +416,18 @@ public sealed class SessionHandlers(IPracticeRepository repository, IPracticeGat
         if (duplicate is not null)
         {
             if (duplicate.QuestionId != request.QuestionId || !duplicate.Answer.SequenceEqual(request.Answer)) throw new PracticeDomainException(409, "IDEMPOTENCY_CONFLICT", "幂等键已用于不同答案。");
-            return new(duplicate, true, duplicate.AnswerJudgeVersion.Contains("fallback", StringComparison.Ordinal));
+            return new(duplicate, true, duplicate.GradingStatus == GradingStatus.Abstained);
         }
         var question = repository.GetQuestion(request.QuestionId) ?? throw PracticeOwnership.NotFound();
         var score = await scorer.ScoreAsync(question, request.Answer, request.ResponseTimeMs, ct);
         var answer = new PracticeAnswer(Guid.NewGuid(), question.QuestionId, request.IdempotencyKey, request.Answer.ToArray(), score.Correct, score.Similarity,
-            score.Quality, score.AwardedScore, request.ResponseTimeMs, request.AttemptNumber, score.JudgeVersion, DateTimeOffset.UtcNow);
+            score.Quality, score.AwardedScore, request.ResponseTimeMs, request.AttemptNumber, score.JudgeVersion, DateTimeOffset.UtcNow)
+        {
+            GradingStatus = score.Status,
+            Outcome = score.Outcome,
+            AbstainReason = score.AbstainReason,
+            Facets = score.Facets
+        };
         repository.SaveSession(session with { Answers = session.Answers.Where(x => x.QuestionId != question.QuestionId).Append(answer).ToArray() });
         return new(answer, false, score.Degraded);
     }
@@ -435,7 +441,8 @@ public sealed class SessionHandlers(IPracticeRepository repository, IPracticeGat
             return new(session, new { status = "DUPLICATE" }, true);
         }
         if (session.Status != PracticeSessionStatus.Active || session.Answers.Count == 0) throw new PracticeDomainException(409, "SESSION_NOT_ACTIVE", "活动会话至少作答一题后才能完成。");
-        var questions = session.Answers.Select(x => repository.GetQuestion(x.QuestionId)).Where(x => x is not null).Cast<PracticeQuestion>().ToArray();
+        var decidedAnswers = session.Answers.Where(answer => answer.GradingStatus == GradingStatus.Decided).ToArray();
+        var questions = decidedAnswers.Select(x => repository.GetQuestion(x.QuestionId)).Where(x => x is not null).Cast<PracticeQuestion>().ToArray();
         var resultId = Guid.NewGuid(); var evidence = await gateway.SubmitEvidenceAsync(session, questions, resultId, request.IdempotencyKey, ct);
         var completed = session with { Status = PracticeSessionStatus.Completed, CompletionIdempotencyKey = request.IdempotencyKey, ResultId = resultId, CompletedAt = DateTimeOffset.UtcNow };
         repository.SaveSession(completed); return new(completed, evidence, false);

@@ -57,7 +57,9 @@ public sealed class AssessmentFlowTests
     private sealed class FakeScorer : IAnswerScorer
     {
         public Task<ScoreResult> ScoreAsync(PracticeQuestion question, IReadOnlyList<string> answer, int responseTimeMs,
-            CancellationToken cancellationToken) => Task.FromResult(new ScoreResult(true, 1, 5, question.Score, "test-v1", false));
+            CancellationToken cancellationToken) => Task.FromResult(new ScoreResult(
+                GradingStatus.Decided, RecallOutcome.Perfect, true, 1, 5, question.Score,
+                "test-v1", null, [], false));
     }
 
     private sealed class FakeGateway(Guid owner, Guid graphId, IReadOnlyList<PlanGraphPoint> points) : IPracticeGateway

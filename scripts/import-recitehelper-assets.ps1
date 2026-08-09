@@ -5,10 +5,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$targetRoot = Join-Path $projectRoot 'backend\PracticeService\Resources'
+$targetRoot = Join-Path $projectRoot 'backend\ModelService\Resources'
 $runtimeResources = Join-Path $ReciteHelperRoot 'ReciteHelper.Wpf\bin\Debug\net10.0-windows7.0\Resources'
 $licenseSource = Join-Path $ReciteHelperRoot 'LICENSE'
-$licenseTarget = Join-Path $projectRoot 'backend\PracticeService\THIRD_PARTY_LICENSES\ReciteHelper.LICENSE'
+$licenseTarget = Join-Path $projectRoot 'backend\ModelService\THIRD_PARTY_LICENSES\ReciteHelper.LICENSE'
 
 if (-not (Test-Path -LiteralPath $runtimeResources -PathType Container)) {
     throw "ReciteHelper runtime resources were not found: $runtimeResources"

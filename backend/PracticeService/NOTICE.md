@@ -1,6 +1,6 @@
 # ReciteHelper 迁移来源说明
 
-PracticeService 的题型、答题规范化、相似度判分、quality 模型输入、智能选题、随机组卷及兼容包设计源自：
+PracticeService 的题型、答题规范化、智能选题、随机组卷及兼容包设计参考自：
 
 - 项目：`ArabidopsisDev/ReciteHelper`
 - 审计提交：`21288821229eb8a1da7f5a38d248fdfd10104f80`
@@ -9,4 +9,8 @@ PracticeService 的题型、答题规范化、相似度判分、quality 模型�
 
 迁移不是 WPF 源码的逐文件复制：UI 已按 GalReview Web 设计语言重构，视觉小说动态 C# 编译已由 GalGame/Render 契约替代，mastery/SM-2 写入仍归 KnowledgeService。具体差异见 `docs/recitehelper-migration.md`。
 
-模型和词典从 OSCA 私有储桶恢复，不进入 Git。开发或部署前必须运行仓库内的 `scripts/download-practice-resources.ps1` 并通过 `resources.manifest.json` 的全量哈希校验；脚本内置凭据仅能读取和列举 `20277-gal-res`，不能访问其他储桶或写入对象，因此随下载器受版本控制。`scripts/import-recitehelper-assets.ps1` 仅作为受信本机的离线回退，并负责把原项目 `LICENSE` 复制到 `THIRD_PARTY_LICENSES/ReciteHelper.LICENSE`。
+ReciteHelper 原有的 SBERT/Jaccard 混合相似度、XGBoost quality 预测和仅更新 EF 的复习启发式已经过审计并退出生产判分链；它们不构成当前答案判定与 SM-2 调度的有效性依据。
+
+主观题模型、tokenizer、词典、许可证与资产下载现由独立 `backend/ModelService` 持有；
+PracticeService 仅通过 Gateway 消费逐事实 verdict。模型来源、固定修订与 SHA-256 见
+`backend/ModelService/NOTICE.md`，不得在 PracticeService 重新复制模型运行时。

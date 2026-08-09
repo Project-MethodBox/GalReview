@@ -24,6 +24,7 @@ const mockConfig: GatewayConfig = {
     renderService: { name: 'RenderService', url: 'http://localhost:5256' },
     practiceService: { name: 'PracticeService', url: 'http://localhost:5257' },
     creditService: { name: 'CreditService', url: 'http://localhost:5258' },
+    modelService: { name: 'ModelService', url: 'http://localhost:5259' },
   },
   rateLimit: {
     anonymous: { windowMs: 60000, max: 100 },

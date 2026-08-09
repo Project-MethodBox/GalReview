@@ -35,6 +35,7 @@ describe('当前服务接口路由适配', () => {
     ['POST', '/api/v1/credits/redemptions', 'creditService', 'user'],
     ['POST', '/api/v1/admin/credit-codes/batches', 'creditService', 'user'],
     ['POST', '/internal/v1/credits/reservations', 'creditService', 'service'],
+    ['POST', '/internal/v1/model-inference/facet-adjudications', 'modelService', 'service'],
     [
       'POST',
       '/internal/v1/game-package-validations',

@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="ModelService.API/ModelService.API.csproj" />
+  <Project Path="ModelService.Application/ModelService.Application.csproj" />
+  <Project Path="ModelService.Domain/ModelService.Domain.csproj" />
+  <Project Path="ModelService.Persistence/ModelService.Persistence.csproj" />
+  <Project Path="ModelService.Tests/ModelService.Tests.csproj" />
+</Solution>

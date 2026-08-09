@@ -36,8 +36,9 @@
 | KnowledgeService | `@Arabidopsis` | 图谱、知识点、关系、复习计划与掌握度 | 图谱模型、抽取策略与 Neo4j 查询 |
 | GalGameService | `@F15EX` | 游戏生成任务、游戏包与 schema | 生成流程、剧情结构与兼容策略 |
 | RenderService | `@Zopiclone` | 复习会话、进度、结果和 WASM 运行时 | C++ / WASM API 与状态机 |
-| PracticeService | `@Arabidopsis` | 学习项目、题库、练习、考试、项目包与共享资源 | 题目模型、判分、组卷、导入兼容与 MongoDB 持久化 |
+| PracticeService | `@Arabidopsis` | 学习项目、题库、练习、考试、项目包与共享资源 | 复习业务、判分决策、组卷、导入兼容与 MongoDB 持久化 |
 | CreditService | `@Arabidopsis` | credits 账户、预授权、实际结算、兑换码与账本 | 计量规则、CQRS、兑换码安全与 MySQL 持久化 |
+| ModelService | `@Arabidopsis` | 内部模型推理与模型资产就绪状态 | 模型版本、推理契约、资产校验与运行时隔离 |
 | Frontend / WASM Adapter | `@甲烷` | JS 桥接、页面调用与错误展示 | 前端适配器和运行时集成 |
 | API Gateway | `@甲烷` | 路由、鉴权、错误、CORS 与链路头 | Gateway 策略与部署配置 |
 
@@ -52,6 +53,7 @@
 - **RenderService 使用 C++/WASM runtime ABI 与 TypeScript 服务层**：持久化运行时会话、进度与结果，并经 Gateway INTERNAL 提交同步学习证据；异步 `ReviewCompleted v2` 消息仍未实现。
 - **PracticeService 的数据库为 MongoDB + GridFS**：学习项目、题库、生成/导入任务、练习与考试会话、兼容项目包和共享包只由 PracticeService 写入；知识掌握度仍只由 KnowledgeService 写入。
 - **CreditService 的数据库为独立 MySQL `qzwl_credit`**：credits 账户、兑换码、生成预授权与不可变账本只由 CreditService 写入。服务采用 API、Application、Domain、Persistence 四层，Application 通过 MediatR 实现 CQRS。
+- **ModelService 当前不使用数据库**：模型、tokenizer、词典和推理运行时只由 ModelService.Persistence 持有；服务采用 API、Application、Domain、Persistence 四层，Application 通过 MediatR 实现 CQRS。它不保存答案、题目、掌握度或 SM-2 状态。
 - 不得将同一事实跨 MySQL、MongoDB、Neo4j 双写为多个权威来源。
 
 ## 1. 架构级调用约束
@@ -72,7 +74,7 @@ Source Service
 - 禁止服务保存其他服务的直连地址。
 - 禁止服务直接读取其他服务的数据库。
 - 服务间同步调用仍然使用 Gateway 的 RESTful 路由。
-- OCRService 是 FileService 的无状态解析执行依赖，不是浏览器或其他领域服务的公共 API；`FileService -> OCRService` 是本规则的受限例外，OCRService 不注册 Gateway 路由且不得暴露公网。
+- OCRService 是 FileService 的无状态解析执行依赖，不是浏览器或其他领域服务的公共 API；`FileService -> OCRService` 是本规则的受限例外，OCRService 不注册 Gateway 路由且不得暴露公网。除 `/healthz` 外的请求必须使用与 FileService 调用端一致的 `X-Gateway-Key` 并进行固定时序比较；空 key、重复 header 或错误 key 返回 401。
 - Gateway 只负责鉴权、路由、超时、错误映射和链路信息，不承载领域规则。
 
 ### 1.2 异步调用
@@ -311,7 +313,8 @@ interface UserPreferences extends UserPreferencesInput {
 - AuthService 负责管理员登录、管理员会话和用户凭证治理（重置密码、撤销会话、删除认证账户）。credits 与兑换码由 CreditService 独占。
 - UserService 仍拥有用户展示资料与偏好。管理员操作如需影响该服务的数据，必须经 Gateway 调用对应的 `/internal/v1/...` 接口；禁止 AuthService 直接读取或修改 UserService 数据库。
 - 浏览器只可通过 Gateway 的 `/api/v1/admin/...` 路由访问管理员接口。Gateway 验证 Access Token 并注入可信身份上下文，AuthService 最终判定管理员权限。
-- 管理员默认凭据只能用于本地开发，禁止进入浏览器代码、日志、提交到版本控制的生产配置或公开文档。
+- 管理员默认凭据只能用于本地开发，禁止进入浏览器代码、日志、提交到版本控制的生产配置或公开文档。生产配置必须使用 `Admin:PasswordHash` 的 ASP.NET Core Identity V3 hash；`Admin:Password` 明文键只允许旧部署迁移，不是新部署基线。
+- 密码重置请求对已注册和未注册的有效邮箱统一返回 202，禁止邮箱枚举。新令牌为 8 位无歧义大写字母/数字且等概率生成、比较时大小写归一；迁移窗口内仍可消费已签发的旧 6 位数字令牌。
 - 删除用户与重置密码属于高风险操作。生产上线前必须具备可检索的审计记录，至少包含操作者、目标用户、操作类型、结果、时间与 `traceId`。审计表结构为 `OWNER-TBD`。
 - 当后台扩展为内容审核、运营、跨服务报表或多角色权限体系时，再评估拆分独立 Admin Service。
 
@@ -1903,13 +1906,14 @@ ReviewSession、进度、事件与同步 evidence 提交。
 | `/internal/v1/game-package-validations` | GalGameService | RenderService | 服务身份；当前默认只允许 `RenderService` |
 | `/internal/v1/game-packages/*` | GalGameService | RenderService | 服务身份；同时校验请求中的 ownerUserId |
 | `/internal/v1/credits/*` | CreditService | AuthService / PracticeService / GalGameService | 精确服务身份；端点分别限制调用方 |
+| `/internal/v1/model-inference/*` | ModelService | PracticeService | 精确服务身份；不向浏览器公开 |
 | `/internal/v1/*` | 对应服务 | Service only | 服务身份；用户委托身份可选 |
 
 ### 9.2 Gateway 行为与信任头
 
 - 浏览器 `/api` 请求中的 `X-Service-Name`、`X-Service-Key`、`X-User-Id`、`X-Gateway-Key` 全部丢弃。`/internal` 请求只暂留 `X-Service-Name + X-Service-Key` 用于服务身份验证，仍先丢弃外部 `X-User-Id` 与 `X-Gateway-Key`。
 - INTERNAL 服务身份通过逐服务密钥验证后，Gateway 转发时剥离 `Authorization` 与 `X-Service-Key`，重新注入可信 `X-Service-Name` 和目标服务的 `X-Gateway-Key`。用户路由则从已验证令牌重新注入 `X-User-Id`。
-- 每个目标服务使用自己的 `*_SERVICE_KEY`；只有未配置独立密钥时才回退 `GATEWAY_KEY`。KnowledgeService 的入站 `Gateway__ServiceKey` 必须与 Gateway 的 `KNOWLEDGE_SERVICE_KEY` 一致；GalGameService 对应 `GALGAME_SERVICE_URL`、`GALGAME_SERVICE_KEY`；PracticeService 对应 `PRACTICE_SERVICE_URL`、`PRACTICE_SERVICE_KEY`；CreditService 对应 `CREDIT_SERVICE_URL`、`CREDIT_SERVICE_KEY`，各服务入站 `Gateway__ServiceKey` 必须与目标密钥一致。
+- 每个目标服务使用自己的 `*_SERVICE_KEY`；只有未配置独立密钥时才回退 `GATEWAY_KEY`。KnowledgeService 的入站 `Gateway__ServiceKey` 必须与 Gateway 的 `KNOWLEDGE_SERVICE_KEY` 一致；GalGameService 对应 `GALGAME_SERVICE_URL`、`GALGAME_SERVICE_KEY`；PracticeService 对应 `PRACTICE_SERVICE_URL`、`PRACTICE_SERVICE_KEY`；CreditService 对应 `CREDIT_SERVICE_URL`、`CREDIT_SERVICE_KEY`；ModelService 对应 `MODEL_SERVICE_URL`、`MODEL_SERVICE_KEY`，各服务入站 `Gateway__ServiceKey` 必须与目标密钥一致。
 - Gateway 验证 Bearer Token 时调用 AuthService `/internal/v1/auth/introspections`，携带 AuthService 的目标密钥作为 `X-Gateway-Key`，并原样传递或生成 `X-Correlation-Id`。只有规范的 `200` `ApiSuccess<TokenIntrospection>` 响应且 `active=false` 能证明令牌无效并返回 `401`；该成功信封必须含对象 `data`、空对象 `meta` 和非空字符串 `traceId`，非空 `userId/sessionId` 必须是小写 UUID v4，非空 `expiresAt` 必须是完整 ISO 8601 UTC 时间。内省超时、连接失败、任意非 `200`（含密钥错配 `403` 和 `5xx`）、非 JSON、缺字段、信封或字段不合规，以及 `active=true` 但数据形状错误，均统一返回 `503 SERVICE_UNAVAILABLE`，不得把认证基础设施或上游契约故障伪装成令牌无效。
 - 写操作不在 Gateway 层盲目重试。
 - GET 只有在确认幂等且无副作用时才能有限重试。
@@ -1931,8 +1935,8 @@ ReviewSession、进度、事件与同步 evidence 提交。
 | `GET` | `/readyz` | `200/503 ReadinessStatus` | 路由配置和关键依赖就绪 |
 
 `READINESS_SERVICES` 是逗号分隔的服务 key。Gateway 应用默认值为
-`userService,authService,fileService,knowledgeService`；根目录集成 Compose 显式追加
-`galGameService,renderService,practiceService,creditService`，因此当前完整本地闭环会真实探测八个服务的 `/healthz`。
+`userService,authService,fileService,knowledgeService,modelService`；根目录集成 Compose 显式追加
+`galGameService,renderService,practiceService,creditService`，因此当前完整本地闭环会真实探测九个服务的 `/healthz`。
 可选 OCRService 不进入 readiness。配置中出现未知 key
 时 Gateway 必须拒绝启动。
 KnowledgeService 在宿主机的默认目标为 `http://localhost:5104`；集成容器网络内使用
@@ -1980,10 +1984,11 @@ Render runtime 资源。manifest 为 `runtimeMode=SHELL` 时只在浏览器本�
 | KnowledgeService | `8080` | `5104` | `KNOWLEDGE_HOST_PORT`；仅诊断，绑定地址由 `DIAGNOSTIC_BIND_ADDRESS` 配置 |
 | GalGameService | `5105` | 不发布 | 只由 Gateway 访问；使用 MongoDB 持久化 |
 | RenderService | `5106` | 不发布 | C++ / WASM 运行时与服务适配层，只由 Gateway 访问 |
-| PracticeService | `5107` | 不发布 | 四层 MediatR CQRS 复习服务，使用 MongoDB 与本地模型资产 |
+| PracticeService | `5107` | 不发布 | 四层 MediatR CQRS 复习服务，使用 MongoDB；不装载本地模型 |
 | CreditService | `5108` | 不发布 | 四层 MediatR CQRS 计费服务，使用独立 MySQL |
+| ModelService | `5109` | 不发布 | 四层 MediatR CQRS 内部模型服务，使用本地只读模型资产且无数据库 |
 | Frontend | `8080` | `5120` | `FRONTEND_HOST_PORT`；非 root Node 静态站点，同源代理 `/api` 到 Gateway |
-| OCRService | `5110` | 不发布 | `ocr` profile 的可选内部依赖，本轮闭环不启动 |
+| OCRService | `5110` | 不发布 | `ocr` profile 的可选内部依赖，只接受 FileService 密钥；不进入 Gateway readiness |
 | User MySQL | `3306` | 不发布 | 只供 UserService；独立卷 `user-mysql-data` |
 | Auth MySQL | `3306` | 不发布 | 只供 AuthService；独立卷 `auth-mysql-data` |
 | Credit MySQL | `3306` | 不发布 | 只供 CreditService；独立卷 `credit-mysql-data` |
@@ -2009,8 +2014,9 @@ SMTP、HTTP(S)、SOCKS 等第三方协议端口不受该范围限制。测试监
 - FileService 使用 `Gateway__ServiceKey`、`ConnectionStrings__FileDatabase`、`MongoDb__Database`、`InternalAccess__ExtractedTextAllowedServices__0`、`Ocr__BaseUrl`、`Ocr__TimeoutMinutes`；
 - KnowledgeService 使用 `Gateway__ServiceKey`、`GatewayMaterialText__BaseUrl`、`GatewayMaterialText__ServiceName`、`GatewayMaterialText__ServiceKey`、`GatewayMaterialText__Timeout` 以及 `Neo4j__Uri`、`Neo4j__Username`、`Neo4j__Password`、`Neo4j__Database`；
 - GalGameService 使用 `Gateway__BaseUrl`、`Gateway__ServiceKey`、`InternalAccess__ValidationAllowedServices__0`、`InternalAccess__PackageReaderAllowedServices__0` 和 `NarrativeGeneration__*`；两个 INTERNAL 调用方默认都只允许 `RenderService`，叙事 API key 只从 `DEEPSEEK_API_KEY` 注入；
-- PracticeService 使用 `Gateway__BaseUrl`、`Gateway__ServiceName=PracticeService`、`Gateway__ServiceKey`、MongoDB 连接串和本地模型资产；
+- PracticeService 使用 `Gateway__BaseUrl`、`Gateway__ServiceName=PracticeService`、`Gateway__ServiceKey` 和 MongoDB 连接串；主观题必要事实通过 Gateway 调用 ModelService，不在本进程装载模型；
 - CreditService 使用 `Gateway__ServiceKey`、`CreditStore__Provider=MySQL` 与独立 `ConnectionStrings__CreditDatabase`；
+- ModelService 使用 `Gateway__ServiceKey`、`Nli__MinimumTopProbability`、`Nli__MinimumMargin` 与构建前恢复的只读 `Resources`；不配置数据库连接；
 - RenderService 基础壳只使用 `PORT`；未来实现 INTERNAL 回调时再启用 `Gateway__BaseUrl`、`Gateway__ServiceName` 与 `Gateway__ServiceKey`；
 - AuthService、UserService 与 CreditService 分别使用自己的 `Gateway__ServiceKey`、独立 MySQL 连接串和独立数据卷；Auth/User 服务器模板固定使用 `MySql` 模式，本地可显式覆盖为 `Mock`，CreditService 生产固定使用 MySQL。Compose 内部 MySQL 8.4 的 `caching_sha2_password` 连接串包含 `AllowPublicKeyRetrieval=True` 且端口不外露；改接外部数据库时必须使用受信 CA 的 TLS；
 - Frontend 使用 `GATEWAY_UPSTREAM`，AuthService 的可选邮件配置使用 `SMTP_*` 与 `ACCOUNT_FRONTEND_BASE_URL`；
@@ -2613,20 +2619,62 @@ READY 题库没有任何交集时才返回 `422 QUESTION_COVERAGE_GAP` 并列出
 type PracticeAnswerResult = {
   attemptId: UUID;
   questionId: UUID;
-  correct: boolean;
-  similarity: number | null;    // [0,1]，主观题使用
-  quality: number;              // [0,5]
-  awardedScore: number;
+  gradingStatus: "DECIDED" | "ABSTAINED";
+  outcome: "PERFECT" | "CORRECT" | "PARTIAL" | "WRONG_RELATED" | "NO_RECALL" | "ABSTAINED";
+  correct: boolean | null;
+  similarity: number | null;    // 兼容诊断字段；不得参与判分或 SM-2，当前主链返回 null
+  quality: number | null;       // DECIDED 时为 0..5；ABSTAINED 时必须为 null
+  awardedScore: number | null;
   responseTimeMs: number;
   answerJudgeVersion: string;
+  abstainReason: string | null;
+  facets: Array<{
+    claim: string;
+    verdict: "ENTAILED" | "OMITTED" | "CONTRADICTED" | "INDETERMINATE";
+    entailmentProbability: number;
+    neutralProbability: number;
+    contradictionProbability: number;
+  }>;
   answeredAt: Timestamp;
 };
 ```
 
 答案保存请求包含 `answer: string | string[]`、`responseTimeMs`、`attemptNumber` 和
-`idempotencyKey`。单选、填空、判断使用确定性规则；名词解释和简答使用本地语义模型与
-确定性兜底。模型不可用时 `answerJudgeVersion` 必须显示降级算法，响应 `meta` 中加入
-`degraded: true`，不能静默冒充 ONNX 判分。
+`idempotencyKey`。单选、判断使用规范化后的精确答案；填空按同位置的确定性等价规则判定，不使用编辑
+距离、NLI 或模糊相似度。`deterministic-fill-equivalence-v1` 只接受可证明不改变答案含义的表示差异：
+
+- Unicode NFKC、全半角、大小写、首尾句末标点，以及括号/逗号附近的空白差异；
+- 独立整数/小数的数值等价，中文整数和可选量词“个”，例如 `两个 = 二 = 2 = 2.0`；
+- 保留括号种类与元素顺序的纯数值元组，例如 `(1, 3) = (1,3)`，但 `(1,3) != (3,1)` 且
+  `(1,3) != [1,3]`；
+- Domain 内版本化封闭别名，例如 `G+ = 革兰氏阳性`、`G- = 革兰氏阴性`。正负型不能互换，普通
+  近义词不自动视为相等；新增别名必须有明确领域依据、正反例测试并升级规则版本。
+
+多空题仍要求答案数量及位置一致；全部等价才判完整正确，只有部分位置等价时判 `PARTIAL`。
+名词解释和简答由 PracticeService 按已核对标准答案拆成必要事实，再以服务身份经 Gateway 调用
+ModelService 的固定版本本地多语种 NLI，逐项判断学生答案是否蕴含、遗漏或矛盾。ModelService 只返回
+verdict 与概率诊断，最终状态机仍由 PracticeService.Domain 执行。SBERT 仅可用于离线诊断或检索，不得决定正误；旧 XGBoost quality 模型、作答速度、
+字符 Jaccard、编辑距离和任意比例混合全部退出生产证据链。
+
+主观题的决定规则是离散状态机，不做概率加权：
+
+| 可观察内容状态 | `outcome` | `quality` | `correct` |
+|---|---|---:|---|
+| 标准答案精确一致，或全部必要事实均为 `ENTAILED` | `PERFECT` | 5 | true |
+| 至少一个事实 `ENTAILED`、其余仅 `OMITTED` | `PARTIAL` | 2 | false |
+| 存在可靠的关键 `CONTRADICTED` | `WRONG_RELATED` | 1 | false |
+| 空白，或没有事实被蕴含且无可靠矛盾 | `NO_RECALL` | 0 | false |
+| 任一事实 `INDETERMINATE`、rubric 为空、模型缺失/损坏/推理失败 | `ABSTAINED` | null | null |
+
+`quality=3/4` 保留给将来可观测且经验证的“答前非泄露提示”或补充事实边界，当前自动链不得伪造。
+`responseTimeMs` 只保留为会话遥测，不参与内容判定或 quality。NLI 置信门禁冻结为 top probability
+`>= 0.75` 且前两类 margin `>= 0.20`；门禁来自版本化真实 PDF 校准集，概率只用于决定是否拒判，不得
+相加成分数。严格同义词复核只读取 `cn_synonym.txt` 中标为 `=` 的同义词组：仅当原判为 `OMITTED`、替换
+标准答案中的同义词后可靠 `ENTAILED` 时才接受，绝不覆盖原始 `CONTRADICTED`。
+
+`ABSTAINED` 是系统承担的不确定性，不是用户任务：前端显示“本题暂未形成可靠判定，已不计入本次复习
+安排”，继续下一题；禁止要求用户自评、手动对照标准答案、选择 q 值或补标。模型不可用时响应
+`meta.degraded=true` 且自动 `ABSTAINED`，不得静默回退为 Levenshtein 并把用户判错。
 
 完成会话时 PracticeService 将每题映射为第 6.4 节已经冻结的
 `KnowledgeAnswerEvidence`，并复用：
@@ -2637,6 +2685,9 @@ X-Service-Name: PracticeService
 ```
 
 PracticeService 语义下：`packageId = questionBankId`，`sessionId = practiceSessionId`。
+完成会话只把 `DECIDED` 答案映射为证据；混合会话自动排除 `ABSTAINED`。若整轮均为
+`ABSTAINED`，会话仍正常完成，但返回 `NO_DECISIVE_ANSWERS` 并且不调用 KnowledgeService、不修改
+mastery、SM-2 间隔或 `nextReviewAt`。完成页必须单独显示未判题数，不能把它们计为错题。
 KnowledgeService 必须同时允许 `RenderService` 与精确大小写的 `PracticeService` 调用证据
 端点；PlanGraph 读取必须同时允许 `GalGameService` 与 `PracticeService`。除此之外的服务名
 返回 `403 FORBIDDEN`。这只是扩展调用方 allowlist，不改变 mastery、SM-2、plan snapshot 和
@@ -2692,8 +2743,9 @@ type QuestionHelp = {
 - Gateway 配置键为 `PRACTICE_SERVICE_URL`、`PRACTICE_SERVICE_KEY`；服务到 Gateway 的
   配置为 `Gateway__BaseUrl`、`Gateway__ServiceName=PracticeService`、
   `Gateway__ServiceKey`。
-- 生产 readiness 默认包含 PracticeService；模型降级不使 `/healthz` 失败，但 `/readyz`
-  必须在响应数据中列出每个模型的 `READY | MISSING | HASH_MISMATCH | LOAD_FAILED`。
+- 生产 readiness 同时包含 PracticeService 与 ModelService。PracticeService `/readyz` 只报告自身存储与
+  Gateway 模型依赖标识，不读取模型文件；ModelService `/readyz` 必须列出每个模型的
+  `READY | MISSING | HASH_MISMATCH | LOAD_FAILED`，任一必需资产未就绪时返回 `503`。
 
 ### 14.8 错误码
 
@@ -2802,7 +2854,10 @@ SHA-256 摘要与后缀；兑换、过期、撤销统一返回稳定错误 `REDE
 - `GAME_GENERATION`：GalGameService 从同一 PlanGraph 生成视觉小说复习。生成前按图谱上下文、
   提示固定开销、最大输出、最多草稿次数与供应商重试次数估算，成功后使用模型供应商返回的 `usage.total_tokens`（含已消费但
   未通过响应内容/schema 校验的供应商重试与草稿尝试）结算。供应商成功响应缺少有效 usage
-  时按上游契约错误终止并释放预授权，不猜测实际值。确定性 Mock 未调用模型时实际使用量为 0。
+  时按上游契约错误终止并释放预授权，不猜测实际值。确定性 Mock 未调用模型时实际使用量为 0。音频与
+  package/manifest/owner 必须先成功持久化，随后才可结算；任一持久化失败必须释放预授权，禁止为不可读取
+  的包扣费。Mongo replica set 使用跨集合事务；standalone 明确降级为相同 packageId 的幂等顺序 upsert，
+  不得把该降级描述为跨集合原子。
 
 余额小于预估值时，CreditService 返回 `402 CREDITS_INSUFFICIENT`，details 固定包含
 `balance`、`required` 和 `purchaseUrl`。前端只显示当前/所需 credits，并询问是否前往购买；
@@ -2820,3 +2875,63 @@ SHA-256 摘要与后缀；兑换、过期、撤销统一返回稳定错误 `REDE
 - 默认本机端口 `5108`；Gateway 配置为 `CREDIT_SERVICE_URL`、`CREDIT_SERVICE_KEY`，生产
   readiness 包含 `creditService`。
 - 管理员列表只返回掩码，不提供兑换码明文恢复接口；撤销只允许 `ACTIVE` 状态。
+
+## 16. ModelService（内部模型推理边界，BASELINE）
+
+ModelService 是模型资产和本地推理运行时的唯一所有者。它不拥有研习册、题目、用户答案、
+判分状态、掌握度或 SM-2；不向浏览器开放，也不直接写任何业务数据库。服务固定拆为 API、
+Application、Domain、Persistence 四层，Application 使用 MediatR 实现命令/查询解耦；
+Persistence 当前仅承载 ONNX Runtime、SentencePiece、词典与 SHA-256 资产校验，无数据库。
+
+### 16.1 内部接口
+
+| 方法 | 路由 | 调用方 | 用途 |
+|---|---|---|---|
+| `POST` | `/internal/v1/model-inference/facet-adjudications` | PracticeService | 对一份答案与 1-12 个必要事实进行方向性 NLI |
+| `GET` | `/healthz` | Gateway / 运维 | 仅检查进程存活 |
+| `GET` | `/readyz` | Gateway / 运维 | 校验必需模型资产并返回逐资产状态 |
+
+推理请求必须经 Gateway 使用精确 `X-Service-Name: PracticeService`；ModelService 还必须验证
+Gateway 注入的自身 `X-Gateway-Key`。浏览器令牌、其他服务身份或直连伪造头均不得获得推理能力。
+
+```json
+POST /internal/v1/model-inference/facet-adjudications
+{
+  "answer": "一种从遗体和排泄物开始，并由微生物腐解的食物链。",
+  "facets": [
+    "以死亡有机体或排泄物为能量来源",
+    "微生物或原生动物参与"
+  ]
+}
+```
+
+`answer` 去除首尾空白后为 1-16000 字符；`facets` 为 1-12 个互不重复的非空事实，每项最多
+4000 字符。成功响应 `data` 固定包含 `available`、`modelVersion`、`failureReason` 和与请求
+同序的 `facets`；每项包含原始 `claim`、`verdict` 以及 entailment / neutral /
+contradiction 三个概率诊断。`verdict` 只允许
+`ENTAILED | OMITTED | CONTRADICTED | INDETERMINATE`。
+
+ModelService 不得返回或推导 `correct`、`quality`、`awardedScore` 或 SM-2 q。概率只用于
+版本化选择性拒判门禁，不得相加成业务分数；PracticeService 必须校验数量、顺序、claim 与枚举后，
+再由自身 Domain 离散状态机得出 §14.4 的结果。ModelService 不可用、合同不符或低置信时，
+PracticeService 自动形成 `ABSTAINED`，不要求用户手动对照或自评。
+
+### 16.2 资产、配置与部署
+
+- 默认本机端口 `5109`；Gateway 配置为 `MODEL_SERVICE_URL`、`MODEL_SERVICE_KEY`，生产
+  readiness 包含 `modelService`。
+- NLI 门禁配置为 `Nli__MinimumTopProbability`（默认 `0.75`）与
+  `Nli__MinimumMargin`（默认 `0.20`）；修改任一值必须升级判分/模型版本并重跑真实 PDF 金标集。
+- 模型文件不进入 Git。开发、测试、发布与容器构建前必须运行
+  `scripts/download-model-resources.ps1`，按
+  `backend/ModelService/resources.manifest.json` 恢复至
+  `backend/ModelService/Resources` 并通过长度与 SHA-256 全量校验。
+- 资源恢复顺序固定为“已校验本地缓存 → OSCA 主镜像 → 可选受信离线副本 → manifest 固定远端版本”。
+  OSCA 无凭据、不可达、对象缺失或内容不符均不得阻断后续灾备，但最终 19 个文件必须全部通过长度与
+  SHA-256 校验；`-SkipHashVerification` 不得实际关闭该门禁。
+- `MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli` 固定 revision 为
+  `0a71e92a985b6e1ad1828cf67ce9c459639c1dca`。旧 `sbert.onnx`、旧 q 模型、tokenizer 与词典固定到
+  ReciteHelper 提交 `21288821229eb8a1da7f5a38d248fdfd10104f80`，`vocab.txt` 固定到提交
+  `7f0fefb68e92311d297c558a35a2a72557031d41`；下载器只允许这些精确 HTTPS 路径，不得跟随浮动分支。
+- `/healthz` 不因模型缺失而失败；`/readyz` 对任何必需资产的
+  `MISSING | HASH_MISMATCH | LOAD_FAILED` 返回 `503`。PracticeService 不重复扫描这些资产。

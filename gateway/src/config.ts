@@ -107,10 +107,15 @@ export function loadConfig(): GatewayConfig {
       url: env('CREDIT_SERVICE_URL', 'http://localhost:5108'),
       serviceKey: svcKey('CREDIT_SERVICE_KEY'),
     },
+    modelService: {
+      name: 'ModelService',
+      url: env('MODEL_SERVICE_URL', 'http://localhost:5109'),
+      serviceKey: svcKey('MODEL_SERVICE_KEY'),
+    },
   };
   const readinessServices = env(
     'READINESS_SERVICES',
-    'userService,authService,fileService,knowledgeService',
+    'userService,authService,fileService,knowledgeService,modelService',
   )
     .split(',')
     .map((value) => value.trim())

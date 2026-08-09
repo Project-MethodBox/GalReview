@@ -23,7 +23,37 @@ public interface IPracticeRepository
     void SaveJob(PracticeJob value);
 }
 
-public sealed record ScoreResult(bool Correct, double? Similarity, int Quality, decimal AwardedScore, string JudgeVersion, bool Degraded);
+public sealed record ReferenceFacet(string Claim);
+public sealed record FacetAdjudication(
+    string Claim,
+    FacetVerdict Verdict,
+    double EntailmentProbability,
+    double NeutralProbability,
+    double ContradictionProbability);
+public sealed record FacetAdjudicationBatch(
+    bool Available,
+    string ModelVersion,
+    IReadOnlyList<FacetAdjudication> Facets,
+    string? FailureReason);
+public interface IFacetAdjudicator
+{
+    Task<FacetAdjudicationBatch> AdjudicateAsync(
+        string answer,
+        IReadOnlyList<ReferenceFacet> facets,
+        CancellationToken cancellationToken);
+}
+
+public sealed record ScoreResult(
+    GradingStatus Status,
+    RecallOutcome Outcome,
+    bool? Correct,
+    double? Similarity,
+    int? Quality,
+    decimal? AwardedScore,
+    string JudgeVersion,
+    string? AbstainReason,
+    IReadOnlyList<FacetAssessment> Facets,
+    bool Degraded);
 public interface IAnswerScorer
 {
     Task<ScoreResult> ScoreAsync(PracticeQuestion question, IReadOnlyList<string> answer, int responseTimeMs, CancellationToken cancellationToken);
@@ -71,8 +101,6 @@ public interface IPracticeQuestionGenerator
     QuestionGenerationEstimate Estimate(QuestionGenerationInput input);
     Task<QuestionGenerationOutput> GenerateAsync(QuestionGenerationInput input, CancellationToken cancellationToken);
 }
-public interface IModelStatusReader { IReadOnlyList<ModelState> Inspect(); }
-
 public sealed record DecodedPracticePackage(string Name, string? SubjectCode, string ImportedFromSchema,
     IReadOnlyList<QuestionDraft> Questions, IReadOnlyList<string> Diagnostics);
 public sealed record PracticePackageContent(string FileName, string ContentType, byte[] Content);
