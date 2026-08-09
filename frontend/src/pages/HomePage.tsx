@@ -57,11 +57,18 @@ export default function HomePage() {
             <Link className="button button--primary" to={latestProject ? `/projects/${latestProject.projectId}` : '/materials'}>{latestProject ? '继续温习' : '前往藏书阁'}</Link>
           </div>
           <div className="home-quick-actions" aria-label="复习快捷入口">
-            <Link to="/materials"><span className="quick-action-icon"><MaterialsIcon /></span><span><strong>藏书阁</strong><small>解析资料并整理章节</small></span><i aria-hidden="true">→</i></Link>
-            <Link to="/projects"><span className="quick-action-icon"><BookIcon /></span><span><strong>研习册</strong><small>创建、导入与续读复习项目</small></span><i aria-hidden="true">→</i></Link>
-            <Link to={latestProject ? `/projects/${latestProject.projectId}` : '/projects'}><span className="quick-action-icon"><ReviewIcon /></span><span><strong>章节温习</strong><small>从项目题库开始答题</small></span><i aria-hidden="true">→</i></Link>
+            <Link to="/materials"><span className="quick-action-icon quick-action-icon--materials"><MaterialsIcon /></span><span><strong>藏书阁</strong><small>解析资料并整理章节</small></span><i aria-hidden="true">→</i></Link>
+            <Link to="/projects"><span className="quick-action-icon quick-action-icon--knowledge"><BookIcon /></span><span><strong>研习册</strong><small>创建、导入与续读复习项目</small></span><i aria-hidden="true">→</i></Link>
+            <Link to={latestProject ? `/projects/${latestProject.projectId}` : '/projects'}><span className="quick-action-icon quick-action-icon--review"><ReviewIcon /></span><span><strong>章节温习</strong><small>从项目题库开始答题</small></span><i aria-hidden="true">→</i></Link>
             <Link to="/knowledge-graph"><span className="quick-action-icon quick-action-icon--graph"><GraphIcon /></span><span><strong>识网</strong><small>查看知识脉络与掌握度</small></span><i aria-hidden="true">→</i></Link>
           </div>
+        </section>
+
+        <section className="home-summary" aria-label="研习概况">
+          <article><span>研习册</span><strong>{projects.length}</strong></article>
+          <article><span>已识网</span><strong>{projects.filter((project) => project.graphId).length}</strong></article>
+          <article><span>资料引用</span><strong>{projects.reduce((total, project) => total + project.materialIds.length, 0)}</strong></article>
+          <article><span>最近温习</span><strong>{formatUpdatedAt(latestProject?.updatedAt)}</strong></article>
         </section>
 
         <section className="home-intelligence-flow" aria-labelledby="home-intelligence-title">
@@ -78,14 +85,7 @@ export default function HomePage() {
           </div>
         </section>
 
-        <section className="home-summary" aria-label="研习概况">
-          <article><span>研习册</span><strong>{projects.length}</strong></article>
-          <article><span>已识网</span><strong>{projects.filter((project) => project.graphId).length}</strong></article>
-          <article><span>资料引用</span><strong>{projects.reduce((total, project) => total + project.materialIds.length, 0)}</strong></article>
-          <article><span>最近温习</span><strong>{formatUpdatedAt(latestProject?.updatedAt)}</strong></article>
-        </section>
-
-        {recentProjects.length ? <section className="workspace-card"><header><span className="section-label">近读</span><h2>最近的研习册</h2></header><div className="practice-project-list">
+        {recentProjects.length ? <section className="workspace-card home-recent-projects"><header><h2>最近的研习册</h2></header><div className="practice-project-list">
           {recentProjects.map((project) => <Link key={project.projectId} to={`/projects/${project.projectId}`}><span><strong>{project.name}</strong><small>{project.subjectCode || '未设置学科'} · {project.materialIds.length} 份资料 · {project.graphId ? '知识脉络已建立' : '待建立知识脉络'}</small></span><span>续读</span></Link>)}
         </div></section> : null}
       </main>

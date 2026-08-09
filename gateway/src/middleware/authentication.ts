@@ -207,6 +207,10 @@ export function createAuthenticationMiddleware(config: GatewayConfig) {
     }
 
     req.gatewayUserId = result.data.userId;
+    // headerSanitizer 已在认证之前删除所有客户端伪造的 X-User-Id。
+    // 同时写回当前请求头，保证带请求体的 http-proxy 流在创建上游请求时也能
+    // 取得已经内省确认的用户身份；proxyReq 仍会再次以 gatewayUserId 覆盖该值。
+    req.headers['x-user-id'] = result.data.userId;
     next();
   };
 }

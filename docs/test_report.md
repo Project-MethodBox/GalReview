@@ -1290,3 +1290,109 @@ material 构图。两次构图均成功，但 graphId、4 个知识点 ID 和各
 得到 4 道 READY 题，精确覆盖单选、填空、名词解释、简答，4 / 4 带本册知识点标签，未绑定为 0；
 随后成功创建 SMART_REVIEW session `d024a4d0-a808-42d2-8757-0a5f7d3a6f01` 并取得 1 道计划内题。
 credits 从 `1.00000` 结算为 `0.99776`，held 为 0。最终容器保持运行，供人工实测。
+
+## 33. 2026-08-09 `recite-question-v2` 真实 PDF 与题库主链复验
+
+本节只记录本轮实际重新执行的证据，不沿用第 31/32 节的 v1 结论。测试数据统一使用
+`recite-v2-*` 前缀；最终完整样本用户为 `1704abfc-25f7-4e6d-a9ca-8dfffc9b3276`。浏览器实际路径
+均经公开 Gateway API 完成注册、multipart 上传、解析、先立册、按 `studyProjectId + materialId`
+构图、绑定、读取全部章节、创建 `LEARNING` PlanGraph，并在请求中省略 `targetCount` 执行
+`recite-question-v2`。内部 extracted-text 接口只在前置定位阶段使用，最终结果未绕过公开归属约束。
+
+### 33.1 静态回归与生产构建
+
+| 验证项 | 结果 |
+|---|---:|
+| PracticeService | PASS，36 / 36，0 skipped |
+| KnowledgeService | PASS，112 / 112，0 skipped |
+| Gateway Vitest | PASS，15 files、203 / 203；TypeScript build PASS |
+| Frontend | PASS，TypeScript + Vite，1401 modules；保留既有 KnowledgeDag 大 chunk 警告 |
+| PracticeService API build | PASS，0 warning / 0 error |
+
+Practice 新增/复验用例覆盖：DeepSeek/OpenAI-compatible JSON 与 `usage.total_tokens` 累计；非 JSON、
+缺 usage、非法 pointId、quote 不在原文、答案不受 quote 支持、单选多答案、独立回验拒绝；扁平化
+PDF 页内题号；农业三道坏题；微生物“名词解释/大题/重要知识点”；答案内部 `1./2./3.` 不截断；
+以及当前答案必须在更早的章节/题型边界停止，不能吞入后续章节。
+
+### 33.2 两份真实 PDF
+
+| 项目 | 农业生态学.pdf | 微生物学B.pdf |
+|---|---:|---:|
+| 规范化文本 | 26,139 UTF-16 chars / 20 source spans | 26,513 UTF-16 chars / 39 source spans |
+| 本册图谱章节 / Learning Plan 点 | 7 / 243 | 4 / 15 |
+| 自动题数 | 189（不是 30） | 240（不是 30） |
+| READY / DRAFT | 172 / 17 | 9 / 231 |
+| 已绑定唯一知识点数 | 161 | 7 |
+| READY 无 pointId | 0 | 0 |
+| SourceReference 校验 | 189 / 189 offset + checksum 通过 | 240 / 240 offset + checksum 通过 |
+| 水印/页脚泄漏 | 0 | 0 |
+| 跨章节答案泄漏 | 0 | 0 |
+
+农业三道回归题均保留原问题和真实答案：“生态平衡的基本特征有哪些？”保留四个分点；“循环农业
+坚持的‘4R原则’是什么？”保留适量化、再循环、再利用、可控化；“解读中国生态农业原理之绿色
+发展原理。”的答案与题干不同并保留三个原文分点。修复前，部分带 `【参考答案】` 的题会跨越
+“综合题/下一章”吞入远处内容；结束边界改为“下一题标记与结构边界的较早者”后，答案内部编号
+仍完整，真实样本的章节/题型栏泄漏为 0。
+
+微生物资料确认为半结构化讲义而非标准题库。v2 直接忠实提取了“术语：定义”和“问题标题：分点
+答案”，没有把它们统一重写成模板。该图谱实际只产生 15 个 Learning Plan 点，故 231 道原文问答
+无法唯一贴签并按契约保留 DRAFT，9 道通过唯一绑定后 READY；这不是可宣称“240 道可练习题”的
+结果。当前本地 `DSAPI` 未配置，且该样本的半结构化范围覆盖了可成题区间，因此普通正文的真实
+DeepSeek + 独立回验未发生；该分支只由模拟 provider 单元测试验证，不能据此宣称线上模型质量已验收。
+
+最终完整样本 ID：
+
+| 对象 | 农业生态学 | 微生物学B |
+|---|---|---|
+| material | `be87269a-47b0-4849-befd-49f6208b1d82` | `35e774a5-b8eb-4ddb-8973-b5a1c9128da6` |
+| ingestion job | `05acf178-d4f8-444c-a7c4-7ee8d6326d86` | `dce867f3-90fc-4a1b-8e9e-41815c93f914` |
+| StudyProject | `cf80e37a-4249-42aa-8f23-0fa5a959e9dc` | `ba3ad4e4-425e-452f-b6c5-2497ae9ee4db` |
+| graph build / graph | `5f148584-0497-4694-9959-02ed63b5ceba` / `b9bc3e62-201f-42cb-8b00-4c2c0a07c3a0` | `87463f3b-c674-4e84-ae42-f7020b6ec5c0` / `ce6cc834-4d4e-444f-a24f-3f7095b72905` |
+| Learning Plan | `234195d1-671f-4500-973a-126fbaa6528a` | `e1417683-a1d0-43bf-9035-8690a57994a2` |
+| generation job | `c5fa536c-cb3b-44cd-909f-9daf76095802` | `f1cfa24f-772a-48b6-9407-5795d24a34ba` |
+
+### 33.3 credits、练习、试卷与故事回响
+
+为确定性复现余额不足，另建 `recite-v2-credit-1786238134851` 测试册并显式请求 1000 题作为
+预授权边界探针；首次请求经 Gateway 返回 `402 CREDITS_INSUFFICIENT`，没有启动生成。随后经公开
+管理员登录和 `/admin/credit-codes/batches` 创建 20 credits 兑换码，再由用户通过
+`/credits/redemptions` 兑换；重试生成 `PARTIALLY_SUCCEEDED`、创建 240 题，held 最终为 0，余额
+`20.99997`。完整兑换码未写入日志或文档。对应 project `8b67786a-e840-4d3c-a121-94895ae77f38`，
+graph build `e55d0d9d-8916-407b-986e-80e6d4150bea`，graph
+`dc4079f2-80db-4d18-b664-9b1eeb49b186`，Learning Plan
+`f5ca19dd-d11b-48c2-a59f-5546ca5d8ebf`，credit code ID
+`a9ee3158-8fd2-4cdd-82e7-9981d0da4312`，generation job
+`5cf29a00-a416-4385-96b5-eedba2670046`。
+
+同一农业研习册随后完成三条公开 HTTP 闭环：
+
+- SMART_REVIEW：plan `9353c225-e24e-4bb8-9110-464c11f73dda`，session
+  `97ad35b7-e23a-4066-948f-2a195f93a94c`；正确作答后目标 mastery score=100，
+  `nextReviewAt=2026-08-10T01:18:41.4076626Z`。
+- 模拟试卷：plan `868ad704-5bd3-4430-8ebe-7a727cb1b456`，paper
+  `22385c18-7661-4af3-955c-38918202e057`，session
+  `2d789afc-ac20-43f9-93fb-100a497f8aca`，答题与 completion 成功。
+- 故事回响：plan `cbb36522-bcaa-4004-9827-f80de5a4e6d2`，generation
+  `ffd90c40-58ab-4619-bd7b-c88f6f6ac04b`，package
+  `9d8904cf-cf46-42e8-a189-3c9acd4c5997`，Render session
+  `06dfac8b-b295-4c3e-b409-76a22f6758ab`，结果
+  `674ae756-f3e9-4b3a-9dec-06c5c444fec2` 为 `ACCEPTED`；1 条游戏题证据写回同一 mastery。
+
+### 33.4 失败样本、运行环境与未验证项
+
+脚本前两次分别因遗漏图谱构建 `Idempotency-Key` 和 Gateway 生成限流失败；修复脚本后未关闭
+幂等/限流门禁。为便于精确清理，失败样本记录如下：
+
+- `recite-v2-1786237468840`：user `838f9f31-50b3-4be9-933a-4bd2f2cc8c0f`；materials
+  `d40256b6-bb88-41d2-b834-46f384e70755`、`5d5f691c-b51a-41e0-b3c6-0958f1ff4bd3`；空图 project
+  `6ecab00f-7167-44e4-a03c-1f49a3ba4ffc`。
+- `recite-v2-1786237502214`：user `2b990d6d-8740-47b6-898b-86d2a5872e8b`；materials
+  `1b4850fb-5e52-4bf7-b9fc-df58d405399c`、`011a97d2-53e9-4aa2-b8f4-b2a2b0c3faa0`；projects/graphs
+  `6c19a884-d99c-43a5-89c3-ba4bb7b59da4` / `67e95939-3003-4bce-965f-bcc225d3b8dd`，
+  `11798cdf-9c1c-47fb-a421-0ec9dc3455cc` / `4dcd532c-64a7-4e3a-a473-46fa38e5d5da`。
+
+本机当前没有 `docker.exe`、Docker 服务或 Docker Desktop 进程，题设中的 D 盘资源恢复目录也不存在，
+所以本轮不能重建或声称“15 个容器 healthy”。8 个后端服务、Gateway 与 Frontend 使用本地启动栈，
+其 `/healthz`、`/readyz` 均为 HTTP 200。Practice 14 个资源文件在本地出现后已按 manifest 对
+109,930,654 bytes 完成 14 / 14 长度与 SHA-256 校验；Docker 镜像门禁未运行。OCR、真实 DeepSeek
+普通正文质量和容器态回归仍未验证，结论必须与上面的单元测试/本地 HTTP 冒烟分开。

@@ -664,7 +664,7 @@ FileService 必须在最新 `IngestionJob.status="SUCCEEDED"` 后，将 `Materia
 - `blocks` 必须非空并按来源区间有序；每个 `source` 必须与 `sourceMap` 中的一项完全相同，`text` 必须与该半开区间的原文逐字相同。解析器无法恢复页码、段落或标题级别时使用 `null`，不得虚构位置。
 - FileService 对同一资料、同一 `parserVersion` 的非强制重试必须产生相同文本、`textChecksum` 和来源映射。KnowledgeService 创建构图任务的请求幂等键固定为 `(ownerUserId, Idempotency-Key)`，并校验重复 key 的 `studyProjectId`、`materialId`、切分模式、抽取器版本和学科提示均一致；读取文本后，`studyProjectId` 与 `textChecksum` 都进入持久化图谱指纹，`parserVersion`、`sourceMapVersion` 只作为受校验的来源契约字段，不得误称为创建任务的幂等键。
 - 资料尚未 `READY` 时返回 `409 MATERIAL_TEXT_NOT_READY`；最新解析明确失败时返回 `422 MATERIAL_TEXT_EXTRACTION_FAILED`；调用身份不是经 Gateway 注入的受信服务身份时返回 `403 FORBIDDEN`。
-- `/internal/v1/materials/{materialId}/extracted-text` 除目标服务 `X-Gateway-Key` 外，还必须要求单值 `X-Service-Name` 命中大小写不敏感的精确 allowlist；当前默认只允许 `KnowledgeService`，FileService 配置项为 `InternalAccess:ExtractedTextAllowedServices`。仅“非空服务名”不构成授权。
+- `/internal/v1/materials/{materialId}/extracted-text` 除目标服务 `X-Gateway-Key` 外，还必须要求单值 `X-Service-Name` 命中大小写不敏感的精确 allowlist；当前默认允许 `KnowledgeService` 和 `PracticeService`，FileService 配置项为 `InternalAccess:ExtractedTextAllowedServices`。仅“非空服务名”不构成授权。
 - 响应可使用统一 JSON 成功信封；无论传输包装为何，`text` 字段本身只能是上述纯文本。
 - KnowledgeService 只经 Gateway 使用本端点或事件中的 `contentRef` 读取文本，不读取 FileService 数据库，也不把 PDF/DOCX 解析逻辑作为正常生产路径。
 - `enableOcr=false` 时 FileService 不得调用 OCRService；图片或没有内嵌文本的扫描 PDF 应使任务失败。`enableOcr=true` 只表示允许回退，文本型 PDF 仍优先直接提取，最终是否执行 OCR 以 `ocrUsed` 为准。逐页 `ocrProgress` 查询失败不得覆盖 FileService 自己的任务状态。
@@ -930,7 +930,7 @@ interface CreateAssessmentPlanRequest {
 interface CreateLearningPlanRequest {
   graphId: Uuid;
   chapterIds: Uuid[];           // 1-100，由上游明确指定需要复习的章节
-  maxPoints?: number;           // int32，1-50，默认 20
+  maxPoints?: number;           // int32，1-1000，默认 20；整册首次建库可显式使用 1000
   maximumDependencyDepth?: number; // int32，0-8，默认 5
 }
 
@@ -2446,8 +2446,7 @@ POST /api/v1/practice-projects/{projectId}/question-generations
   "reviewPlanId": "8e812950-3311-40a7-93ab-636409df8cc2",
   "snapshotVersion": "plan-graph-1.0:3da5f48f37ac57c91b49ee747c11e45f1a9e9e73d8e892fcd1bd1f9f3f50c620",
   "kinds": ["SINGLE_CHOICE", "FILL_BLANK", "TERM_DEFINITION", "ESSAY"],
-  "targetCount": 30,
-  "generatorVersion": "recite-question-v1"
+  "generatorVersion": "recite-question-v2"
 }
 ```
 
@@ -2459,11 +2458,10 @@ PATCH `graphId`，PracticeService 再反查图谱的 `studyProjectId` 和来源�
 
 “立册”不是只写入空 `StudyProject` 的结束动作，而是 ReciteHelper 经典创建流程的产品级编排：客户端
 先用 READY material 创建 `StudyProject`，再按该 `projectId` 建图并绑定；随后读取本册图谱全部章节，
-创建一次覆盖全部章节的 OPEN assessment plan，再调用同册题目生成接口，最后进入该册。藏书阁
+创建一次覆盖全部章节的 OPEN learning plan，再调用同册题目生成接口，最后进入该册。藏书阁
 只负责资料上传、OCR、规范化文本与预览，不创建或选择图谱。首次自动成题固定请求
-`SINGLE_CHOICE | FILL_BLANK | TERM_DEFINITION | ESSAY`。当 `targetCount` 不少于请求题型数时，
-生成器必须先轮转覆盖每种请求题型，再重复任一题型；知识点也同步轮换，不能因知识点数先达到
-`targetCount` 而把首批题全部生成为第一种题型。`TRUE_FALSE` 沿用 ReciteHelper 规则，
+`SINGLE_CHOICE | FILL_BLANK | TERM_DEFINITION | ESSAY`，省略 `targetCount`，由通过门禁的唯一原题或
+知识原子数量决定题库规模，最多 1000 题，不固定为 30。`TRUE_FALSE` 沿用 ReciteHelper 规则，
 只从整卷导入或人工题录产生。独立“成题”入口只用于追加或失败重试，不得成为首次建册的正常必经步骤。
 若 credits 不足、网络中断或没有任何知识点能与原文精确绑定，已经成功持久化的册必须保留并显示
 可恢复状态，不能谎报完整成功，也不能重复创建第二册。
@@ -2472,21 +2470,27 @@ PATCH `graphId`，PracticeService 再反查图谱的 `studyProjectId` 和来源�
 `X-Service-Name: PracticeService` 经 Gateway 读取现有 PlanGraph，并校验 `ownerUserId`、
 `graphId`、`status=OPEN` 和不可变 snapshot 均与当前项目一致。服务直接复用 PlanGraph 已有的
 `title/summary/tags/weight/coversPointIds`，不新增另一套选点接口，也不得只保留 point ID 后猜测语义。
-`targetCount` 范围 1-200。相同所有者、项目和
+`targetCount` 可省略；显式提供时范围为 1-1000。相同所有者、项目和
 `idempotencyKey` 必须返回同一任务；载荷不同则返回 `409 IDEMPOTENCY_KEY_REUSED`。
 
-自动绑定采用“知识点先行、原文后成题”，禁止按数组下标、题目序号或随机数轮换贴标签：
+`recite-question-v2` 先区分输入形态，再统一进入证据和绑定门禁：
 
-1. 按 PlanGraph 已冻结的目标顺序处理 `questionTarget=true` 的知识点；
-2. 在项目规范化原文中先查找知识点标题的规范化精确命中；没有标题命中时，只允许使用当前
-   PlanGraph 中唯一且长度足够的精确标签；
-3. 题目由命中的知识点与原文片段共同生成，保存对应 `knowledgePointId` 与 `SourceReference`；
-4. 没有可信原文时不生成、不贴签，并记录 `KNOWLEDGE_POINT_SOURCE_NOT_FOUND`；不得为了凑足
-   `targetCount` 把无关段落绑定到该点；
-5. 当前 `recite-question-v1` 是确定性原文模板生成器：只有题目、答案、唯一主知识点和精确
-   `SourceReference` 同时成立才创建，成功结果直接为 `READY`，以恢复 ReciteHelper “立册即有题”
-   的业务语义。未来接入不能满足上述机械校验的模型输出必须先为 `DRAFT`，经用户核对后才能
-   `READY`。图谱项目中的 `READY` 题目必须有且只有一个主知识点；多知识点复合题应拆题或人工选择主知识点。
+1. 显式题库优先忠实提取题号、题干、A-D 选项、`【参考答案】` 和解析；答案内部编号不是下一题边界，
+   但章节或题型栏边界必须先于更远的答案标记结束当前答案。
+2. 半结构化讲义识别“名词解释”“大题”“重要知识点”“术语：定义”和“问题标题：分点答案”，从
+   可核对答案原子形成题面，不强制模型重写已有问答。
+3. 普通教材正文先按 PlanGraph 知识点和连续原文建立 `EvidenceBundle/KnowledgeAtom`，再调用
+   OpenAI-compatible 模型答案先行生成；不得用固定 500/800 字符模板、全文随机词或知识点位置轮转凑题。
+4. 每题只允许绑定 PlanGraph 中唯一 `pointId`，去重键包含 pointId、知识原子和认知操作；无法唯一
+   绑定的原题保留 `DRAFT` 并记录诊断，禁止猜签。
+5. `READY` 必须同时通过 schema/题型形状、逐字 offset/quote/checksum、同一证据答案支持、独立 QA
+   回验答案一致、题干不泄露答案等布尔门禁。单选必须恰有 A-D 四项且证据只支持一个最佳答案；填空
+   必须为明确短跨度；名词解释只用于真实术语—定义关系。任一门禁失败均拒绝或保留 `DRAFT`。
+6. 模型缺少 API key 时，不得回退到“请概括下述内容”“10. ____？”或随机干扰项。可直接核对的结构化
+   题仍可生成；需要模型的普通正文返回明确诊断。模型调用成功的实际 credits 只使用供应商
+   `usage.total_tokens`，缺失 usage 视为上游契约错误；纯结构化提取使用最小内部正数结算。
+
+图谱项目中的 `READY` 题目必须有且只有一个主知识点；多知识点复合题应拆题或人工选择主知识点。
 
 本版本在没有经过标注集校准前，不使用 SBERT 模糊匹配自动写入标签。将来若启用，接受阈值与
 第一/第二候选间隔必须由带真值的标注集给出，并冻结算法版本；不能拍脑袋设置混合权重或阈值。
@@ -2513,6 +2517,14 @@ type PracticeJob = {
 
 生成模型只能得到本次项目的规范化文本、选中 PlanGraph 的知识点和固定提示词；返回 JSON
 必须经过 schema 校验。模型输出不得作为 HTML、脚本、查询或可执行代码运行。
+
+适用范围暂限农学、社科、人文等事实、概念、关系、比较、步骤和论述型资料；计算题、公式推导与
+复杂理工题不在 v2 自动建库承诺内。质量设计依据如下，引用只支持对应工程决策，不替代项目真值集：
+
+- [Answer-focused and Position-aware Neural Question Generation](https://aclanthology.org/D18-1427/) 支持先确定答案焦点/位置，再生成题面；因此普通正文采用答案原子先行。
+- [Synthetic QA Corpora Generation with Roundtrip Consistency](https://aclanthology.org/P19-1620/) 展示用答案抽取回路筛选合成 QA；因此候选题由独立 QA 回验，而不接受生成模型自评。
+- [QGEval](https://aclanthology.org/2024.emnlp-main.658/) 给出流畅、清晰、简洁、相关、一致、可回答和答案一致七个维度，并指出现有自动指标与人工判断对齐不足；因此这些维度进入人工黄金集，自动门禁不能替代人工验收。
+- [NBME Item-Writing Guide](https://www.nbme.org/sites/default/files/2021-02/NBME_Item%20Writing%20Guide_R_6.pdf) 要求聚焦清晰的 lead-in、同质且可信的选项并清除形式线索；因此单选采用 one-best-answer 门禁，不能可靠构造干扰项就不生成单选。
 
 ### 14.4 练习、判分与证据
 

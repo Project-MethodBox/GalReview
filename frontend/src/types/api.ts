@@ -315,6 +315,7 @@ export interface AdminUser {
   email: string
   displayName: string
   isActive: boolean
+  credits: number
 }
 
 export interface CreditBalance {

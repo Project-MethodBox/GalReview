@@ -169,9 +169,15 @@ app.MapGet("/api/v1/admin/users", async (HttpContext c, IAdminRepository admin, 
 {
     if (!IsAdmin(c, gatewayKey)) return Failure(c, 403, "FORBIDDEN", "需要管理员权限");
     var accounts = admin.ListUsers();
-    var displayNames = await LookupProfileDisplayNamesAsync(clients.CreateClient("gateway"), gatewayKey, c.TraceIdentifier, accounts.Select(account => account.Id).ToArray(), c.RequestAborted);
+    var userIds = accounts.Select(account => account.Id).ToArray();
+    var displayNamesTask = LookupProfileDisplayNamesAsync(clients.CreateClient("gateway"), gatewayKey, c.TraceIdentifier, userIds, c.RequestAborted);
+    var creditBalancesTask = LookupCreditBalancesAsync(clients.CreateClient("gateway"), gatewayKey, c.TraceIdentifier, userIds, c.RequestAborted);
+    await Task.WhenAll(displayNamesTask, creditBalancesTask);
+    var displayNames = await displayNamesTask;
     if (displayNames is null) return Failure(c, 503, "SERVICE_UNAVAILABLE", "用户资料服务暂时不可用");
-    var users = accounts.Select(account => new AdminUser(account.Id, account.Email, displayNames.GetValueOrDefault(account.Id, account.Email), true)).ToArray();
+    var creditBalances = await creditBalancesTask;
+    if (creditBalances is null) return Failure(c, 503, "SERVICE_UNAVAILABLE", "credits 服务暂时不可用");
+    var users = accounts.Select(account => new AdminUser(account.Id, account.Email, displayNames.GetValueOrDefault(account.Id, account.Email), true, creditBalances[account.Id])).ToArray();
     return Results.Ok(ApiSuccess.Create(users, c.TraceIdentifier));
 });
 app.MapDelete("/api/v1/admin/users/{userId}", async (string userId, HttpContext c, IAdminRepository admin, IAdminAuditRepository audit, IHttpClientFactory clients) =>
@@ -328,6 +334,19 @@ static async Task<Dictionary<string, string>?> LookupProfileDisplayNamesAsync(Ht
     }
     catch (HttpRequestException) { return null; }
 }
+static async Task<Dictionary<string, decimal>?> LookupCreditBalancesAsync(HttpClient client, string key, string correlationId, string[] userIds, CancellationToken cancellation)
+{
+    if (userIds.Length == 0) return new Dictionary<string, decimal>(StringComparer.Ordinal);
+    using var request = new HttpRequestMessage(HttpMethod.Post, "/internal/v1/credits/balance-lookups") { Content = JsonContent.Create(new { userIds }) };
+    request.Headers.Add("X-Service-Name", "AuthService"); request.Headers.Add("X-Service-Key", key); request.Headers.Add("X-Correlation-Id", correlationId);
+    try
+    {
+        using var response = await client.SendAsync(request, cancellation);
+        if (!response.IsSuccessStatusCode) return null;
+        return await AdminCreditBalanceLookupContract.ReadAsync(response.Content, userIds, cancellation);
+    }
+    catch (HttpRequestException) { return null; }
+}
 static async Task<bool> DeleteUserProfileAsync(HttpClient client, string key, string correlationId, string userId, CancellationToken cancellation)
 {
     using var request = new HttpRequestMessage(HttpMethod.Delete, $"/internal/v1/users/{Uri.EscapeDataString(userId)}");
@@ -375,7 +394,7 @@ public sealed record AdminResetPasswordRequest(string NewPassword);
 public sealed record PasswordChangeRequest(string? CurrentPassword, string? NewPassword);
 public sealed record AccountDeletionRequest(string CurrentPassword);
 public sealed record CreateInvitationRequest(string Type, int? MaxUses, DateTimeOffset? ValidFrom, DateTimeOffset? ValidTo);
-public sealed record AdminUser(string Id, string Email, string DisplayName, bool IsActive);
+public sealed record AdminUser(string Id, string Email, string DisplayName, bool IsActive, decimal Credits);
 public sealed record AdminInvitation(string Code, string Type, int MaxUses, int UsedCount, DateTimeOffset? ValidFrom, DateTimeOffset? ValidTo, DateTimeOffset CreatedAt);
 public sealed record AdminAccount(string Id, string Email);
 public sealed record AdminProfileSummary(string UserId, string DisplayName);

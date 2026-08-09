@@ -6,7 +6,8 @@ param(
     [string]$RemotePrefix = '',
     [string]$Region = 'us-east-1',
     [string]$ManifestPath,
-    [switch]$SkipHashVerification
+    [switch]$SkipHashVerification,
+    [switch]$SkipAwsCliInstall
 )
 
 # Repository-distributed credential restricted to read/list access for 20277-gal-res.
@@ -38,10 +39,78 @@ if (($normalizedPrefix -split '/' | Where-Object { $_ -in @('.', '..') }).Count 
 }
 $prefixWithSlash = if ($normalizedPrefix) { "$normalizedPrefix/" } else { '' }
 
-$awsCommand = Get-Command aws -ErrorAction SilentlyContinue
-if (-not $awsCommand) {
-    throw 'AWS CLI was not found. Install AWS CLI v2, then rerun this script. Do not use aws configure with the shared OSCA key.'
+function Resolve-AwsCliV2 {
+    $command = Get-Command aws.exe -ErrorAction SilentlyContinue
+    $candidates = @(
+        (Join-Path $env:LOCALAPPDATA 'Programs\Amazon\AWSCLIV2\aws.exe'),
+        (Join-Path $env:ProgramFiles 'Amazon\AWSCLIV2\aws.exe'),
+        $(if ($command) { $command.Source })
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+
+    foreach ($candidate in $candidates) {
+        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
+        try {
+            $versionOutput = & $candidate --version 2>&1 | Out-String
+            if ($LASTEXITCODE -eq 0 -and $versionOutput -match 'aws-cli/2(?:\.|\s)') {
+                return [IO.Path]::GetFullPath($candidate)
+            }
+        }
+        catch {
+        }
+    }
+
+    return $null
 }
+
+function Install-AwsCliV2ForCurrentUser {
+    $installerUri = 'https://awscli.amazonaws.com/AWSCLIV2-User.msi'
+    $installerPath = Join-Path ([IO.Path]::GetTempPath()) ("AWSCLIV2-User-{0}.msi" -f [Guid]::NewGuid().ToString('N'))
+    $previousSecurityProtocol = [Net.ServicePointManager]::SecurityProtocol
+
+    try {
+        Write-Host 'AWS CLI v2 was not found. Downloading the official current-user installer...'
+        [Net.ServicePointManager]::SecurityProtocol = $previousSecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri $installerUri -OutFile $installerPath -UseBasicParsing
+
+        $signature = Get-AuthenticodeSignature -LiteralPath $installerPath
+        $signerSubject = if ($signature.SignerCertificate) { [string]$signature.SignerCertificate.Subject } else { '' }
+        if ($signature.Status -ne [Management.Automation.SignatureStatus]::Valid -or
+            $signerSubject -notmatch 'Amazon(?: Web Services|\.com)') {
+            throw "The downloaded AWS CLI installer did not have a valid Amazon signature (status: $($signature.Status))."
+        }
+
+        Write-Host 'Installing AWS CLI v2 for the current Windows user...'
+        $installerArguments = @('/i', "`"$installerPath`"", '/passive', '/norestart')
+        $installerProcess = Start-Process -FilePath 'msiexec.exe' -ArgumentList $installerArguments -Wait -PassThru
+        if ($installerProcess.ExitCode -notin @(0, 3010)) {
+            throw "AWS CLI installer failed with exit code $($installerProcess.ExitCode)."
+        }
+        if ($installerProcess.ExitCode -eq 3010) {
+            Write-Warning 'AWS CLI installation requested a Windows restart. This script will still try the installed executable now.'
+        }
+    }
+    finally {
+        [Net.ServicePointManager]::SecurityProtocol = $previousSecurityProtocol
+        if (Test-Path -LiteralPath $installerPath) {
+            Remove-Item -LiteralPath $installerPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+$awsExecutable = Resolve-AwsCliV2
+if ([string]::IsNullOrWhiteSpace($awsExecutable)) {
+    if ($SkipAwsCliInstall) {
+        throw 'AWS CLI v2 was not found and automatic installation was disabled by -SkipAwsCliInstall.'
+    }
+
+    Install-AwsCliV2ForCurrentUser
+    $awsExecutable = Resolve-AwsCliV2
+    if ([string]::IsNullOrWhiteSpace($awsExecutable)) {
+        throw 'AWS CLI v2 installation completed, but aws.exe could not be located. Close this window, reopen it, and run the download script again.'
+    }
+}
+
+Write-Host "Using AWS CLI v2: $awsExecutable"
 
 $accessKey = $oscaAccessKeyId
 $secretKey = $oscaSecretAccessKey
@@ -67,7 +136,7 @@ function Protect-CommandError([string]$message) {
 }
 
 function Invoke-OsCaAws([string[]]$Arguments) {
-    $output = & $script:awsCommand.Source @Arguments 2>&1 | Out-String
+    $output = & $script:awsExecutable @Arguments 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) {
         throw (Protect-CommandError "OSCA S3 request failed: $($output.Trim())")
     }
@@ -92,14 +161,18 @@ function Resolve-SafeResourcePath([string]$relativePath) {
 
 try {
     New-Item -ItemType Directory -Path $destinationRoot -Force | Out-Null
-    @"
+    $awsConfigContent = @"
 [default]
 region = $Region
 output = json
 s3 =
     addressing_style = path
     signature_version = s3v4
-"@ | Set-Content -LiteralPath $temporaryConfig -Encoding utf8NoBOM
+"@
+    # UTF8Encoding(false) works in both Windows PowerShell 5.1 and PowerShell
+    # 7, while Set-Content -Encoding utf8NoBOM is unavailable in 5.1.
+    $utf8WithoutBom = [Text.UTF8Encoding]::new($false)
+    [IO.File]::WriteAllText($temporaryConfig, $awsConfigContent, $utf8WithoutBom)
 
     [Environment]::SetEnvironmentVariable('AWS_ACCESS_KEY_ID', $accessKey, [EnvironmentVariableTarget]::Process)
     [Environment]::SetEnvironmentVariable('AWS_SECRET_ACCESS_KEY', $secretKey, [EnvironmentVariableTarget]::Process)

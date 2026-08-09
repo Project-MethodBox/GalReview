@@ -85,16 +85,20 @@ const faqs = [
   },
 ]
 
-const heroCards = [
-  { id: 'story', line1: '资料成题库，', line2Prefix: '', line2Accent: '复习有计划', line2Suffix: '。' },
-  { id: 'mastery', line1: '千知万理，', line2Prefix: '让你', line2Accent: '真正学会', line2Suffix: '' },
-] as const
-
 const heroMessages = [
-  { text: '让每份资料可核对', accentFrom: 5, tone: 'blue' },
-  { text: '让每次练习更合适', accentFrom: 5, tone: 'violet' },
-  { text: '让薄弱知识准时再现', accentFrom: 4, tone: 'rose' },
-  { text: '资料成题库，\n复习有计划。', accentFrom: 7, tone: 'story' },
+  { text: '让资料真正成为主角', accentStart: 7, accentLength: 2, tone: 'blue' },
+  { text: '让练习成为日常主线', accentStart: 5, accentLength: 4, tone: 'violet' },
+  { text: '让知识彼此连接', accentStart: 3, accentLength: 4, tone: 'teal' },
+  { text: '让复习拥有故事感', accentStart: 5, accentLength: 3, tone: 'rose' },
+  { text: '让进步有迹可循', accentStart: 3, accentLength: 4, tone: 'amber' },
+  {
+    text: '千知万理，\n让你真正学会',
+    accentStart: 8,
+    accentLength: 4,
+    brandStart: 0,
+    brandLength: 4,
+    tone: 'final',
+  },
 ] as const
 
 const finalHeroMessageIndex = heroMessages.length - 1
@@ -121,10 +125,6 @@ export default function LandingPage() {
     visibleCharacters: 0,
     deleting: false,
     finished: false,
-  })
-  const [heroCarousel, setHeroCarousel] = useState<{ activeIndex: number; outgoingIndex: number | null }>({
-    activeIndex: 0,
-    outgoingIndex: null,
   })
   const scrollProgressRef = useRef<HTMLSpanElement>(null)
   const workspacePath = readSession() ? '/home' : '/login'
@@ -158,7 +158,7 @@ export default function LandingPage() {
     if (!typewriterState.deleting && typewriterState.visibleCharacters < message.text.length) {
       delay = 78
     } else if (!typewriterState.deleting && typewriterState.messageIndex < finalHeroMessageIndex) {
-      delay = 720
+      delay = 920
     } else if (typewriterState.deleting && typewriterState.visibleCharacters > 0) {
       delay = 38
     } else if (typewriterState.deleting) {
@@ -202,31 +202,6 @@ export default function LandingPage() {
   }, [typewriterState])
 
   useEffect(() => {
-    if (!typewriterState.finished) return
-
-    const timer = window.setInterval(() => {
-      setHeroCarousel((current) => ({
-        activeIndex: (current.activeIndex + 1) % heroCards.length,
-        outgoingIndex: current.activeIndex,
-      }))
-    }, 9000)
-
-    return () => window.clearInterval(timer)
-  }, [typewriterState.finished])
-
-  useEffect(() => {
-    if (heroCarousel.outgoingIndex === null) return
-
-    const timer = window.setTimeout(() => {
-      setHeroCarousel((current) => current.outgoingIndex === null
-        ? current
-        : { ...current, outgoingIndex: null })
-    }, 760)
-
-    return () => window.clearTimeout(timer)
-  }, [heroCarousel.outgoingIndex])
-
-  useEffect(() => {
     let animationFrame = 0
 
     const updateScrollProgress = () => {
@@ -262,8 +237,6 @@ export default function LandingPage() {
   const activeHeroMessage = heroMessages[typewriterState.messageIndex]
   const visibleHeroText = activeHeroMessage.text.slice(0, typewriterState.visibleCharacters)
   const finalHeroLabel = heroMessages[finalHeroMessageIndex].text.replace('\n', '')
-  const activeHeroCard = heroCards[heroCarousel.activeIndex]
-  const activeHeroLabel = `${activeHeroCard.line1}${activeHeroCard.line2Prefix}${activeHeroCard.line2Accent}${activeHeroCard.line2Suffix}`
 
   return (
     <div className="landing">
@@ -295,96 +268,52 @@ export default function LandingPage() {
         <section className="landing-hero">
           <div className="landing-hero__inner">
             <p className="landing-hero__eyebrow">
-              <span className="landing-hero__eyebrow-dot" /> AI 辅助解析与智能复习
+              <span className="landing-hero__eyebrow-dot" /> 知识图谱驱动的互动复习
             </p>
             <h1
               className="landing-hero__title"
-              aria-label={typewriterState.finished ? activeHeroLabel : finalHeroLabel}
+              aria-label={finalHeroLabel}
             >
-              {typewriterState.finished ? (
-                <span className="landing-hero__card-stage" aria-hidden="true">
-                  {heroCards.map((card, cardIndex) => {
-                    const position = cardIndex === heroCarousel.activeIndex
-                      ? 'active'
-                      : cardIndex === heroCarousel.outgoingIndex ? 'previous' : 'next'
+              <span
+                className={`landing-hero__typed landing-hero__typed--${activeHeroMessage.tone}`}
+                aria-hidden="true"
+              >
+                {Array.from(visibleHeroText).map((character, characterIndex) => {
+                  if (character === '\n') {
+                    return <br className="landing-hero__typewriter-break" key={`break-${characterIndex}`} />
+                  }
 
-                    return (
-                      <span
-                        className={`landing-hero__title-card landing-hero__title-card--${position}`}
-                        key={card.id}
-                      >
-                        <span className={`landing-hero__card-copy${card.id === 'mastery' ? ' landing-hero__typed--final' : ''}`}>
-                          <span className="landing-hero__card-line">
-                            {card.id === 'mastery' ? (
-                              <><span className="landing-hero__typewriter-char--brand">千知万理</span>，</>
-                            ) : card.line1}
-                          </span>
-                          <span className="landing-hero__card-line">
-                            {card.line2Prefix}
-                            {card.id === 'mastery' ? (
-                              Array.from(card.line2Accent).map((character, characterIndex) => (
-                                <span
-                                  className="landing-hero__typewriter-char landing-hero__typewriter-char--accent"
-                                  key={character}
-                                  style={{ '--typewriter-char-index': characterIndex } as CSSProperties}
-                                >
-                                  {character}
-                                </span>
-                              ))
-                            ) : (
-                              <>
-                                {Array.from(card.line2Accent).map((character, characterIndex) => (
-                                  <span
-                                    className={`landing-hero__story-char${characterIndex >= 3 ? ' landing-hero__story-char--shine' : ''}`}
-                                    key={character}
-                                    style={{
-                                      '--story-char-index': characterIndex,
-                                      '--story-shine-index': Math.max(0, characterIndex - 3),
-                                    } as CSSProperties}
-                                  >
-                                    {character}
-                                  </span>
-                                ))}
-                                <span className="landing-hero__story-punctuation">{card.line2Suffix}</span>
-                              </>
-                            )}
-                          </span>
-                        </span>
-                      </span>
-                    )
-                  })}
-                </span>
-              ) : (
-                <span
-                  className={`landing-hero__typed landing-hero__typed--${activeHeroMessage.tone}`}
-                  aria-hidden="true"
-                >
-                  {Array.from(visibleHeroText).map((character, characterIndex) => {
-                    if (character === '\n') {
-                      return <br className="landing-hero__typewriter-break" key={`break-${characterIndex}`} />
+                  const characterClasses = ['landing-hero__typewriter-char']
+                  const accentEnd = activeHeroMessage.accentStart + activeHeroMessage.accentLength
+                  if (characterIndex >= activeHeroMessage.accentStart && characterIndex < accentEnd) {
+                    characterClasses.push('landing-hero__typewriter-char--accent')
+                  }
+
+                  if ('brandStart' in activeHeroMessage) {
+                    const brandEnd = activeHeroMessage.brandStart + activeHeroMessage.brandLength
+                    if (characterIndex >= activeHeroMessage.brandStart && characterIndex < brandEnd) {
+                      characterClasses.push('landing-hero__typewriter-char--brand')
                     }
+                  }
 
-                    const characterClasses = ['landing-hero__typewriter-char']
-                    if (characterIndex >= activeHeroMessage.accentFrom) {
-                      characterClasses.push('landing-hero__typewriter-char--accent')
-                    }
-
-                    return (
-                      <span
-                        className={characterClasses.join(' ')}
-                        key={`${typewriterState.messageIndex}-${characterIndex}`}
-                      >
-                        {character}
-                      </span>
-                    )
-                  })}
-                  <span className="landing-hero__typewriter-caret" />
-                </span>
-              )}
+                  return (
+                    <span
+                      className={characterClasses.join(' ')}
+                      key={`${typewriterState.messageIndex}-${characterIndex}`}
+                      style={{
+                        '--typewriter-char-index': Math.max(0, characterIndex - activeHeroMessage.accentStart),
+                      } as CSSProperties}
+                    >
+                      {character}
+                    </span>
+                  )
+                })}
+                {!typewriterState.finished && <span className="landing-hero__typewriter-caret" />}
+              </span>
             </h1>
             <p className="landing-hero__subtitle">
-              千知万理围绕你的复习资料库工作：解析原文、建立题库，
-              再用知识图谱与 SM-2 安排练习；视觉小说是同一研习册中的可选复习方式。
+              从一份资料，到一套持续生长的知识体系。千知万理贯通原文解析、题库构建与智能复习，
+              以知识图谱和 SM-2 编排学习节奏；视觉小说则让每一次重温更具沉浸感。
             </p>
             <div className="landing-hero__actions">
               <Link className="button button--primary landing-hero__cta landing-glass-button" to="/register">建立第一册研习</Link>
