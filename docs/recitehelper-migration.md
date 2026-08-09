@@ -163,8 +163,9 @@ PracticeService 不拥有：
    30 题等小题量限制不得反向限制首次建库。
 5. 生成器按“显式题库 → 半结构化讲义 → 普通正文”分流：原题/原答案优先忠实提取；术语定义与
    问题标题—分点答案从答案原子形成题面；剩余正文才按本册知识点、连续证据和答案原子调用模型。
-6. 每道 `READY` 题同时保存唯一 point ID 与逐字可回源的 source range/checksum，并通过独立 QA
-   回验。不能唯一绑定或不能由同一证据还原答案的原题保留 `DRAFT` 并给出诊断，禁止猜签。
+6. 每道 `READY` 题同时保存唯一 point ID 与逐字可回源的 source range/checksum，并通过与生成调用
+   分离的第二次 QA 回验。回验可使用同一 provider/model，不得误称独立模型。不能唯一绑定或不能由
+   同一证据还原答案的原题保留 `DRAFT` 并给出诊断，禁止猜签。
 
 ### 4.2 普通练习与智能复习
 
@@ -205,7 +206,7 @@ PracticeService 不代理、不复制也不转换 GamePackage。这样普通刷�
 - `recite-question-v2` 自动支持 `SINGLE_CHOICE | FILL_BLANK | TERM_DEFINITION | ESSAY`；
   `TRUE_FALSE` 只保留人工题录或导入。`targetCount` 可空，显式范围 1-1000；省略时以通过校验的
   唯一原题/知识原子决定题数，不能为了达到固定数量制造重复题。
-- 只有 schema、逐字来源、答案支持、独立回验、题型约束和唯一知识点绑定全部通过才进入 `READY`。
+- 只有 schema、逐字来源、答案支持、分离的第二次回验、题型约束和唯一知识点绑定全部通过才进入 `READY`。
   单选必须是 A-D 四项 one-best-answer；任何门禁失败都拒绝或进入 `DRAFT`，不自动修成“看起来像题”。
 - `similarity` 取值 `[0,1]`；`quality` 为整数 `[0,5]`；`responseTimeMs >= 0`。
 - 客观题不调用 LLM 判分。主观题即使调用解释模型，最终证据也必须保存本地模型分数、规则版本与正确答案摘要，保证可审计。
@@ -219,14 +220,23 @@ PracticeService 不代理、不复制也不转换 GamePackage。这样普通刷�
 旧式“每 500/800 字切一段，再轮转知识点和题型”的实现会切断多行答案、把章节标题/页脚混入题面，
 并诱发“请概括下述内容”“10. ____？”和随机干扰项。v2 的 1400 字窗口只用于普通正文模型调用的
 传输边界；它不是知识原子，也不能直接决定题数、题型或 pointId。结构化边界、连续原文证据与
-PlanGraph 唯一绑定先于窗口，窗口生成结果仍要逐字回源并通过独立回验。
+PlanGraph 唯一绑定先于窗口，窗口生成结果仍要逐字回源并通过第二遍回验。
 
 研究依据与工程映射：
 
 - [Answer-focused and Position-aware Neural Question Generation](https://aclanthology.org/D18-1427/)：支持答案焦点先行，映射为 `EvidenceBundle/KnowledgeAtom → 题面`。
-- [Synthetic QA Corpora Generation with Roundtrip Consistency](https://aclanthology.org/P19-1620/)：支持用答案抽取回路筛选合成 QA，映射为独立回验必须还原同一标准答案。
+- [Synthetic QA Corpora Generation with Roundtrip Consistency](https://aclanthology.org/P19-1620/)：支持用答案抽取回路筛选合成 QA，映射为第二遍回验必须还原同一标准答案。
+- [Putting the Horse before the Cart: A Generator-Evaluator Framework for Question Generation from Text](https://aclanthology.org/K19-1076/)：支持分离生成与评价职责；当前实现只迁移该设计原则，不复现论文模型或 SQuAD 结论。
 - [QGEval](https://aclanthology.org/2024.emnlp-main.658/)：记录流畅、清晰、简洁、相关、一致、可回答、答案一致七个人工维度；论文同时显示自动指标不能替代人工判断，因此项目仍需真实资料黄金集。
+- [Evaluating Rewards for Question Generation Models](https://aclanthology.org/N19-1237/)：自动奖励可能与人工判断错位并被模型利用，因此不设置合成质量分或拍脑袋混合权重作为有效性证明。
 - [NBME Item-Writing Guide](https://www.nbme.org/sites/default/files/2021-02/NBME_Item%20Writing%20Guide_R_6.pdf)：支持聚焦 lead-in、同质可信选项和排除形式线索，映射为 A-D one-best-answer 布尔门禁；干扰项不可靠就不生成单选。
+- [Test-enhanced learning: taking memory tests improves long-term retention](https://pubmed.ncbi.nlm.nih.gov/16507066/) 与 [Retrieval practice produces more learning than elaborative studying with concept mapping](https://pubmed.ncbi.nlm.nih.gov/21252317/)：支持主动提取复习形态，不证明自动生成题目的内容质量。
+
+证据声明边界：当前算法只能称为“研究依据支持且通过项目技术门禁”，不能称为“本项目已经研究证明
+有效”。1400 字符、每片至多 8 题、温度和 token 上限是吞吐/上下文运行参数，不是论文得出的学习质量
+参数。升级为“已验证有效”前，必须按 `docs/contract.md` §14.3.1 使用版本化中文领域资料集，完成领域
+专家盲评、评审一致性、人工题与原 ReciteHelper 对照、关键组件消融；若声明学习增益，还必须完成预注册
+的延迟测验对照实验。样本量与优效/非劣界值由前瞻功效分析和人工基线决定，不得事后指定比例或权重。
 
 ## 6. UI 重绘规则
 
@@ -292,7 +302,9 @@ ReciteHelper 使用 AGPL-3.0。迁移的源代码、提示词、模型和兼容�
 | 2026-08-09 | Practice/Frontend | 恢复 ReciteHelper 立册编排：创建 StudyProject 后立即用全部章节建立生成计划并自动生成单选、填空、名词解释、简答四类题；精确原文/知识点绑定的确定性结果直接 READY；成题区降为追加与恢复入口 | 修复“空册创建成功后还要用户手动找成题按钮”的业务断裂，恢复立册即成题，同时保留 credits 失败后的可恢复册 | Practice 21/21、Frontend production build 1401 modules；真实立册成题与 SMART 会话见 test_report | VERIFIED |
 | 2026-08-09 | Knowledge/Practice/Gateway/Frontend | 将 KnowledgeGraph 所有权从 Material 改为 StudyProject：新册先创建，再以 `studyProjectId + materialId` 经双向内部核验构图和绑定；版本、指纹、SUPERSEDED 与 mastery 均按册隔离；藏书阁仅解析资料，识网页按册选择；失败重试从本册恢复 | 修复同一资料建立多册时共享图谱身份与掌握度的聚合越界，保证“资料是来源、研习册拥有图谱” | Knowledge 112/112、Practice 24/24、Gateway 203/203、Frontend 1401 modules；容器与双册隔离实测见 test_report | VERIFIED |
 | 2026-08-09 | Practice | `recite-question-v1` 从“题型外层、知识点内层”改为题型与知识点同步轮转；题数足够时先覆盖所有请求题型，再重复任一题型 | 修复四个知识点、四道首发题时达到数量上限而全部生成为单选的真实链路缺陷，同时保留干扰项不足时不伪造单选的安全降级 | 新回归测试复现旧序列并通过；Practice 24/24；真实首批 4 题覆盖单选、填空、名词解释、简答 | VERIFIED |
-| 2026-08-09 | Practice/Gateway/Frontend | 主链升级为 `recite-question-v2`：整册 Learning Plan、可空 targetCount、显式/半结构化/普通正文分流、答案原子、独立 QA 回验、provider usage 结算与 600 秒超时 | 修复扁平 PDF 行内题无法识别、答案跨章节、固定 30 题、机械模板与猜签问题 | Practice 36/36、Gateway 203/203、Frontend build；两份真实 PDF 与公开 HTTP 闭环见 test_report §33 | VERIFIED |
+| 2026-08-09 | Practice/Gateway/Frontend | 主链升级为 `recite-question-v2`：整册 Learning Plan、可空 targetCount、显式/半结构化/普通正文分流、答案原子、分离的第二次 QA 回验、provider usage 结算与 600 秒超时 | 修复扁平 PDF 行内题无法识别、答案跨章节、固定 30 题、机械模板与猜签问题 | Practice 36/36、Gateway 203/203、Frontend build；两份真实 PDF 与公开 HTTP 闭环见 test_report §33 | VERIFIED |
+| 2026-08-09 | Knowledge/Practice/Frontend/Deploy | 图谱切分与抽取升级为 `chapter-segmenter-v3` / `knowledge-extractor-v3`：识别无空格章节、裸题型栏、数字起始术语和真实绪论；普通长文按完整句切成不超过 1400 字符的模型证据块；题目绑定使用离散的题干精确优先级而非混合权重；前端显式请求 v3 | 修复微生物 PDF 仅 15 个图谱点导致 240 题中 231 题不可练，以及单行长文只形成一个 8 题模型分片；保持 DRAFT/READY 证据门禁 | Knowledge 115/115、Practice 38/38、Frontend build；同款 26,513 字符 PDF 本地探针得到 10 章、210 点、240 题中 220 READY，见 test_report §34 | VERIFIED |
+| 2026-08-09 | Practice/Docs | 将“独立 QA”校正为同一 provider/model 也可执行的“分离第二遍来源回验”；按原始论文、命题指南与 retrieval-practice 研究补齐证据等级、运行参数边界和项目级盲评/学习实验验收协议 | 防止把研究启发、自动门禁或单元测试夸大为当前中文领域组合系统已被证明有效 | 实现—文献映射复核；Practice 回归与结论见 test_report §35 | VERIFIED |
 
 状态只使用 `SPECIFIED | IMPLEMENTED | VERIFIED | BLOCKED`。代码合入后必须逐项更新，测试未运行或失败时不得写 `VERIFIED`。
 
@@ -300,7 +312,7 @@ ReciteHelper 使用 AGPL-3.0。迁移的源代码、提示词、模型和兼容�
 
 - [x] 五类题目可创建、编辑、练习、判分和回看来源；
 - [ ] PDF/DOCX/PPTX/TXT/Markdown/HTML/MHTML 可经 FileService 形成规范化文本；
-- [ ] 资料可生成题库，失败项可见且可重试；
+- [x] 资料可生成题库，失败项可见且可重试；
 - [x] PDF/TXT/HTML/MHTML 整卷可导入草稿并经题目修改接口人工确认；
 - [x] 智能复习读取 PlanGraph/mastery，完成后幂等回写 KnowledgeService；
 - [x] 随机组卷、计时考试、分值和结果复盘可用；

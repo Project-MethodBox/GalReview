@@ -376,6 +376,17 @@ docker compose --env-file .env -f compose.integration.yaml up -d --no-deps --wai
 | `mongo` | `mongo:8.0` | 供 FileService、GalGameService、PracticeService 使用；各自只访问 `qzwl_file`、`qzwl_galgame`、`qzwl_practice` 权威数据库 |
 | `neo4j` | `neo4j:2026.06.0` | 只由 KnowledgeService 写入；Browser/Bolt 宿主映射仅用于受限诊断 |
 
+### Knowledge/Practice v3 题库升级
+
+`chapter-segmenter-v3` / `knowledge-extractor-v3` 与 Practice 的长文分片、精确题干绑定必须作为同一
+兼容批次部署：至少重新构建并替换 `knowledge-service`、`practice-service` 和 `frontend`。本次不增加
+容器、不修改 Neo4j/Mongo schema；算法版本已经进入图谱指纹，因此既有 v2 READY 图继续只读，不会被
+原地补写。需要应用修复的研习册应在原 `StudyProject` 内用新的 `Idempotency-Key` 重建 v3 图、重新绑定
+项目并自动成题；不得复用历史 build ID、graph ID 或另建资料级共享图。部署后应以新建测试用户和资料
+验证图谱响应的 `segmenterVersion=chapter-segmenter-v3`、`extractorVersion=knowledge-extractor-v3`，并
+核对 READY 题均有唯一 `knowledgePointId`。回滚应用镜像不会删除 v3 图；旧版本客户端不支持 v3 构图，
+故回滚时应同时回滚这三个组件，且不要把 v3 图重新绑定给只接受 v2 的旧前端流程。
+
 基础设施可以单独恢复：
 
 ```bash

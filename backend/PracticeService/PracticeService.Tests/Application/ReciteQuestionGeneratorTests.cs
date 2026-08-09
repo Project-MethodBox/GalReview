@@ -82,6 +82,21 @@ public sealed class ReciteQuestionGeneratorTests
     }
 
     [Fact]
+    public async Task Exact_prompt_point_wins_over_same_length_concept_mentioned_in_answer()
+    {
+        const string text = "名词解释\n1. 土壤结构：土壤结构会影响土壤肥力。";
+        var target = Point("土壤结构");
+        var related = Point("土壤肥力");
+
+        var output = await CreateGenerator().GenerateAsync(
+            Input(Material(text), [target, related]), CancellationToken.None);
+
+        var question = Assert.Single(output.Drafts);
+        Assert.Equal(QuestionStatus.Ready, question.Status);
+        Assert.Equal(target.KnowledgePointId, question.KnowledgePointId);
+    }
+
+    [Fact]
     public async Task Flattened_pdf_pages_preserve_inline_questions_and_remove_known_page_noise()
     {
         const string text = "第一章 绪论 一、简答题（每小题5分） 4. 生态平衡的基本特征有哪些？ 【参考答案】（1）相对平衡；（2）物流和能流比例合理。 5. 循环农业坚持的4R原则是什么？ 【参考答案】适量化、再循环、再利用、可控化。 四、论述题 3. 解读中国生态农业原理之绿色发展原理。 山东农业大学农学院农业生态学教学组版权所有不得复制！ 17 【参考答案】绿色发展要求最大绿色覆盖并提高光合作用效率。";
@@ -181,6 +196,25 @@ public sealed class ReciteQuestionGeneratorTests
         Assert.Equal(240, output.Drafts.Count);
         Assert.All(output.Drafts, draft => Assert.Equal(QuestionStatus.Ready, draft.Status));
         Assert.Equal(240, output.Drafts.Select(draft => draft.KnowledgePointId).Distinct().Count());
+    }
+
+    [Fact]
+    public void Flattened_long_document_is_split_into_multiple_grounded_model_chunks()
+    {
+        var text = new StringBuilder();
+        var points = new List<PlanGraphPoint>();
+        for (var index = 1; index <= 80; index++)
+        {
+            var title = $"农业制度概念{index}";
+            text.Append(title).Append("是用于说明农业生产组织、资源利用和生态约束关系的课程概念，并具有可由原文核对的定义与应用条件。");
+            points.Add(Point(title));
+        }
+        var generator = CreateGenerator();
+
+        var estimate = generator.Estimate(Input(Material(text.ToString()), points));
+
+        Assert.Equal("GROUNDED_GENERATION", estimate.Mode);
+        Assert.True(estimate.ResolvedTargetCount >= 32);
     }
 
     [Fact]

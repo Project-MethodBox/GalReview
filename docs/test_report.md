@@ -1310,7 +1310,7 @@ credits 从 `1.00000` 结算为 `0.99776`，held 为 0。最终容器保持运�
 | PracticeService API build | PASS，0 warning / 0 error |
 
 Practice 新增/复验用例覆盖：DeepSeek/OpenAI-compatible JSON 与 `usage.total_tokens` 累计；非 JSON、
-缺 usage、非法 pointId、quote 不在原文、答案不受 quote 支持、单选多答案、独立回验拒绝；扁平化
+缺 usage、非法 pointId、quote 不在原文、答案不受 quote 支持、单选多答案、第二遍回验拒绝；扁平化
 PDF 页内题号；农业三道坏题；微生物“名词解释/大题/重要知识点”；答案内部 `1./2./3.` 不截断；
 以及当前答案必须在更早的章节/题型边界停止，不能吞入后续章节。
 
@@ -1338,7 +1338,7 @@ PDF 页内题号；农业三道坏题；微生物“名词解释/大题/重要�
 答案”，没有把它们统一重写成模板。该图谱实际只产生 15 个 Learning Plan 点，故 231 道原文问答
 无法唯一贴签并按契约保留 DRAFT，9 道通过唯一绑定后 READY；这不是可宣称“240 道可练习题”的
 结果。当前本地 `DEEPSEEK_API_KEY` 未配置，且该样本的半结构化范围覆盖了可成题区间，因此普通正文的真实
-DeepSeek + 独立回验未发生；该分支只由模拟 provider 单元测试验证，不能据此宣称线上模型质量已验收。
+DeepSeek + 第二遍来源约束回验未发生；该分支只由模拟 provider 单元测试验证，不能据此宣称线上模型质量已验收。
 
 最终完整样本 ID：
 
@@ -1396,3 +1396,102 @@ graph build `e55d0d9d-8916-407b-986e-80e6d4150bea`，graph
 其 `/healthz`、`/readyz` 均为 HTTP 200。Practice 14 个资源文件在本地出现后已按 manifest 对
 109,930,654 bytes 完成 14 / 14 长度与 SHA-256 校验；Docker 镜像门禁未运行。OCR、真实 DeepSeek
 普通正文质量和容器态回归仍未验证，结论必须与上面的单元测试/本地 HTTP 冒烟分开。
+
+## 34. 2026-08-09 提交后复核与紧凑 PDF 图谱修复
+
+本节是第 33 节之后的增量复核，不改写第 33 节的历史数据。开始时 `main` 与 `origin/main` 同步、工作树
+无暂存/未暂存/冲突；最新提交主要覆盖生产部署与 Gateway/Render 安全修复，但第 33.2 节已明确记录的
+“微生物 240 题仅 9 READY”仍未解决。审查定位到三条独立原因：
+
+1. PDFPig 会把“第一章…名词解释1.”压成无空格单行，v2 章节、题型栏和题号规则均要求空格或普通
+   左边界，导致 26,513 字符退化为 4 个固定窗口和 15 个点；
+2. 顶层术语 `6.2μm质粒` 的标题以数字开头，旧题号规则把 `6.` 当成小数前缀并使后续序列全部丢失；
+3. Practice 将题干命中和答案中顺带出现的同长度术语一起判为歧义，且普通长文的单行 PDF 不会按
+   1400 字符继续切片，可能把整份资料只规划为一个最多 8 题的模型分片。
+
+修复后版本为 `chapter-segmenter-v3` / `knowledge-extractor-v3`。v3 保留绪论，允许表格末词与下一章
+粘连但拒绝“见/参见第 X 章”引用，识别裸题型栏和数字起始术语，合并结构块之外的普通段落并移除已确认
+的页眉水印。Practice 的唯一绑定改为题干精确相等优先的离散顺序，未引入相似度或混合权重；无唯一
+结果仍保留 DRAFT。普通正文按完整句边界拆成至多 1400 UTF-16 字符的连续证据块。
+
+### 34.1 静态验证
+
+| 验证项 | 结果 |
+|---|---:|
+| KnowledgeService | PASS，115 / 115，0 skipped（原 112，新增紧凑章节、裸题型栏、数字起始术语） |
+| PracticeService | PASS，38 / 38，0 skipped（原 36，新增单行长文多分片与题干精确绑定） |
+| Gateway | PASS，15 files、203 / 203；TypeScript build PASS（本轮改动前基线，Gateway 源码未改） |
+| Frontend | PASS，TypeScript + Vite，1401 modules；仅保留既有 KnowledgeDag 大 chunk 警告 |
+| CreditService | PASS，6 / 6，0 skipped |
+| FileService | `dotnet test` 返回 0；该 solution 当前没有独立测试项目 |
+
+### 34.2 同款真实 PDF 的进程内复验
+
+输入为 `D:\AppData\微生物学B.pdf`（39 页）。临时探针直接复用 FileService 的 PDFPig、
+KnowledgeService 的生产切分/抽取器和 PracticeService 的生产 `ReciteQuestionGenerator`；探针与 PNG
+均已删除，未写数据库、未创建可复用 ID，也未把资料内容加入 Git。
+
+| 项目 | v2（第 33.2 节） | v3 本轮 |
+|---|---:|---:|
+| 规范化文本 | 26,513 UTF-16 chars | 26,513 UTF-16 chars |
+| 章节 | 4 个固定窗口 | 10 个结构章节；原文第五章标为“略”，不伪造空章 |
+| 图谱点 | 15 | 210 |
+| 自动题数 | 240 | 240 |
+| READY / DRAFT | 9 / 231 | 220 / 20 |
+| 已绑定唯一知识点数 | 7 | 184 |
+| 图谱标题/摘要残留 `2019级植科` 水印 | 未专项计数 | 0 |
+
+20 道 DRAFT 中，14 道无同名/包含知识点，6 道仍有多个同长度候选；门禁没有为追求数量而放宽。
+本轮没有配置 `DEEPSEEK_API_KEY`，因此普通正文模型生成仍只验证了分片规划和模拟 provider 测试，不能
+宣称真实模型质量已验收。Docker CLI 可见但 Linux engine pipe 不可用，未重建容器，也未重复第 33.3
+节的公开 HTTP、credits、SM-2、试卷和故事回响链；部署复验必须新建用户/资料/研习册，不依赖第 33 节
+的历史 ID。
+
+## 35. 2026-08-09 题目生成研究依据与声明边界审计
+
+本节回答“当前题目生成是否经过研究证明有效”。结论分成两个不能混淆的层级：
+
+- **研究与实现对齐：VERIFIED。** 答案原子先行、生成后第二遍来源约束回验、逐字证据、one-best-answer
+  布尔门禁和主动提取复习均能找到直接的论文或专业指南依据，生产代码确实实现了对应职责；
+- **千知万理当前组合系统的题目质量与学习效果：NOT VALIDATED。** 现有论文没有测试本项目的中文
+  农学/社科/人文资料、当前 provider/model/prompt、知识图谱绑定和门禁组合。本轮也没有执行领域专家
+  盲评或延迟学习对照实验，因而不得写成“已经研究证明有效”。
+
+### 35.1 原始来源与实现映射
+
+| 原始来源 | 原来源实际支持的结论 | 生产实现映射 | 不能外推的结论 |
+|---|---|---|---|
+| [Answer-focused and Position-aware Neural Question Generation](https://aclanthology.org/D18-1427/) | 在论文模型和数据集上，显式答案焦点/位置改进 QG | `ReciteQuestionGenerator` 先识别可独立作答的答案原子，再写题；答案必须受 `sourceQuote` 支持 | 未复现该模型或其实验，不能据此证明当前中文生成质量 |
+| [Synthetic QA Corpora Generation with Roundtrip Consistency](https://aclanthology.org/P19-1620/) | 生成与答案抽取回路可筛选合成 QA，并在论文任务上改进结果 | 第一次生成后进行分离的第二次来源约束作答，恢复答案集合必须与标准答案严格相等 | 第二次调用可使用同一 provider/model，不是独立模型或无偏评价者 |
+| [Putting the Horse before the Cart](https://aclanthology.org/K19-1076/) | 在 SQuAD 条件下 generator-evaluator 框架的自动与人工评价优于对照 | 生成职责与回验职责分离 | 当前实现没有复现论文架构、奖励函数或实验结果 |
+| [QGEval](https://aclanthology.org/2024.emnlp-main.658/) | 人工评价是自动指标的金标准；七个维度的自动指标与人工判断对齐不足 | 拟用流畅、清晰、简洁、相关、一致、可回答、答案一致作为人工黄金集维度 | 自动门禁通过不能替代人工题目质量验收 |
+| [Evaluating Rewards for Question Generation Models](https://aclanthology.org/N19-1237/) | 模型会提高被优化的奖励，但奖励可能与人工判断错位并被利用 | 不引入一个合成质量分，不用任意比例混合自动指标 | 不能以内部分数或题量证明质量 |
+| [NBME Item-Writing Guide](https://www.nbme.org/sites/default/files/2021-02/NBME_Item%20Writing%20Guide_R_6.pdf) | 专业命题指南要求聚焦 lead-in、同质可信选项并清除形式线索 | 单选恰有 A-D、一个最佳答案、来源不支持干扰项；不可靠就不生成 | 指南不是针对本项目或中文通识材料的随机对照试验 |
+| [Test-enhanced learning](https://pubmed.ncbi.nlm.nih.gov/16507066/)；[Retrieval practice and concept mapping](https://pubmed.ncbi.nlm.nih.gov/21252317/) | 在各自实验条件下，主动提取改善延迟保持或概念学习 | 用户作答、反馈、SM-2 后续调度与掌握度回写 | 只支持复习形态，不证明机器生成题达到人工题质量 |
+
+### 35.2 工程参数审计
+
+`ChunkCharacters=1400`、每片至多 8 题、`temperature=0.1`、`max_tokens=6000` 分别控制连续证据边界、
+单次输出规模、采样稳定性和响应上限。它们有边界/回归测试和成本约束，但没有上述论文给出的“最优题目
+质量”证据；文档已禁止把这些值宣传为科学阈值。知识点绑定采用离散、可解释的优先顺序并在歧义时
+进入 `DRAFT`，没有设置 40%/60% 等混合权重。
+
+生产提示词中“独立核验器”已校正为“与生成调用分离的第二次来源约束回验”。该修改保留重新作答、
+逐字 evidence 约束和答案集合严格一致三个行为，仅移除对同一模型第二次调用的过度表述。
+
+### 35.3 本轮验证与尚缺验收
+
+| 项目 | 结果 |
+|---|---|
+| 生产实现—研究职责逐项复核 | PASS |
+| PracticeService 回归 | PASS，38 / 38，0 skipped |
+| `git diff --check` | PASS |
+| 生产 DeepSeek 普通正文样本 | NOT RUN，本轮没有可用 API key |
+| 中文领域专家盲评、评审一致性与人工题/ReciteHelper 对照 | NOT RUN |
+| 关键组件消融 | NOT RUN |
+| 预注册延迟学习效果对照实验 | NOT RUN |
+
+因此本轮允许的最终表述只有：“题目生成不是随意拼装；关键设计有原始研究/专业指南依据，且生产实现
+和确定性技术门禁已经核对与回归。”如果要升级为“当前算法经验证有效”，必须先完成
+`docs/contract.md` §14.3.1 的版本化中文资料集、盲评、对照、消融和（涉及学习效果声明时）延迟测验；
+样本量、主要终点与判定界值必须在看结果前由功效分析和人工基线确定。

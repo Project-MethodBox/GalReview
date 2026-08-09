@@ -398,13 +398,13 @@ public sealed class ReciteQuestionGenerator(
 
         var verifierUser = JsonSerializer.Serialize(new
         {
-            task = "独立复核候选题。只能依据 evidence 独立作答，再将 recoveredAnswers 与候选标准答案比较；仅接受答案一致、题干清晰且 pointId 语义一致的题。",
+            task = "在与生成调用分离的第二次推理中复核候选题。只能依据 evidence 重新作答，再将 recoveredAnswers 与候选标准答案比较；仅接受答案一致、题干清晰且 pointId 语义一致的题。",
             evidence = chunk.Text,
             suppliedPoints = points,
             candidates = candidates.Select((candidate, index) => new { index, candidate.Draft.Kind, candidate.Draft.Prompt, candidate.Draft.Options, candidate.Draft.CorrectAnswers, candidate.PointId, candidate.SourceQuote }),
             output = new { results = new[] { new { index = 0, accepted = true, recoveredAnswers = new[] { "" }, reason = "" } } }
         }, _json);
-        var verified = await CompleteJsonAsync("你是独立题目核验器。不得利用 evidence 之外的常识放宽答案。输出严格 JSON。", verifierUser, cancellationToken);
+        var verified = await CompleteJsonAsync("你是第二遍来源约束题目核验器。不得利用 evidence 之外的常识放宽答案。输出严格 JSON。", verifierUser, cancellationToken);
         IReadOnlySet<int> accepted;
         try
         {
@@ -413,13 +413,13 @@ public sealed class ReciteQuestionGenerator(
         catch (Exception error) when (error is JsonException or InvalidOperationException or FormatException)
         {
             diagnostics.Add(new(chunk.Material.MaterialId, "QUESTION_ROUND_TRIP_OUTPUT_INVALID",
-                "独立核验器返回的 JSON 不符合回验契约，候选题均未进入 READY。", false));
+                "第二遍回验返回的 JSON 不符合回验契约，候选题均未进入 READY。", false));
             return new([], diagnostics, checked(generated.TokenUnits + verified.TokenUnits));
         }
         var result = candidates.Where((_, index) => accepted.Contains(index)).Select(candidate => candidate.Draft).ToArray();
         if (result.Length < candidates.Count)
             diagnostics.Add(new(chunk.Material.MaterialId, "QUESTION_ROUND_TRIP_REJECTED",
-                $"独立核验拒绝了 {candidates.Count - result.Length} 道不能从同一证据稳定还原答案的候选题。", false));
+                $"第二遍回验拒绝了 {candidates.Count - result.Length} 道不能从同一证据稳定还原答案的候选题。", false));
         return new(result, diagnostics, checked(generated.TokenUnits + verified.TokenUnits));
     }
 
@@ -560,25 +560,38 @@ public sealed class ReciteQuestionGenerator(
     {
         foreach (var material in materials)
         {
-            var paragraphs = Regex.Matches(material.Text, @"(?ms)(?:^|\n)\s*\S.*?(?=\n\s*\n|\z)")
-                .Cast<Match>().Where(match => match.Value.Trim().Length >= 40).ToArray();
             var position = 0;
-            while (position < paragraphs.Length)
+            while (position < material.Text.Length)
             {
-                var start = paragraphs[position].Index;
-                var end = paragraphs[position].Index + paragraphs[position].Length;
-                while (position + 1 < paragraphs.Length && paragraphs[position + 1].Index + paragraphs[position + 1].Length - start <= ChunkCharacters)
+                while (position < material.Text.Length && char.IsWhiteSpace(material.Text[position])) position++;
+                if (position >= material.Text.Length) break;
+                var start = position;
+                var preferredEnd = Math.Min(start + ChunkCharacters, material.Text.Length);
+                var end = FindChunkBoundary(material.Text, start, preferredEnd);
+                while (end > start && char.IsWhiteSpace(material.Text[end - 1])) end--;
+                if (end <= start)
                 {
-                    position++;
-                    end = paragraphs[position].Index + paragraphs[position].Length;
+                    end = preferredEnd;
                 }
                 var text = material.Text[start..end].Trim();
                 var actualStart = material.Text.IndexOf(text, start, StringComparison.Ordinal);
-                var candidates = BindCandidatePoints(text, points);
-                yield return new(material, actualStart, text, candidates);
-                position++;
+                if (text.Length >= 40)
+                    yield return new(material, actualStart, text, BindCandidatePoints(text, points));
+                position = end;
             }
         }
+    }
+
+    private static int FindChunkBoundary(string text, int start, int preferredEnd)
+    {
+        if (preferredEnd >= text.Length) return text.Length;
+        var minimum = start + Math.Max(1, (preferredEnd - start) * 3 / 5);
+        for (var index = preferredEnd; index > minimum; index--)
+        {
+            if (text[index - 1] is '\n' or '。' or '！' or '？' or '.' or '!' or '?' or '；' or ';')
+                return index;
+        }
+        return preferredEnd;
     }
 
     private static IReadOnlyList<PlanGraphPoint> BindCandidatePoints(string text, IReadOnlyList<PlanGraphPoint> points)
@@ -594,17 +607,37 @@ public sealed class ReciteQuestionGenerator(
     private static BindingResult BindPoint(string prompt, string answer, string excerpt, IReadOnlyList<PlanGraphPoint> points)
     {
         var normalizedPrompt = Normalize(prompt);
-        var normalizedEvidence = Normalize(prompt + answer + excerpt);
-        var titleMatches = points.Where(point =>
+        var exactPromptMatches = points.Where(point =>
                 Normalize(point.Title).Length >= 2
-                && (normalizedPrompt.Contains(Normalize(point.Title), StringComparison.Ordinal)
-                    || normalizedEvidence.Contains(Normalize(point.Title), StringComparison.Ordinal)))
+                && Normalize(point.Title) == normalizedPrompt)
+            .ToArray();
+        if (exactPromptMatches.Length > 0)
+            return exactPromptMatches.Length == 1
+                ? new(exactPromptMatches[0].KnowledgePointId, false)
+                : new(null, true);
+
+        var promptMatches = points.Where(point =>
+                Normalize(point.Title).Length >= 2
+                && normalizedPrompt.Contains(Normalize(point.Title), StringComparison.Ordinal))
             .Select(point => new { Point = point, Length = Normalize(point.Title).Length })
             .OrderByDescending(item => item.Length).ToArray();
-        if (titleMatches.Length > 0)
+        if (promptMatches.Length > 0)
         {
-            var longest = titleMatches[0].Length;
-            var winners = titleMatches.Where(item => item.Length == longest).Select(item => item.Point).ToArray();
+            var longest = promptMatches[0].Length;
+            var winners = promptMatches.Where(item => item.Length == longest).Select(item => item.Point).ToArray();
+            return winners.Length == 1 ? new(winners[0].KnowledgePointId, false) : new(null, true);
+        }
+
+        var normalizedEvidence = Normalize(answer + excerpt);
+        var evidenceMatches = points.Where(point =>
+                Normalize(point.Title).Length >= 2
+                && normalizedEvidence.Contains(Normalize(point.Title), StringComparison.Ordinal))
+            .Select(point => new { Point = point, Length = Normalize(point.Title).Length })
+            .OrderByDescending(item => item.Length).ToArray();
+        if (evidenceMatches.Length > 0)
+        {
+            var longest = evidenceMatches[0].Length;
+            var winners = evidenceMatches.Where(item => item.Length == longest).Select(item => item.Point).ToArray();
             return winners.Length == 1 ? new(winners[0].KnowledgePointId, false) : new(null, true);
         }
         var tagMatches = points.Where(point => point.Tags.Any(tag => Normalize(tag).Length >= 3 && normalizedEvidence.Contains(Normalize(tag), StringComparison.Ordinal))).ToArray();

@@ -51,26 +51,24 @@ internal sealed partial class InlineQuestionBankBlockReader
         return blocks;
     }
 
-    private static IReadOnlyList<Match> ReadSequentialItemMarkers(
+    private static IReadOnlyList<InlineItemMarker> ReadSequentialItemMarkers(
         string text,
         int start,
         int end)
     {
-        var accepted = new List<Match>();
+        var accepted = new List<InlineItemMarker>();
         var expectedNumber = 1;
-        foreach (Match marker in ItemMarkerRegex().Matches(text, start))
+        var section = text[start..end];
+        foreach (Match marker in ItemMarkerRegex().Matches(section))
         {
-            if (marker.Index >= end)
-            {
-                break;
-            }
-
             if (ReadNumber(marker.Groups["number"].Value) != expectedNumber)
             {
                 continue;
             }
 
-            accepted.Add(marker);
+            accepted.Add(new InlineItemMarker(
+                start + marker.Index,
+                marker.Length));
             expectedNumber++;
         }
 
@@ -123,12 +121,12 @@ internal sealed partial class InlineQuestionBankBlockReader
     }
 
     [GeneratedRegex(
-        @"(?<![\p{L}\p{N}])(?:[一二三四五六七八九十百]+|[0-9０-９]{1,3})[、.．]\s*(?<category>名词解释|填空(?:题)?|选择(?:题)?|判断(?:题)?|简答(?:题)?|问答(?:题)?|解答题|论述题|综合题|大题|习题|重要知识点|知识点)(?:\s*[（(][^）)\r\n]{0,60}[）)])?",
+        @"(?<![\p{L}\p{N}])(?:(?:[一二三四五六七八九十百]+|[0-9０-９]{1,3})[、.．]\s*)?(?<category>还有重要的知识点|重要知识点|名词解释|填空(?:题)?|选择(?:题)?|判断(?:题)?|简答(?:题)?|问答(?:题)?|解答题|论述题|综合题|大题|习题|知识点|结课思考题)(?:\s*[（(][^）)\r\n]{0,60}[）)])?",
         RegexOptions.CultureInvariant)]
     private static partial Regex CategoryMarkerRegex();
 
     [GeneratedRegex(
-        @"(?<![\p{L}\p{N}])(?<number>[0-9０-９]{1,3})[.、．]\s*(?=[^\s0-9０-９])",
+        @"(?:^|(?<=[。！？!?\n]))\s*(?<number>[0-9０-９]{1,3})[.、．]\s*(?=\S)",
         RegexOptions.CultureInvariant)]
     private static partial Regex ItemMarkerRegex();
 
@@ -137,3 +135,5 @@ internal sealed partial class InlineQuestionBankBlockReader
         RegexOptions.CultureInvariant)]
     private static partial Regex ItemPrefixRegex();
 }
+
+internal sealed record InlineItemMarker(int Index, int Length);
