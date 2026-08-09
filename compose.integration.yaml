@@ -4,10 +4,10 @@ services:
   user-mysql:
     image: mysql:8.4
     environment:
-      MYSQL_ROOT_PASSWORD: ${USER_MYSQL_ROOT_PASSWORD:-user-root-dev-password}
+      MYSQL_ROOT_PASSWORD: ${USER_MYSQL_ROOT_PASSWORD:-CHANGE_ME}
       MYSQL_DATABASE: galreview_user
       MYSQL_USER: galreview_user
-      MYSQL_PASSWORD: ${USER_MYSQL_PASSWORD:-user-dev-password}
+      MYSQL_PASSWORD: ${USER_MYSQL_PASSWORD:-CHANGE_ME}
     volumes:
       - user-mysql-data:/var/lib/mysql
     healthcheck:
@@ -23,10 +23,10 @@ services:
   auth-mysql:
     image: mysql:8.4
     environment:
-      MYSQL_ROOT_PASSWORD: ${AUTH_MYSQL_ROOT_PASSWORD:-auth-root-dev-password}
+      MYSQL_ROOT_PASSWORD: ${AUTH_MYSQL_ROOT_PASSWORD:-CHANGE_ME}
       MYSQL_DATABASE: galreview_auth
       MYSQL_USER: galreview_auth
-      MYSQL_PASSWORD: ${AUTH_MYSQL_PASSWORD:-auth-dev-password}
+      MYSQL_PASSWORD: ${AUTH_MYSQL_PASSWORD:-CHANGE_ME}
     volumes:
       - auth-mysql-data:/var/lib/mysql
     healthcheck:
@@ -42,10 +42,10 @@ services:
   credit-mysql:
     image: mysql:8.4
     environment:
-      MYSQL_ROOT_PASSWORD: ${CREDIT_MYSQL_ROOT_PASSWORD:-credit-root-dev-password}
+      MYSQL_ROOT_PASSWORD: ${CREDIT_MYSQL_ROOT_PASSWORD:-CHANGE_ME}
       MYSQL_DATABASE: qzwl_credit
       MYSQL_USER: qzwl_credit
-      MYSQL_PASSWORD: ${CREDIT_MYSQL_PASSWORD:-credit-dev-password}
+      MYSQL_PASSWORD: ${CREDIT_MYSQL_PASSWORD:-CHANGE_ME}
     volumes:
       - credit-mysql-data:/var/lib/mysql
     healthcheck:
@@ -102,8 +102,8 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:5101
       MOONSTONE_MODE: ${USER_SERVICE_MODE:-Mock}
-      Gateway__ServiceKey: ${USER_SERVICE_KEY:-moonstone-local-gateway-key}
-      ConnectionStrings__UserDatabase: "Server=user-mysql;Port=3306;Database=galreview_user;User ID=galreview_user;Password=${USER_MYSQL_PASSWORD:-user-dev-password};SslMode=Disabled;AllowPublicKeyRetrieval=True"
+      Gateway__ServiceKey: ${USER_SERVICE_KEY:-CHANGE_ME}
+      ConnectionStrings__UserDatabase: "Server=user-mysql;Port=3306;Database=galreview_user;User ID=galreview_user;Password=${USER_MYSQL_PASSWORD:-CHANGE_ME};SslMode=Disabled;AllowPublicKeyRetrieval=True"
     depends_on:
       user-mysql:
         condition: service_healthy
@@ -117,7 +117,7 @@ services:
       ASPNETCORE_URLS: http://+:5102
       MOONSTONE_MODE: ${AUTH_SERVICE_MODE:-Mock}
       Gateway__BaseUrl: http://gateway:5000
-      Gateway__ServiceKey: ${AUTH_SERVICE_KEY:-moonstone-local-gateway-key}
+      Gateway__ServiceKey: ${AUTH_SERVICE_KEY:-CHANGE_ME}
       Admin__Username: ${GALREVIEW_ADMIN_USERNAME:-integration-admin}
       Admin__Password: ${GALREVIEW_ADMIN_PASSWORD:-integration-admin-password}
       Email__SmtpHost: ${SMTP_HOST:-}
@@ -128,7 +128,7 @@ services:
       Email__FromAddress: ${SMTP_FROM_ADDRESS:-}
       Email__FromName: ${SMTP_FROM_NAME:-GalReview}
       AccountFrontend__BaseUrl: ${ACCOUNT_FRONTEND_BASE_URL:-http://localhost:5120}
-      ConnectionStrings__AuthDatabase: "Server=auth-mysql;Port=3306;Database=galreview_auth;User ID=galreview_auth;Password=${AUTH_MYSQL_PASSWORD:-auth-dev-password};SslMode=Disabled;AllowPublicKeyRetrieval=True"
+      ConnectionStrings__AuthDatabase: "Server=auth-mysql;Port=3306;Database=galreview_auth;User ID=galreview_auth;Password=${AUTH_MYSQL_PASSWORD:-CHANGE_ME};SslMode=Disabled;AllowPublicKeyRetrieval=True"
     depends_on:
       auth-mysql:
         condition: service_healthy
@@ -144,8 +144,8 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:5108
-      Gateway__ServiceKey: ${CREDIT_SERVICE_KEY:-moonstone-local-gateway-key}
-      ConnectionStrings__CreditDatabase: "Server=credit-mysql;Port=3306;Database=qzwl_credit;User ID=qzwl_credit;Password=${CREDIT_MYSQL_PASSWORD:-credit-dev-password};SslMode=Disabled;AllowPublicKeyRetrieval=True"
+      Gateway__ServiceKey: ${CREDIT_SERVICE_KEY:-CHANGE_ME}
+      ConnectionStrings__CreditDatabase: "Server=credit-mysql;Port=3306;Database=qzwl_credit;User ID=qzwl_credit;Password=${CREDIT_MYSQL_PASSWORD:-CHANGE_ME};SslMode=Disabled;AllowPublicKeyRetrieval=True"
       CreditStore__Provider: MySQL
     depends_on:
       credit-mysql:
@@ -158,7 +158,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:5103
-      Gateway__ServiceKey: ${FILE_SERVICE_KEY:-moonstone-local-gateway-key}
+      Gateway__ServiceKey: ${FILE_SERVICE_KEY:-CHANGE_ME}
       ConnectionStrings__FileDatabase: mongodb://mongo:27017/qzwl_file
       MongoDb__Database: qzwl_file
       InternalAccess__ExtractedTextAllowedServices__0: KnowledgeService
@@ -183,8 +183,8 @@ services:
       Neo4j__Database: neo4j
       GatewayMaterialText__BaseUrl: http://gateway:5000
       GatewayMaterialText__ServiceName: KnowledgeService
-      GatewayMaterialText__ServiceKey: ${KNOWLEDGE_SERVICE_KEY:-moonstone-local-gateway-key}
-      Gateway__ServiceKey: ${KNOWLEDGE_SERVICE_KEY:-moonstone-local-gateway-key}
+      GatewayMaterialText__ServiceKey: ${KNOWLEDGE_SERVICE_KEY:-CHANGE_ME}
+      Gateway__ServiceKey: ${KNOWLEDGE_SERVICE_KEY:-CHANGE_ME}
     depends_on:
       neo4j:
         condition: service_healthy
@@ -199,7 +199,7 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:5105
       Gateway__BaseUrl: http://gateway:5000
-      Gateway__ServiceKey: ${GALGAME_SERVICE_KEY:-moonstone-local-gateway-key}
+      Gateway__ServiceKey: ${GALGAME_SERVICE_KEY:-CHANGE_ME}
       InternalAccess__ValidationAllowedServices__0: RenderService
       InternalAccess__PackageReaderAllowedServices__0: RenderService
       ConnectionStrings__GameDatabase: mongodb://mongo:27017
@@ -232,7 +232,7 @@ services:
       RENDER_HOST: 0.0.0.0
       Gateway__BaseUrl: http://gateway:5000
       Gateway__ServiceName: RenderService
-      Gateway__ServiceKey: ${RENDER_SERVICE_KEY:-moonstone-local-gateway-key}
+      Gateway__ServiceKey: ${RENDER_SERVICE_KEY:-CHANGE_ME}
     restart: unless-stopped
 
   practice-service:
@@ -244,7 +244,7 @@ services:
       ASPNETCORE_URLS: http://+:5107
       Gateway__BaseUrl: http://gateway:5000
       Gateway__ServiceName: PracticeService
-      Gateway__ServiceKey: ${PRACTICE_SERVICE_KEY:-moonstone-local-gateway-key}
+      Gateway__ServiceKey: ${PRACTICE_SERVICE_KEY:-CHANGE_ME}
       ConnectionStrings__PracticeDatabase: mongodb://mongo:27017
       MongoDb__Database: qzwl_practice
       PracticeStore__Provider: MongoDB
@@ -268,15 +268,15 @@ services:
       NODE_ENV: production
       GATEWAY_HOST: 0.0.0.0
       GATEWAY_PORT: 5000
-      GATEWAY_KEY: ${GATEWAY_KEY:-moonstone-local-gateway-key}
-      USER_SERVICE_KEY: ${USER_SERVICE_KEY:-moonstone-local-gateway-key}
-      AUTH_SERVICE_KEY: ${AUTH_SERVICE_KEY:-moonstone-local-gateway-key}
-      FILE_SERVICE_KEY: ${FILE_SERVICE_KEY:-moonstone-local-gateway-key}
-      KNOWLEDGE_SERVICE_KEY: ${KNOWLEDGE_SERVICE_KEY:-moonstone-local-gateway-key}
-      GALGAME_SERVICE_KEY: ${GALGAME_SERVICE_KEY:-moonstone-local-gateway-key}
-      RENDER_SERVICE_KEY: ${RENDER_SERVICE_KEY:-moonstone-local-gateway-key}
-      PRACTICE_SERVICE_KEY: ${PRACTICE_SERVICE_KEY:-moonstone-local-gateway-key}
-      CREDIT_SERVICE_KEY: ${CREDIT_SERVICE_KEY:-moonstone-local-gateway-key}
+      GATEWAY_KEY: ${GATEWAY_KEY:-CHANGE_ME}
+      USER_SERVICE_KEY: ${USER_SERVICE_KEY:-CHANGE_ME}
+      AUTH_SERVICE_KEY: ${AUTH_SERVICE_KEY:-CHANGE_ME}
+      FILE_SERVICE_KEY: ${FILE_SERVICE_KEY:-CHANGE_ME}
+      KNOWLEDGE_SERVICE_KEY: ${KNOWLEDGE_SERVICE_KEY:-CHANGE_ME}
+      GALGAME_SERVICE_KEY: ${GALGAME_SERVICE_KEY:-CHANGE_ME}
+      RENDER_SERVICE_KEY: ${RENDER_SERVICE_KEY:-CHANGE_ME}
+      PRACTICE_SERVICE_KEY: ${PRACTICE_SERVICE_KEY:-CHANGE_ME}
+      CREDIT_SERVICE_KEY: ${CREDIT_SERVICE_KEY:-CHANGE_ME}
       USER_SERVICE_URL: http://user-service:5101
       AUTH_SERVICE_URL: http://auth-service:5102
       FILE_SERVICE_URL: http://file-service:5103
@@ -288,8 +288,6 @@ services:
       READINESS_SERVICES: userService,authService,fileService,knowledgeService,galGameService,renderService,practiceService,creditService
       DEFAULT_TIMEOUT_MS: 30000
       UPLOAD_TIMEOUT_MS: 120000
-      # 未设置时不采信 X-Forwarded-For（匿名限流按 socket 对端计量）。网关端口
-      # 若只经可信反代对外，可设为该代理的地址/网段，例如 TRUST_PROXY=172.18.0.0/16
       TRUST_PROXY: ${TRUST_PROXY:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5120,http://localhost:5121,http://localhost:5122}
     depends_on:
@@ -311,6 +309,11 @@ services:
         condition: service_healthy
     ports:
       - "${GATEWAY_BIND_ADDRESS:-127.0.0.1}:${GATEWAY_HOST_PORT:-5000}:5000"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
 
   frontend:
@@ -323,7 +326,12 @@ services:
       gateway:
         condition: service_healthy
     ports:
-      - "${FRONTEND_BIND_ADDRESS:-0.0.0.0}:${FRONTEND_HOST_PORT:-5120}:8080"
+      - "${FRONTEND_BIND_ADDRESS:-127.0.0.1}:${FRONTEND_HOST_PORT:-5120}:8080"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
 
   ocr-service:
