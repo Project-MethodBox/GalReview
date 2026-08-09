@@ -707,6 +707,8 @@ public sealed class ReciteQuestionGenerator(
         .Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
     private static string NormalizeOptionId(string value)
     {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
         var character = value.Trim().ToUpperInvariant()[0];
         if (character is >= 'Ａ' and <= 'Ｈ') character = (char)('A' + character - 'Ａ');
         return character.ToString();
