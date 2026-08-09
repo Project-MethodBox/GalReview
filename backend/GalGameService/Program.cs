@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 
@@ -481,8 +482,12 @@ app.MapPost("/api/v1/game-generations", async (GameGenerationRequest request, Ht
                 try { await billing.ReleaseAsync(job.GenerationId, CancellationToken.None); }
                 catch (Exception releaseError) { logger.LogError(releaseError, "Unable to release credits for failed job {GenerationId}", job.GenerationId); }
             }
-            store.TryTransitionJob(job.GenerationId, JobStatus.RUNNING,
-                j => j with { Status = JobStatus.FAILED, Error = new ApiError("INTERNAL_ERROR", ex.Message, new Dictionary<string, string>()) });
+            try
+            {
+                store.TryTransitionJob(job.GenerationId, JobStatus.RUNNING,
+                    j => j with { Status = JobStatus.FAILED, Error = new ApiError("INTERNAL_ERROR", "游戏生成失败，请稍后重试", new Dictionary<string, string>()) });
+            }
+            catch (Exception transitionError) { logger.LogError(transitionError, "Unable to transition failed job {GenerationId}", job.GenerationId); }
         }
     });
 
@@ -650,9 +655,13 @@ app.Run();
 // ============================================================================
 
 static bool IsGateway(HttpContext context, string key)
-    => context.Request.Headers.TryGetValue("X-Gateway-Key", out var values)
-       && values.Count == 1
-       && string.Equals(values[0], key, StringComparison.Ordinal);
+{
+    if (!context.Request.Headers.TryGetValue("X-Gateway-Key", out var values) || values.Count != 1)
+        return false;
+    var headerBytes = System.Text.Encoding.UTF8.GetBytes(values[0]!);
+    var keyBytes = System.Text.Encoding.UTF8.GetBytes(key);
+    return headerBytes.Length == keyBytes.Length && CryptographicOperations.FixedTimeEquals(headerBytes, keyBytes);
+}
 
 static string? GatewayUser(HttpContext context, string key)
 {
