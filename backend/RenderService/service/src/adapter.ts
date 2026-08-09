@@ -319,13 +319,14 @@ function createNativeAdapter(instance: WebAssembly.Instance): WasmAdapter {
   function readCString(pointer: number): string {
     const memory = heap()
     let end = pointer
-    while (memory[end] !== 0) end += 1
+    while (end < memory.length && memory[end] !== 0) end += 1
     return decoder.decode(memory.subarray(pointer, end))
   }
 
   function withCString<T>(text: string, call: (pointer: number) => T): T {
     const bytes = encoder.encode(text)
     const pointer = abi.rtAlloc(bytes.length + 1)
+    if (pointer === 0) throw new Error('WASM memory allocation failed')
     try {
       const memory = heap()
       memory.set(bytes, pointer)
