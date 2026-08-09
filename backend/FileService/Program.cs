@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Diagnostics;
+using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 
@@ -161,7 +161,7 @@ app.MapPost("/api/v1/materials/{materialId}/access-grants", (string materialId, 
 {
     var userId = GatewayUser(c, gatewayKey); var material = store.GetMaterial(materialId);
     if (userId is null) return Failure(c, 401, "AUTH_REQUIRED", "A gateway-authenticated user is required.");
-    if (material is null || material.OwnerUserId != userId || material.Status == "DELETED") return Failure(c, 403, "FORBIDDEN", "No access to material.");
+    if (material is null || material.OwnerUserId != userId || material.Status == "DELETED") return Failure(c, 404, "RESOURCE_NOT_FOUND", "Material was not found.");
     if (request.Purpose is not ("DOWNLOAD" or "SERVICE_READ")) return Failure(c, 400, "VALIDATION_ERROR", "Invalid access grant purpose.");
     return Results.Created($"/api/v1/materials/{materialId}/access-grants", ApiSuccess.Create(new AccessGrant($"/internal/v1/materials/{materialId}/content", DateTimeOffset.UtcNow.AddMinutes(5)), c.TraceIdentifier));
 });
@@ -180,7 +180,18 @@ app.MapGet("/internal/v1/materials/{materialId}/extracted-text", (string materia
 });
 app.Run();
 
-static string? GatewayUser(HttpContext context, string key) => context.Request.Headers["X-Gateway-Key"] == key && Guid.TryParse(context.Request.Headers["X-User-Id"], out _) ? context.Request.Headers["X-User-Id"].ToString() : null;
+static string? GatewayUser(HttpContext context, string key)
+{
+    if (!context.Request.Headers.TryGetValue("X-Gateway-Key", out var values) || values.Count != 1)
+        return null;
+    var left = System.Text.Encoding.UTF8.GetBytes(values[0]);
+    var right = System.Text.Encoding.UTF8.GetBytes(key);
+    if (left.Length != right.Length || !System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(left, right))
+        return null;
+    if (!Guid.TryParse(context.Request.Headers["X-User-Id"].ToString(), out _))
+        return null;
+    return context.Request.Headers["X-User-Id"].ToString();
+}
 static string? NormalizeSubjectCode(string? value)
 {
     if (value is null) return null;
