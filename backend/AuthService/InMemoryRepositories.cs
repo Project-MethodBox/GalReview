@@ -196,21 +196,22 @@ public sealed class InMemoryAuthRepository(MockAuthStore store) : IAuthRepositor
         lock (store.Sync)
         {
             foreach (var code in store.PasswordResets.Where(pair => pair.Value.UserId == userId).Select(pair => pair.Key).ToArray()) store.PasswordResets.Remove(code);
-            store.PasswordResets["123456"] = new MockPasswordReset(userId, DateTimeOffset.UtcNow.AddMinutes(10));
-            return "123456";
+            var token = "ABCD1234";
+            store.PasswordResets[token.ToUpperInvariant()] = new MockPasswordReset(userId, DateTimeOffset.UtcNow.AddMinutes(10));
+            return token;
         }
     }
 
     public void DeletePasswordReset(string token)
     {
-        lock (store.Sync) store.PasswordResets.Remove(token);
+        lock (store.Sync) store.PasswordResets.Remove(token.ToUpperInvariant());
     }
 
     public Credential? ConsumePasswordReset(string token)
     {
         lock (store.Sync)
         {
-            if (!store.PasswordResets.Remove(token, out var reset) || reset.ExpiresAt <= DateTimeOffset.UtcNow) return null;
+            if (!store.PasswordResets.Remove(token.ToUpperInvariant(), out var reset) || reset.ExpiresAt <= DateTimeOffset.UtcNow) return null;
             return store.CredentialsById.GetValueOrDefault(reset.UserId);
         }
     }

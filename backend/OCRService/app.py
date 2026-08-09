@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import json
 import os
 import re
@@ -18,16 +19,39 @@ os.environ.setdefault("PADDLE_PDX_CACHE_HOME", str(Path(__file__).resolve().pare
 os.environ.setdefault("PADDLE_PDX_MODEL_SOURCE", "BOS")
 
 import fitz
-from fastapi import FastAPI, File, Header, HTTPException, UploadFile
+from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
 from paddleocr import FormulaRecognitionPipeline, PaddleOCR
 
 app = FastAPI(title="MoonStone Local OCR", version="1.0")
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+MAX_PDF_PAGES = 50
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
 JOB_PROGRESS: dict[str, dict[str, object]] = {}
 # Paddle/oneDNN inference is not safe to run concurrently in one Python process.
 OCR_INFERENCE_LOCK = Lock()
 CANCELLED_JOBS: set[str] = set()
+
+# Gateway key for authenticating requests from the API Gateway / FileService.
+# Must match the Gateway__ServiceKey configured on the calling service.
+GATEWAY_KEY = os.environ.get("GATEWAY_KEY", "")
+
+
+def _verify_gateway_key(provided: str | None) -> bool:
+    """Constant-time comparison of the gateway key."""
+    if not GATEWAY_KEY or not provided:
+        return False
+    return hmac.compare_digest(GATEWAY_KEY, provided)
+
+
+@app.middleware("http")
+async def authenticate_gateway_requests(request: Request, call_next):
+    """Require X-Gateway-Key on all endpoints except /healthz."""
+    if request.url.path == "/healthz":
+        return await call_next(request)
+    gateway_key = request.headers.get("X-Gateway-Key")
+    if not _verify_gateway_key(gateway_key):
+        raise HTTPException(401, "A valid X-Gateway-Key header is required.")
+    return await call_next(request)
 
 
 def ensure_not_cancelled(job_id: str | None) -> None:
@@ -228,6 +252,8 @@ def merge_ocr_regions(text_regions: list[TextRegion], formula_regions: list[Form
 def render_pdf(pdf_path: Path, output_dir: Path, mode: str) -> list[Path]:
     document = fitz.open(pdf_path)
     try:
+        if document.page_count > MAX_PDF_PAGES:
+            raise HTTPException(413, f"PDF exceeds the {MAX_PDF_PAGES}-page limit.")
         pages: list[Path] = []
         for number, page in enumerate(document, start=1):
             image_path = output_dir / f"page-{number}.png"

@@ -10,10 +10,11 @@ param(
     [switch]$SkipAwsCliInstall
 )
 
-# Repository-distributed credential restricted to read/list access for 20277-gal-res.
-# It cannot access other buckets or prefixes and cannot create, replace, or delete objects.
-$oscaAccessKeyId = 'ZMVBNId4c52092lL53Jg'
-$oscaSecretAccessKey = 'upDcWNLGKlhe2qVSKOYG'
+# Credentials must be provided via environment variables.
+# The OSCA S3 credentials are intentionally NOT stored in this repository.
+# Set OSCA_ACCESS_KEY_ID and OSCA_SECRET_ACCESS_KEY before running this script.
+$oscaAccessKeyId = $env:OSCA_ACCESS_KEY_ID
+$oscaSecretAccessKey = $env:OSCA_SECRET_ACCESS_KEY
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
@@ -115,7 +116,7 @@ Write-Host "Using AWS CLI v2: $awsExecutable"
 $accessKey = $oscaAccessKeyId
 $secretKey = $oscaSecretAccessKey
 if ([string]::IsNullOrWhiteSpace($accessKey) -or [string]::IsNullOrWhiteSpace($secretKey)) {
-    throw 'The owner-distributed OSCA credentials are missing from the top of this script.'
+    throw 'OSCA credentials are missing. Set the OSCA_ACCESS_KEY_ID and OSCA_SECRET_ACCESS_KEY environment variables before running this script.'
 }
 
 $destinationRoot = [IO.Path]::GetFullPath($DestinationPath)

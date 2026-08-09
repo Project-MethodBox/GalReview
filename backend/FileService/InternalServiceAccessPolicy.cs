@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Primitives;
+using System.Security.Cryptography;
 
 public static class InternalServiceAccessPolicy
 {
@@ -22,7 +23,7 @@ public static class InternalServiceAccessPolicy
         string gatewayKey,
         IReadOnlySet<string>? allowedServices = null)
     {
-        if (!HasSingleExactValue(headers, "X-Gateway-Key", gatewayKey, StringComparison.Ordinal))
+        if (!HasSingleExactValue(headers, "X-Gateway-Key", gatewayKey))
         {
             return false;
         }
@@ -44,12 +45,20 @@ public static class InternalServiceAccessPolicy
     private static bool HasSingleExactValue(
         IHeaderDictionary headers,
         string headerName,
-        string expected,
-        StringComparison comparison)
+        string expected)
     {
-        return headers.TryGetValue(headerName, out StringValues values)
-            && values.Count == 1
-            && string.Equals(values[0], expected, comparison);
+        if (!headers.TryGetValue(headerName, out StringValues values) || values.Count != 1)
+            return false;
+
+        var expectedBytes = System.Text.Encoding.UTF8.GetBytes(expected);
+        var actualBytes = System.Text.Encoding.UTF8.GetBytes(values[0]!);
+        var length = Math.Max(expectedBytes.Length, actualBytes.Length);
+        var paddedExpected = new byte[length];
+        var paddedActual = new byte[length];
+        expectedBytes.CopyTo(paddedExpected, 0);
+        actualBytes.CopyTo(paddedActual, 0);
+        return CryptographicOperations.FixedTimeEquals(paddedExpected, paddedActual)
+            && expectedBytes.Length == actualBytes.Length;
     }
 
     private static IEnumerable<string?> SplitScalar(string? value)

@@ -119,7 +119,7 @@ services:
       Gateway__BaseUrl: http://gateway:5000
       Gateway__ServiceKey: ${AUTH_SERVICE_KEY:-moonstone-local-gateway-key}
       Admin__Username: ${GALREVIEW_ADMIN_USERNAME:-integration-admin}
-      Admin__Password: ${GALREVIEW_ADMIN_PASSWORD:-integration-admin-password}
+      Admin__PasswordHash: ${GALREVIEW_ADMIN_PASSWORD_HASH:-}
       Email__SmtpHost: ${SMTP_HOST:-}
       Email__SmtpPort: ${SMTP_PORT:-465}
       Email__UseSsl: ${SMTP_USE_SSL:-true}
@@ -331,6 +331,8 @@ services:
       - ocr
     build:
       context: ./backend/OCRService
+    environment:
+      GATEWAY_KEY: ${FILE_SERVICE_KEY:-moonstone-local-gateway-key}
     restart: unless-stopped
 
 volumes:
