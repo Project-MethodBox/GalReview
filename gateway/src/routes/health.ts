@@ -9,14 +9,16 @@ const PROBE_TIMEOUT_MS = 3_000;
  * 对单个下游服务做真实健康探测
  */
 async function probeService(url: string): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
-    const res = await fetch(`${url}/healthz`, { signal: controller.signal });
-    clearTimeout(timer);
+    const base = url.replace(/\/+$/, '');
+    const res = await fetch(`${base}/healthz`, { signal: controller.signal });
     return res.ok;
   } catch {
     return false;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -41,7 +43,6 @@ export function createHealthRouter(config: GatewayConfig): Router {
       (key) => [key, config.services[key]] as const,
     );
 
-    // 配置级检查
     const invalid = entries
       .filter(([, service]) => !service || !service.url.startsWith('http'))
       .map(([key]) => key);
@@ -55,7 +56,6 @@ export function createHealthRouter(config: GatewayConfig): Router {
       return;
     }
 
-    // 只探测当前端到端流程的核心依赖；尚未参与该流程的可选服务不阻塞就绪。
     const results = await Promise.allSettled(
       entries.map(([, svc]) => probeService(svc!.url)),
     );
