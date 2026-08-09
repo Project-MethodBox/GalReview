@@ -1,4 +1,4 @@
-﻿import 'dotenv/config';
+import 'dotenv/config';
 
 export interface ServiceTarget {
   name: string;
@@ -34,14 +34,15 @@ export interface GatewayConfig {
 }
 
 function env(key: string, fallback: string): string {
-  return process.env[key] ?? fallback;
+  const v = process.env[key];
+  return (v && v.length > 0) ? v : fallback;
 }
 
 function envInt(key: string, fallback: number): number {
   const v = process.env[key];
   if (!v) return fallback;
-  const n = parseInt(v, 10);
-  return Number.isNaN(n) ? fallback : n;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
 }
 
 /**
@@ -61,6 +62,9 @@ function envTrustProxy(key: string): boolean | number | string {
 
 export function loadConfig(): GatewayConfig {
   const gatewayKey = env('GATEWAY_KEY', 'moonstone-local-gateway-key');
+  if (!gatewayKey || gatewayKey.trim().length === 0) {
+    throw new Error('GATEWAY_KEY must not be empty');
+  }
 
   /** 读取每服务独立密钥，回退到全局密钥 */
   const svcKey = (envName: string) => env(envName, gatewayKey);
@@ -126,8 +130,6 @@ export function loadConfig(): GatewayConfig {
 
   return {
     port: envInt('GATEWAY_PORT', 5000),
-    // Native/local deployments must not become publicly reachable merely by
-    // starting the process. Containers explicitly override this to 0.0.0.0.
     host: env('GATEWAY_HOST', '127.0.0.1'),
     gatewayKey,
     trustProxy: envTrustProxy('TRUST_PROXY'),
@@ -159,4 +161,3 @@ export function loadConfig(): GatewayConfig {
     },
   };
 }
-
