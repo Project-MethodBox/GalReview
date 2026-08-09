@@ -229,6 +229,7 @@ services:
       context: ./backend/RenderService
     environment:
       PORT: 5106
+      RENDER_HOST: 0.0.0.0
       Gateway__BaseUrl: http://gateway:5000
       Gateway__ServiceName: RenderService
       Gateway__ServiceKey: ${RENDER_SERVICE_KEY:-moonstone-local-gateway-key}
@@ -265,6 +266,7 @@ services:
       context: ./gateway
     environment:
       NODE_ENV: production
+      GATEWAY_HOST: 0.0.0.0
       GATEWAY_PORT: 5000
       GATEWAY_KEY: ${GATEWAY_KEY:-moonstone-local-gateway-key}
       USER_SERVICE_KEY: ${USER_SERVICE_KEY:-moonstone-local-gateway-key}
@@ -308,7 +310,7 @@ services:
       credit-service:
         condition: service_healthy
     ports:
-      - "${GATEWAY_BIND_ADDRESS:-0.0.0.0}:${GATEWAY_HOST_PORT:-5000}:5000"
+      - "${GATEWAY_BIND_ADDRESS:-127.0.0.1}:${GATEWAY_HOST_PORT:-5000}:5000"
     restart: unless-stopped
 
   frontend:

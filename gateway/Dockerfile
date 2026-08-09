@@ -10,7 +10,8 @@ RUN npm run build
 
 FROM ${NODE_IMAGE} AS runtime
 
-ENV NODE_ENV=production
+ENV NODE_ENV=production \
+    GATEWAY_HOST=0.0.0.0
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force

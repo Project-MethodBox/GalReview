@@ -67,6 +67,6 @@ docker run --rm -p 5000:5000 --env-file .env galreview-gateway
 
 在 Compose 网络中，各 `*_SERVICE_URL` 应使用服务 DNS 名和容器端口，例如
 `http://knowledge-service:8080`，不能使用容器内的 `localhost`。根目录 Compose 通过
-`GATEWAY_HOST_PORT` 把 Gateway 的 `5000` 发布到宿主，默认仍为 `5000`。防火墙的
+`GATEWAY_HOST_PORT` 把 Gateway 的 `5000` 发布到宿主，默认绑定 `127.0.0.1:5000`，不对公网开放。防火墙的
 `5000-5300` 范围只约束这个 published 侧；下游 `*_SERVICE_URL` 是容器内部地址，不受该
 范围限制。

@@ -5,8 +5,9 @@ import { ROUTE_TABLE } from './routes/routeTable.js';
 const config = loadConfig();
 const app = createApp(config);
 
-const server = app.listen(config.port, () => {
-  console.log(`[Gateway] listening on :${config.port}`);
+const host = config.host ?? '127.0.0.1';
+const server = app.listen(config.port, host, () => {
+  console.log(`[Gateway] listening on http://${host}:${config.port}`);
   console.log(`[Gateway] CORS origins: ${config.corsOrigins.join(', ')}`);
   console.log(`[Gateway] services:`);
   for (const [key, svc] of Object.entries(config.services)) {

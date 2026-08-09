@@ -79,7 +79,7 @@ function Get-ProjectListeners {
 
 $resolvedRoot = [IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\', '/')
 $rootWithSeparator = $resolvedRoot + [IO.Path]::DirectorySeparatorChar
-$startScript = Join-Path $resolvedRoot 'start.ps1'
+$startScript = Join-Path $resolvedRoot 'start_dev.ps1'
 
 if (-not (Test-Path -LiteralPath $startScript -PathType Leaf)) {
     throw "Refusing to continue: '$resolvedRoot' does not look like the GalReview project root."
@@ -90,7 +90,7 @@ if (-not (Test-Path -LiteralPath $startScript -PathType Leaf)) {
 $temporaryDirectory = [IO.Path]::GetTempPath()
 Set-Location -LiteralPath $temporaryDirectory
 
-$projectPorts = @(5000, 5101, 5102, 5103, 5104, 5105, 5106, 5107, 5108, 5121, 5122)
+$projectPorts = @(5000, 5101, 5102, 5103, 5104, 5105, 5106, 5107, 5108, 5120, 5121, 5122)
 $listenerProcessNames = @(
     'node',
     'dotnet',
@@ -255,7 +255,7 @@ foreach ($runningProcess in @(Get-Process -ErrorAction SilentlyContinue)) {
     Add-TargetProcess -ProcessId $runningProcessId -Reason 'executable is inside the project'
 }
 
-# PIDs recorded by start.ps1 are the most reliable way to stop npm/cmd/dotnet
+# PIDs recorded by start_dev.ps1 are the most reliable way to stop npm/cmd/dotnet
 # wrappers whose command lines do not necessarily include their working folder.
 $manifestPath = Join-Path $resolvedRoot '.runtime\project-processes.json'
 if (Test-Path -LiteralPath $manifestPath -PathType Leaf) {

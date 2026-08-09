@@ -22,7 +22,8 @@ COPY --from=build /out/GalReview.RenderService ./bin/GalReview.RenderService
 COPY --from=build /src/service/dist ./service/dist
 COPY service/demo ./service/demo
 COPY service/runtime.wasm.base64 ./service/
-ENV PORT=5106
+ENV PORT=5106 \
+    RENDER_HOST=0.0.0.0
 EXPOSE 5106
 
 USER node

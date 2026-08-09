@@ -253,6 +253,7 @@ function Start-MoonStoneStack {
     Start-Neo4jDependency
 
     $env:GATEWAY_PORT = [string]$gatewayPort
+    $env:GATEWAY_HOST = '127.0.0.1'
     $env:GATEWAY_URL = $gatewayBaseUrl
 
     $renderServiceRoot = Join-Path $backendRoot 'RenderService\service'
@@ -285,6 +286,7 @@ function Start-MoonStoneStack {
     $services += Start-LocalService -Name 'galgame-service' -FilePath 'dotnet' -Arguments $galGameArguments -HealthUrl 'http://127.0.0.1:5105/healthz'
 
     $env:PORT = '5106'
+    $env:RENDER_HOST = '127.0.0.1'
     $env:Gateway__BaseUrl = $gatewayBaseUrl
     $env:Gateway__ServiceName = 'RenderService'
     $env:Gateway__ServiceKey = 'moonstone-local-gateway-key'

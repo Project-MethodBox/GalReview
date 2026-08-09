@@ -192,10 +192,7 @@ test('HTTP shell serves runtime resources and honest 501s', async () => {
     assert.equal(health.data.status, 'live')
 
     const ready = await (await fetch(`${base}/readyz`)).json()
-    assert.equal(ready.data.runtimeMode, 'SHELL')
-    assert.equal(ready.data.reviewSessionsAvailable, false)
-    assert.equal(ready.data.wasmAbiComplete, true)
-    assert.equal(ready.data.executionEngine, 'cpp-wasm-shell')
+    assert.deepEqual(ready.data, { status: 'ready' })
 
     const manifestResponse = await fetch(`${base}/api/v1/render-runtime/manifest`, {
       headers: { 'X-Correlation-Id': 'trace-render-test' },

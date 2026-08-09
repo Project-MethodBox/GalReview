@@ -126,7 +126,9 @@ export function loadConfig(): GatewayConfig {
 
   return {
     port: envInt('GATEWAY_PORT', 5000),
-    host: env('GATEWAY_HOST', '0.0.0.0'),
+    // Native/local deployments must not become publicly reachable merely by
+    // starting the process. Containers explicitly override this to 0.0.0.0.
+    host: env('GATEWAY_HOST', '127.0.0.1'),
     gatewayKey,
     trustProxy: envTrustProxy('TRUST_PROXY'),
     corsOrigins: env('CORS_ORIGINS', 'http://localhost:5120,http://localhost:5121,http://localhost:5122')

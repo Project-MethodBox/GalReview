@@ -22,6 +22,7 @@ describe('loadConfig', () => {
 
     const cfg = loadConfig();
     expect(cfg.port).toBe(5000);
+    expect(cfg.host).toBe('127.0.0.1');
     expect(cfg.gatewayKey).toBe('moonstone-local-gateway-key');
     expect(cfg.corsOrigins).toEqual([
       'http://localhost:5120',
@@ -50,6 +51,7 @@ describe('loadConfig', () => {
 
   it('应读取环境变量覆盖默认值', () => {
     process.env.GATEWAY_PORT = '5297';
+    process.env.GATEWAY_HOST = '10.0.0.5';
     process.env.GATEWAY_KEY = 'custom-key';
     process.env.CORS_ORIGINS = 'http://localhost:5298';
     process.env.DEFAULT_TIMEOUT_MS = '10000';
@@ -57,6 +59,7 @@ describe('loadConfig', () => {
 
     const cfg = loadConfig();
     expect(cfg.port).toBe(5297);
+    expect(cfg.host).toBe('10.0.0.5');
     expect(cfg.gatewayKey).toBe('custom-key');
     expect(cfg.corsOrigins).toEqual(['http://localhost:5298']);
     expect(cfg.defaultTimeoutMs).toBe(10_000);

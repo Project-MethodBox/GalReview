@@ -454,9 +454,7 @@ test('five endpoints work over HTTP with trusted headers', async () => {
     const authed = { 'X-Gateway-Key': serviceKey, 'X-User-Id': USER, 'Content-Type': 'application/json' }
 
     const ready = await (await fetch(`${base}/readyz`)).json()
-    assert.equal(ready.data.reviewSessionsAvailable, true)
-    assert.equal(ready.data.runtimeMode, 'FULL')
-    assert.equal(ready.data.storage, 'ephemeral-memory')
+    assert.deepEqual(ready.data, { status: 'ready' })
 
     const manifest = await (await fetch(`${base}/api/v1/render-runtime/manifest`)).json()
     assert.equal(manifest.data.reviewSessionsAvailable, true)
