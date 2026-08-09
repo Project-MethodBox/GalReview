@@ -6,6 +6,8 @@ import json
 import os
 import re
 import tempfile
+import threading
+import time
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -289,13 +291,13 @@ def ocr(file: UploadFile = File(...), x_ocr_job_id: str | None = Header(default=
 
         images = render_pdf(source, temporary, mode) if is_pdf else [source]
         if x_ocr_job_id:
-            JOB_PROGRESS[x_ocr_job_id] = {"status": "RUNNING", "currentPage": 0, "totalPages": len(images), "phase": "RECOGNIZING", "mode": mode}
+            JOB_PROGRESS[x_ocr_job_id] = {"status": "RUNNING", "currentPage": 0, "totalPages": len(images), "phase": "RECOGNIZING", "mode": mode, "created_at": time.time()}
         pages = []
         try:
             for number, image in enumerate(images, start=1):
                 ensure_not_cancelled(x_ocr_job_id)
                 if x_ocr_job_id:
-                    JOB_PROGRESS[x_ocr_job_id] = {"status": "RUNNING", "currentPage": number - 1, "totalPages": len(images), "phase": "RECOGNIZING", "mode": mode}
+                    JOB_PROGRESS[x_ocr_job_id] = {"status": "RUNNING", "currentPage": number - 1, "totalPages": len(images), "phase": "RECOGNIZING", "mode": mode, "created_at": time.time()}
                 # Serialize native Paddle/oneDNN calls. A queued cancelled job leaves
                 # within 250 ms; an active one stops after its current model call.
                 while not OCR_INFERENCE_LOCK.acquire(timeout=0.25):
@@ -307,7 +309,7 @@ def ocr(file: UploadFile = File(...), x_ocr_job_id: str | None = Header(default=
                     formula_regions: list[FormulaRegion] = []
                     if mode == "standard":
                         if x_ocr_job_id:
-                            JOB_PROGRESS[x_ocr_job_id] = {"status": "RUNNING", "currentPage": number - 1, "totalPages": len(images), "phase": "FORMULA_RECOGNITION", "mode": mode}
+                            JOB_PROGRESS[x_ocr_job_id] = {"status": "RUNNING", "currentPage": number - 1, "totalPages": len(images), "phase": "FORMULA_RECOGNITION", "mode": mode, "created_at": time.time()}
                         formula_regions = recognize_formula_regions(image)
                         ensure_not_cancelled(x_ocr_job_id)
                     lines = merge_ocr_regions(text_regions, formula_regions)
@@ -316,14 +318,33 @@ def ocr(file: UploadFile = File(...), x_ocr_job_id: str | None = Header(default=
                     OCR_INFERENCE_LOCK.release()
                 pages.append({"pageNumber": number, "lines": lines, "formulas": formulas})
                 if x_ocr_job_id:
-                    JOB_PROGRESS[x_ocr_job_id] = {"status": "RUNNING", "currentPage": number, "totalPages": len(images), "phase": "RECOGNIZING", "mode": mode}
+                    JOB_PROGRESS[x_ocr_job_id] = {"status": "RUNNING", "currentPage": number, "totalPages": len(images), "phase": "RECOGNIZING", "mode": mode, "created_at": time.time()}
             ensure_not_cancelled(x_ocr_job_id)
             if x_ocr_job_id:
-                JOB_PROGRESS[x_ocr_job_id] = {"status": "SUCCEEDED", "currentPage": len(images), "totalPages": len(images), "phase": "COMPLETED", "mode": mode}
+                JOB_PROGRESS[x_ocr_job_id] = {"status": "SUCCEEDED", "currentPage": len(images), "totalPages": len(images), "phase": "COMPLETED", "mode": mode, "created_at": time.time()}
             return {"pages": pages}
         except HTTPException:
             raise
         except Exception:
             if x_ocr_job_id:
-                JOB_PROGRESS[x_ocr_job_id] = {"status": "FAILED", "currentPage": 0, "totalPages": len(images), "phase": "FAILED", "mode": mode}
+                JOB_PROGRESS[x_ocr_job_id] = {"status": "FAILED", "currentPage": 0, "totalPages": len(images), "phase": "FAILED", "mode": mode, "created_at": time.time()}
             raise
+
+
+def cleanup_old_jobs():
+    """Clean up job progress entries older than 1 hour."""
+    cutoff = time.time() - 3600
+    to_remove: list[str] = []
+    for job_id, info in JOB_PROGRESS.items():
+        created_at = info.get("created_at")
+        if isinstance(created_at, (int, float)) and created_at < cutoff:
+            to_remove.append(job_id)
+    for job_id in to_remove:
+        JOB_PROGRESS.pop(job_id, None)
+        CANCELLED_JOBS.discard(job_id)
+    # Schedule next cleanup in 10 minutes
+    threading.Timer(600, cleanup_old_jobs).start()
+
+
+# Start cleanup timer when app initializes
+cleanup_old_jobs()
