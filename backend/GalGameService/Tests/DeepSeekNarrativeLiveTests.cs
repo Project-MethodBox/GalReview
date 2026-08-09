@@ -11,7 +11,7 @@ public sealed class DeepSeekNarrativeLiveTests
             StringComparison.Ordinal))
             return;
 
-        var apiKey = Environment.GetEnvironmentVariable("DSAPI");
+        var apiKey = Environment.GetEnvironmentVariable("DEEPSEEK_API_KEY");
         Assert.False(string.IsNullOrWhiteSpace(apiKey));
 
         var options = new NarrativeGenerationOptions

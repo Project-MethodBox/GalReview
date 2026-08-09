@@ -59,7 +59,7 @@ dotnet run --project backend\PracticeService\PracticeService.API\PracticeService
 
 | 配置 | 环境变量 | 默认/限制 |
 |---|---|---|
-| `QuestionGeneration:ApiKey` | `QuestionGeneration__ApiKey`（Compose 由 `DSAPI` 注入） | 空值表示只运行可核对的结构化提取 |
+| `QuestionGeneration:ApiKey` | `QuestionGeneration__ApiKey`（Compose 由 `DEEPSEEK_API_KEY` 注入） | 空值表示只运行可核对的结构化提取 |
 | `QuestionGeneration:Endpoint` | `QuestionGeneration__Endpoint` | `https://api.deepseek.com/chat/completions` |
 | `QuestionGeneration:Model` | `QuestionGeneration__Model` | `deepseek-v4-flash` |
 | `QuestionGeneration:Parallelism` | `QuestionGeneration__Parallelism` | 1-8，默认 4 |

@@ -101,7 +101,7 @@ MongoDB 连接配置：
 | `Enabled` | `true` | 是否启用叙事模型调用；缺少密钥时仍自动关闭 |
 | `Endpoint` | `https://api.deepseek.com/chat/completions` | OpenAI 兼容端点 |
 | `Model` | `deepseek-v4-pro` | 模型名称 |
-| `ApiKey` | （空） | API 密钥；本地可通过 `DSAPI` 注入，不写入配置文件 |
+| `ApiKey` | （空） | API 密钥；本地可通过 `DEEPSEEK_API_KEY` 注入，不写入配置文件 |
 | `PromptVersion` | `galgame-narrative-v3` | Prompt 版本标识 |
 | `TimeoutSeconds` | `120` | 单次请求超时（10-300 秒） |
 | `MaxOutputTokens` | `16000` | 最大输出 token 数 |

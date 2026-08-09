@@ -6,8 +6,11 @@ import { extname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const port = Number.parseInt(process.env.PORT || '8080', 10)
+const host = process.env.HOST || '0.0.0.0'
 const staticRoot = fileURLToPath(new URL('./dist/', import.meta.url))
 const gateway = new URL(process.env.GATEWAY_UPSTREAM || 'http://gateway:5000')
+const trustLoopbackProxy = process.env.TRUST_REVERSE_PROXY === 'loopback'
+const publicScheme = process.env.PUBLIC_SCHEME === 'https' ? 'https' : 'http'
 
 const contentTypes = new Map([
   ['.css', 'text/css; charset=utf-8'],
@@ -52,6 +55,17 @@ function logProxyFailure(event, request, traceId, details) {
     upstream: gateway.origin,
     ...details,
   }))
+}
+
+function isLoopbackAddress(address) {
+  const normalized = String(address || '').toLowerCase().replace(/^::ffff:/, '')
+  return normalized === '127.0.0.1' || normalized === '::1'
+}
+
+function lastForwardedAddress(value) {
+  const header = Array.isArray(value) ? value[0] : value
+  if (typeof header !== 'string') return ''
+  return header.split(',').map((part) => part.trim()).filter(Boolean).at(-1) || ''
 }
 
 // 网关早期拒绝（401/413/429）到达时客户端请求体往往仍在上传。收尾规则
@@ -102,15 +116,20 @@ function endAfterDrain(request, response, upstream) {
 function proxyToGateway(request, response) {
   const target = new URL(request.url || '/', gateway)
   const traceId = getCorrelationId(request)
-  // 本进程是浏览器侧入口：客户端自带的 X-Forwarded-* 一律不可信，直接以真实
-  // socket 对端地址覆盖，网关（配置 TRUST_PROXY 指向本代理时）才能得到可信的
-  // 客户端 IP 用于匿名限流分桶。
+  // 本进程是浏览器侧入口：只有来自 loopback IIS/ARR 的转发链可信，并只取 ARR
+  // 追加在链尾的真实对端；直接调用方自带的 X-Forwarded-* 一律以 socket 覆盖。
+  // 网关再仅信任本机前端，匿名限流才能得到真实且不可伪造的客户端 IP。
+  const remoteAddress = request.socket?.remoteAddress || ''
+  const fromTrustedProxy = trustLoopbackProxy && isLoopbackAddress(remoteAddress)
+  const forwardedAddress = fromTrustedProxy
+    ? lastForwardedAddress(request.headers['x-forwarded-for']) || remoteAddress
+    : remoteAddress
   const headers = {
     ...request.headers,
     host: target.host,
     'x-correlation-id': traceId,
-    'x-forwarded-for': request.socket?.remoteAddress || '',
-    'x-forwarded-proto': 'http',
+    'x-forwarded-for': forwardedAddress,
+    'x-forwarded-proto': fromTrustedProxy ? publicScheme : 'http',
     'x-forwarded-host': request.headers.host || '',
   }
   // 崩溃防护：早期拒绝后上游/客户端连接的迟到错误（如网关排空超时 RST）
@@ -224,4 +243,4 @@ const server = createServer((request, response) => {
 
 server.requestTimeout = 190_000
 server.headersTimeout = 195_000
-server.listen(port, '0.0.0.0')
+server.listen(port, host)

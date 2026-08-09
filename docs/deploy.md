@@ -101,7 +101,7 @@ Copy-Item .\.env.deploy.example .\.env
 | `RENDER_SERVICE_KEY` | Gateway 转发到 RenderService 的目标密钥；未来 INTERNAL 回调继续复用该身份 |
 | `PRACTICE_SERVICE_KEY` | Gateway 与 PracticeService 的目标密钥；Practice 经 Gateway 读取资料/PlanGraph 与提交证据时复用该身份 |
 | `CREDIT_SERVICE_KEY` | Gateway 与 CreditService 的目标密钥；Auth、Practice、GalGame 经 Gateway 调用 credits INTERNAL 接口时分别使用自己的调用方密钥 |
-| `DSAPI` | GalGameService 与 PracticeService 共享的 DeepSeek API key；Compose 分别注入两个容器，不得写入日志、镜像或版本控制文件 |
+| `DEEPSEEK_API_KEY` | GalGameService 与 PracticeService 共享的 DeepSeek API key；Compose 分别注入两个容器，不得写入日志、镜像或版本控制文件 |
 | `PRACTICE_QUESTION_ENDPOINT` | PracticeService 的 OpenAI-compatible Chat Completions endpoint，默认 DeepSeek |
 | `PRACTICE_QUESTION_MODEL` | PracticeService 题目生成模型，默认 `deepseek-v4-flash` |
 | `PRACTICE_QUESTION_PARALLELISM` | 普通正文分片并行度，范围 1-8，默认 4 |
@@ -225,7 +225,7 @@ docker compose --env-file .env -f compose.integration.yaml up -d --wait knowledg
   credits 不足或生成失败会保留已建立的册并引导到同册重试，不会重复立册。
 - Gateway 的 question-generation 路由和前端请求超时均为 600 秒；反向代理的读取超时不得低于该值。
   这只允许长任务完成，不代表 UI 的百分比可伪造；进度仍以服务端任务状态为准。
-- `DSAPI` 为空时 PracticeService 不调用模型：可直接核对的结构化题仍可生成，需要模型的普通正文会留下
+- `DEEPSEEK_API_KEY` 为空时 PracticeService 不调用模型：可直接核对的结构化题仍可生成，需要模型的普通正文会留下
   `QUESTION_MODEL_NOT_CONFIGURED` 诊断。上线前应以真实普通教材验证 provider JSON、独立回验和
   `usage.total_tokens` 结算；不得通过恢复旧模板兜底来掩盖配置缺失。
 - 回滚应用镜像不会回滚已经写入的题目绑定和 mastery。需要回滚时先停止新会话入口，等待活动会话

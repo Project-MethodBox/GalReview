@@ -780,7 +780,7 @@ KnowledgeService 构图时以任务中的 `ownerUserId` 调用 `IMaterialTextCli
 - 提取器给出的知识点 offset 与来源区间重叠时，`SourceRef.location` 依次采用 `sourceLabel`、页码、段落；没有这些标签时才按块类型投影“标题/列表项/表格/代码块/引用/段落”。机器定位始终使用 offset，展示位置不参与幂等；
 - FileService 的 `404/409/422` 分别映射为资料不存在、文本未就绪、提取失败；响应契约损坏为 `502`，超时或不可达为 `503 FILE_SERVICE_UNAVAILABLE`。
 
-KnowledgeService 读取文本时只向 Gateway 发送 `X-Service-Name: KnowledgeService`、对应的 `X-Service-Key` 和原链路 `X-Correlation-Id`，不直连 FileService。它不调用 OCRService，也不读取 `DSAPI` 或 `BitchSDAU`；确定性章节切分、规则抽取和 Neo4j 写入不依赖任何大模型密钥。
+KnowledgeService 读取文本时只向 Gateway 发送 `X-Service-Name: KnowledgeService`、对应的 `X-Service-Key` 和原链路 `X-Correlation-Id`，不直连 FileService。它不调用 OCRService，也不读取 `DEEPSEEK_API_KEY` 或 `BitchSDAU`；确定性章节切分、规则抽取和 Neo4j 写入不依赖任何大模型密钥。
 
 ### 6.2 图谱构建与分层数据类型
 
@@ -1547,13 +1547,13 @@ confidence、服务密钥或其他无关数据。上传资料中的 title、summ
 | 配置 | Compose / 环境变量 | 默认值 | 说明 |
 |---|---|---|---|
 | 启用叙事模型 | `GALGAME_NARRATIVE_ENABLED` | `true` | `MOONSTONE_MODE=Mock` 时强制关闭外部调用 |
-| API 密钥 | `DSAPI` | 无 | 只注入 GalGameService，不写入响应、日志或仓库 |
+| API 密钥 | `DEEPSEEK_API_KEY` | 无 | 只注入 GalGameService，不写入响应、日志或仓库 |
 | Endpoint | `GALGAME_NARRATIVE_ENDPOINT` | `https://api.deepseek.com/chat/completions` | 必须为 HTTPS |
 | Model | `GALGAME_NARRATIVE_MODEL` | `deepseek-v4-pro` | 可按供应商兼容模型覆盖 |
 | Prompt | `NarrativeGeneration__PromptVersion` | `galgame-narrative-v3` | 当前提示词与草稿合同版本 |
 
 启用外部模型意味着上述最小知识字段会发送给所配置供应商；部署者必须依据资料敏感级别、供应商
-条款和本地合规要求决定是否启用。关闭或缺少 `DSAPI` 时服务仍可生成契约有效的确定性包。
+条款和本地合规要求决定是否启用。关闭或缺少 `DEEPSEEK_API_KEY` 时服务仍可生成契约有效的确定性包。
 
 ### 7.4 最小游戏包 Mock
 
@@ -2002,13 +2002,13 @@ SMTP、HTTP(S)、SOCKS 等第三方协议端口不受该范围限制。测试监
 - Gateway 使用 `GATEWAY_KEY`、各服务 `*_SERVICE_KEY`、各服务 `*_SERVICE_URL`、`READINESS_SERVICES`、`DEFAULT_TIMEOUT_MS`、`UPLOAD_TIMEOUT_MS` 和 `CORS_ORIGINS`；GalGameService 的目标配置明确为 `GALGAME_SERVICE_URL` 与 `GALGAME_SERVICE_KEY`；
 - FileService 使用 `Gateway__ServiceKey`、`ConnectionStrings__FileDatabase`、`MongoDb__Database`、`InternalAccess__ExtractedTextAllowedServices__0`、`Ocr__BaseUrl`、`Ocr__TimeoutMinutes`；
 - KnowledgeService 使用 `Gateway__ServiceKey`、`GatewayMaterialText__BaseUrl`、`GatewayMaterialText__ServiceName`、`GatewayMaterialText__ServiceKey`、`GatewayMaterialText__Timeout` 以及 `Neo4j__Uri`、`Neo4j__Username`、`Neo4j__Password`、`Neo4j__Database`；
-- GalGameService 使用 `Gateway__BaseUrl`、`Gateway__ServiceKey`、`InternalAccess__ValidationAllowedServices__0`、`InternalAccess__PackageReaderAllowedServices__0` 和 `NarrativeGeneration__*`；两个 INTERNAL 调用方默认都只允许 `RenderService`，叙事 API key 只从 `DSAPI` 注入；
+- GalGameService 使用 `Gateway__BaseUrl`、`Gateway__ServiceKey`、`InternalAccess__ValidationAllowedServices__0`、`InternalAccess__PackageReaderAllowedServices__0` 和 `NarrativeGeneration__*`；两个 INTERNAL 调用方默认都只允许 `RenderService`，叙事 API key 只从 `DEEPSEEK_API_KEY` 注入；
 - PracticeService 使用 `Gateway__BaseUrl`、`Gateway__ServiceName=PracticeService`、`Gateway__ServiceKey`、MongoDB 连接串和本地模型资产；
 - CreditService 使用 `Gateway__ServiceKey`、`CreditStore__Provider=MySQL` 与独立 `ConnectionStrings__CreditDatabase`；
 - RenderService 基础壳只使用 `PORT`；未来实现 INTERNAL 回调时再启用 `Gateway__BaseUrl`、`Gateway__ServiceName` 与 `Gateway__ServiceKey`；
 - AuthService、UserService 与 CreditService 分别使用自己的 `Gateway__ServiceKey`、独立 MySQL 连接串和独立数据卷；Auth/User 服务器模板固定使用 `MySql` 模式，本地可显式覆盖为 `Mock`，CreditService 生产固定使用 MySQL。Compose 内部 MySQL 8.4 的 `caching_sha2_password` 连接串包含 `AllowPublicKeyRetrieval=True` 且端口不外露；改接外部数据库时必须使用受信 CA 的 TLS；
 - Frontend 使用 `GATEWAY_UPSTREAM`，AuthService 的可选邮件配置使用 `SMTP_*` 与 `ACCOUNT_FRONTEND_BASE_URL`；
-- `DSAPI`（DeepSeek）只用于 §7.3.2 的可选 GalGame 叙事生成；`BitchSDAU`（阿里 API）仍不属于当前主链路。二者都不是“注册/登录 -> 上传 -> 确定性文本提取 -> KnowledgeService 构图 -> Neo4j”的依赖，不能注入 User/Auth/File/Knowledge/Render/Gateway 容器或写入日志。
+- `DEEPSEEK_API_KEY`（DeepSeek）只用于 §7.3.2 的可选 GalGame 叙事生成；`BitchSDAU`（阿里 API）仍不属于当前主链路。二者都不是“注册/登录 -> 上传 -> 确定性文本提取 -> KnowledgeService 构图 -> Neo4j”的依赖，不能注入 User/Auth/File/Knowledge/Render/Gateway 容器或写入日志。
 
 开发默认密钥只用于本地；生产部署必须通过 secret 管理器覆盖，日志、构建参数、
 Compose 文件和接口示例均不得打印真实值。Docker Desktop 的镜像与卷数据位置属于宿主机运维配置，不由业务容器内路径决定。
