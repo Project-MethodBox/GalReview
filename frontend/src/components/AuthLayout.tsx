@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from 'react'
+import { Link } from 'react-router'
 import BrandMark from './BrandMark'
 
 interface AuthLayoutProps {
@@ -43,6 +44,9 @@ export default function AuthLayout({ children, page, storyCardVariant }: AuthLay
   if (isAccountEntry) {
     return (
       <main className={`auth-page auth-page--entry auth-page--${page}`}>
+        {page === 'login' || page === 'register' ? (
+          <Link className="auth-entry-home-link" to="/">返回官网</Link>
+        ) : null}
         <aside className="auth-entry-story" aria-label="千知万理产品介绍">
           <div className="auth-entry-brand">
             <BrandMark compact />

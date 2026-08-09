@@ -112,7 +112,7 @@ function AnimatedRoutes() {
 
   useEffect(() => {
     if (location.pathname === '/') {
-      document.title = '千知万理 — 一卷成册，循知而习'
+      document.title = '千知万理 · 一卷成册，循知而习'
     } else {
       document.title = `${resolvePageTitle(location.pathname)} · 千知万理`
     }

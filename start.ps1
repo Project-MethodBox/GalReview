@@ -35,6 +35,85 @@ function Normalize-ProcessPath {
 }
 
 function Stop-MoonStoneServices {
+    $resolvedProjectRoot = [IO.Path]::GetFullPath($projectRoot).TrimEnd('\', '/')
+    $rootWithSeparator = $resolvedProjectRoot + [IO.Path]::DirectorySeparatorChar
+    $processSnapshot = @{}
+    try {
+        foreach ($item in @(Get-CimInstance Win32_Process -ErrorAction Stop)) {
+            $processSnapshot[[int]$item.ProcessId] = $item
+        }
+    }
+    catch {
+        Write-Warning "Process ownership details are unavailable; generic Node and dotnet processes will be preserved. $($_.Exception.Message)"
+    }
+
+    $recordedProcessIds = [System.Collections.Generic.HashSet[int]]::new()
+    $manifestPath = Join-Path $runtimeDirectory 'project-processes.json'
+    if (Test-Path -LiteralPath $manifestPath -PathType Leaf) {
+        try {
+            $parsedManifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+            foreach ($manifestItem in @($parsedManifest)) {
+                $manifestProcessId = [int]$manifestItem.ProcessId
+                $runningProcess = Get-Process -Id $manifestProcessId -ErrorAction SilentlyContinue
+                if ($null -eq $runningProcess) { continue }
+
+                $manifestStartTime = [DateTime]::MinValue
+                $hasStartTime = [DateTime]::TryParse(
+                    [string]$manifestItem.StartedAtUtc,
+                    [Globalization.CultureInfo]::InvariantCulture,
+                    [Globalization.DateTimeStyles]::RoundtripKind,
+                    [ref]$manifestStartTime
+                )
+                if (-not $hasStartTime) { continue }
+
+                try {
+                    $actualStartTime = $runningProcess.StartTime.ToUniversalTime()
+                    if ([Math]::Abs(($actualStartTime - $manifestStartTime.ToUniversalTime()).TotalSeconds) -le 5) {
+                        [void]$recordedProcessIds.Add($manifestProcessId)
+                    }
+                }
+                catch {
+                }
+            }
+        }
+        catch {
+            Write-Warning "Could not read process manifest '$manifestPath': $($_.Exception.Message)"
+        }
+    }
+
+    function Test-IsMoonStoneProcess {
+        param(
+            [Parameter(Mandatory)][int]$ProcessId,
+            [Parameter(Mandatory)][string]$ProcessName
+        )
+
+        $projectSpecificNames = @(
+            'GalGame.AuthService',
+            'GalGame.FileService',
+            'GalGame.UserService',
+            'GalGame.GalGameService',
+            'KnowledgeService.API',
+            'PracticeService.API',
+            'CreditService.API'
+        )
+        if ($projectSpecificNames -contains $ProcessName) { return $true }
+
+        $cursor = $ProcessId
+        $seen = [System.Collections.Generic.HashSet[int]]::new()
+        while ($cursor -gt 0 -and $seen.Add($cursor)) {
+            if ($recordedProcessIds.Contains($cursor)) { return $true }
+            if (-not $processSnapshot.ContainsKey($cursor)) { break }
+            $cursor = [int]$processSnapshot[$cursor].ParentProcessId
+        }
+
+        if (-not $processSnapshot.ContainsKey($ProcessId)) { return $false }
+        $details = $processSnapshot[$ProcessId]
+        $executablePath = [string]$details.ExecutablePath
+        $commandLine = [string]$details.CommandLine
+        return ($executablePath -and $executablePath.StartsWith($rootWithSeparator, [StringComparison]::OrdinalIgnoreCase)) -or
+            ($commandLine -and $commandLine.IndexOf($resolvedProjectRoot, [StringComparison]::OrdinalIgnoreCase) -ge 0)
+    }
+
     foreach ($port in $moonStonePorts) {
         $processIds = netstat -ano -p TCP |
             ForEach-Object {
@@ -49,8 +128,10 @@ function Stop-MoonStoneServices {
         foreach ($processId in $processIds) {
             $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
             $allowedNames = @('node', 'dotnet', 'GalGame.AuthService', 'GalGame.FileService', 'GalGame.UserService', 'GalGame.GalGameService', 'KnowledgeService.API', 'PracticeService.API', 'CreditService.API')
-            if ($process -and $allowedNames -contains $process.ProcessName) {
+            if ($process -and $allowedNames -contains $process.ProcessName -and (Test-IsMoonStoneProcess -ProcessId $processId -ProcessName $process.ProcessName)) {
                 Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
+            } elseif ($process -and $allowedNames -contains $process.ProcessName) {
+                Write-Host ("  [KEEP] Port {0} belongs to unrelated process {1} (PID {2})." -f $port, $process.ProcessName, $processId) -ForegroundColor DarkYellow
             }
         }
     }

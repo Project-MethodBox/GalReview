@@ -49,7 +49,7 @@ export default function LoginPage() {
         <div className="auth-form__actions"><ActionButton type="submit" disabled={busy}><span>{busy ? '登录中' : '登录并继续'}</span><b aria-hidden="true">→</b></ActionButton></div>
         <div className="auth-secondary-actions"><button type="button" onClick={() => navigate('/forgot-password')}>忘记密码？</button></div>
         <p className="auth-entry-switch">还没有账户？<button type="button" onClick={() => navigate('/register')}>去注册</button></p>
-        {message ? <p className="form-message" role="status">{message}</p> : null}
+        {message ? <p className="form-message form-message--error" role="status">{message}</p> : null}
       </form>
     </AuthLayout>
   )

@@ -158,9 +158,13 @@ PracticeService 不拥有：
 1. 用户在“藏书阁”上传一个或多个资料并等待 FileService 规范化文本 `READY`；藏书阁不拥有或创建图谱。
 2. 用户先创建 `StudyProject`，只保存 material ID；KnowledgeService 以 `studyProjectId` 为作用域、以 material 为来源建立本册独立图谱。
 3. 客户端绑定图谱前后分别由 KnowledgeService 与 PracticeService 经受信接口核验项目、用户和资料范围；同一资料用于两本册时不得复用 graph、point 或 mastery。
-4. 立册编排立即从本册图谱创建 OPEN PlanGraph 并自动成题。PracticeService 读取规范化文本，以
-   “目标知识点 -> 精确可核对原文 -> 题目”的次序生成，每道成功题同时保存 point ID 与 source range。
-5. 无精确证据的知识点留下诊断而不强行贴签；人工可编辑题目、答案、分值、难度和主知识点后发布题库。
+4. 立册编排立即从本册全部章节创建 OPEN `LEARNING` PlanGraph（`maxPoints` 可到 1000）并省略
+   `targetCount` 调用 `recite-question-v2`。Assessment Plan 只负责后续某一次练习/试卷的选点，
+   30 题等小题量限制不得反向限制首次建库。
+5. 生成器按“显式题库 → 半结构化讲义 → 普通正文”分流：原题/原答案优先忠实提取；术语定义与
+   问题标题—分点答案从答案原子形成题面；剩余正文才按本册知识点、连续证据和答案原子调用模型。
+6. 每道 `READY` 题同时保存唯一 point ID 与逐字可回源的 source range/checksum，并通过独立 QA
+   回验。不能唯一绑定或不能由同一证据还原答案的原题保留 `DRAFT` 并给出诊断，禁止猜签。
 
 ### 4.2 普通练习与智能复习
 
@@ -198,15 +202,31 @@ PracticeService 不代理、不复制也不转换 GamePackage。这样普通刷�
 - 题型：`SINGLE_CHOICE | FILL_BLANK | TRUE_FALSE | TERM_DEFINITION | ESSAY`。
 - 题库状态：`DRAFT | GENERATING | READY | FAILED | ARCHIVED`。
 - 会话状态：`CREATED | ACTIVE | COMPLETED | ABANDONED`。
-- `recite-question-v1` 只有在答案、唯一知识点和精确原文出处均可机械校验时才生成，并直接进入
-  `READY`，使经典项目立册后即可复习；整卷导入、旧包中未补签题以及未来非确定性模型输出仍须
-  先为 `DRAFT`，用户确认后才能 `READY`。
+- `recite-question-v2` 自动支持 `SINGLE_CHOICE | FILL_BLANK | TERM_DEFINITION | ESSAY`；
+  `TRUE_FALSE` 只保留人工题录或导入。`targetCount` 可空，显式范围 1-1000；省略时以通过校验的
+  唯一原题/知识原子决定题数，不能为了达到固定数量制造重复题。
+- 只有 schema、逐字来源、答案支持、独立回验、题型约束和唯一知识点绑定全部通过才进入 `READY`。
+  单选必须是 A-D 四项 one-best-answer；任何门禁失败都拒绝或进入 `DRAFT`，不自动修成“看起来像题”。
 - `similarity` 取值 `[0,1]`；`quality` 为整数 `[0,5]`；`responseTimeMs >= 0`。
 - 客观题不调用 LLM 判分。主观题即使调用解释模型，最终证据也必须保存本地模型分数、规则版本与正确答案摘要，保证可审计。
 - PracticeService 不允许客户端上传 `userId` 冒充他人；用户身份只接受 Gateway 注入的 `X-User-Id`。
 - PracticeService 调用内部接口使用 `X-Service-Name: PracticeService` 和独立密钥，密钥只在 Gateway 验证，转发前剥离。
 
 具体端点和 JSON 类型以 `docs/contract.md` 第 14 节为准。
+
+### 5.1 为什么不复制机械切块主链
+
+旧式“每 500/800 字切一段，再轮转知识点和题型”的实现会切断多行答案、把章节标题/页脚混入题面，
+并诱发“请概括下述内容”“10. ____？”和随机干扰项。v2 的 1400 字窗口只用于普通正文模型调用的
+传输边界；它不是知识原子，也不能直接决定题数、题型或 pointId。结构化边界、连续原文证据与
+PlanGraph 唯一绑定先于窗口，窗口生成结果仍要逐字回源并通过独立回验。
+
+研究依据与工程映射：
+
+- [Answer-focused and Position-aware Neural Question Generation](https://aclanthology.org/D18-1427/)：支持答案焦点先行，映射为 `EvidenceBundle/KnowledgeAtom → 题面`。
+- [Synthetic QA Corpora Generation with Roundtrip Consistency](https://aclanthology.org/P19-1620/)：支持用答案抽取回路筛选合成 QA，映射为独立回验必须还原同一标准答案。
+- [QGEval](https://aclanthology.org/2024.emnlp-main.658/)：记录流畅、清晰、简洁、相关、一致、可回答、答案一致七个人工维度；论文同时显示自动指标不能替代人工判断，因此项目仍需真实资料黄金集。
+- [NBME Item-Writing Guide](https://www.nbme.org/sites/default/files/2021-02/NBME_Item%20Writing%20Guide_R_6.pdf)：支持聚焦 lead-in、同质可信选项和排除形式线索，映射为 A-D one-best-answer 布尔门禁；干扰项不可靠就不生成单选。
 
 ## 6. UI 重绘规则
 
@@ -272,6 +292,7 @@ ReciteHelper 使用 AGPL-3.0。迁移的源代码、提示词、模型和兼容�
 | 2026-08-09 | Practice/Frontend | 恢复 ReciteHelper 立册编排：创建 StudyProject 后立即用全部章节建立生成计划并自动生成单选、填空、名词解释、简答四类题；精确原文/知识点绑定的确定性结果直接 READY；成题区降为追加与恢复入口 | 修复“空册创建成功后还要用户手动找成题按钮”的业务断裂，恢复立册即成题，同时保留 credits 失败后的可恢复册 | Practice 21/21、Frontend production build 1401 modules；真实立册成题与 SMART 会话见 test_report | VERIFIED |
 | 2026-08-09 | Knowledge/Practice/Gateway/Frontend | 将 KnowledgeGraph 所有权从 Material 改为 StudyProject：新册先创建，再以 `studyProjectId + materialId` 经双向内部核验构图和绑定；版本、指纹、SUPERSEDED 与 mastery 均按册隔离；藏书阁仅解析资料，识网页按册选择；失败重试从本册恢复 | 修复同一资料建立多册时共享图谱身份与掌握度的聚合越界，保证“资料是来源、研习册拥有图谱” | Knowledge 112/112、Practice 24/24、Gateway 203/203、Frontend 1401 modules；容器与双册隔离实测见 test_report | VERIFIED |
 | 2026-08-09 | Practice | `recite-question-v1` 从“题型外层、知识点内层”改为题型与知识点同步轮转；题数足够时先覆盖所有请求题型，再重复任一题型 | 修复四个知识点、四道首发题时达到数量上限而全部生成为单选的真实链路缺陷，同时保留干扰项不足时不伪造单选的安全降级 | 新回归测试复现旧序列并通过；Practice 24/24；真实首批 4 题覆盖单选、填空、名词解释、简答 | VERIFIED |
+| 2026-08-09 | Practice/Gateway/Frontend | 主链升级为 `recite-question-v2`：整册 Learning Plan、可空 targetCount、显式/半结构化/普通正文分流、答案原子、独立 QA 回验、provider usage 结算与 600 秒超时 | 修复扁平 PDF 行内题无法识别、答案跨章节、固定 30 题、机械模板与猜签问题 | Practice 36/36、Gateway 203/203、Frontend build；两份真实 PDF 与公开 HTTP 闭环见 test_report §33 | VERIFIED |
 
 状态只使用 `SPECIFIED | IMPLEMENTED | VERIFIED | BLOCKED`。代码合入后必须逐项更新，测试未运行或失败时不得写 `VERIFIED`。
 

@@ -10,6 +10,10 @@
     "test": "vitest run",
     "test:watch": "vitest"
   },
+  "allowScripts": {
+    "esbuild@0.21.5": true,
+    "esbuild@0.28.1": true
+  },
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",

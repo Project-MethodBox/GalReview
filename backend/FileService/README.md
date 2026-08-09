@@ -89,7 +89,7 @@ X-User-Id: <UUID 用户 ID>
 | `GET` | `/api/v1/ingestion-jobs/{jobId}` | 查询解析进度和错误 |
 | `GET` | `/api/v1/materials/{materialId}/extracted-text-preview` | 获取已解析的文本和结构化 blocks |
 
-内部服务读取接口位于 `/internal/v1/materials/...`，除 `X-Gateway-Key` 外还必须由网关注入非空的 `X-Service-Name`。规范化文本 allowlist 默认仅含 `KnowledgeService`，Compose 为 ReciteHelper 迁移显式增加 `PracticeService`；生产环境不要让浏览器直接访问 FileService。
+内部服务读取接口位于 `/internal/v1/materials/...`，除 `X-Gateway-Key` 外还必须由网关注入非空的 `X-Service-Name`。规范化文本 allowlist 默认精确允许 `KnowledgeService` 和 `PracticeService`；生产环境不要让浏览器直接访问 FileService。
 
 ## 解析结果格式
 

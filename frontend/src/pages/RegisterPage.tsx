@@ -53,7 +53,7 @@ export default function RegisterPage() {
         <p className="auth-entry-field-help">至少 8 个字符</p>
         <div className="auth-form__actions"><ActionButton type="submit" disabled={busy}><span>{busy ? '创建中' : '创建账户并进入'}</span><b aria-hidden="true">→</b></ActionButton></div>
         <p className="auth-entry-switch">已经有账户？<button type="button" onClick={() => navigate('/login')}>直接登录</button></p>
-        {message ? <p className="form-message" role="status">{message}</p> : null}
+        {message ? <p className="form-message form-message--error" role="status">{message}</p> : null}
       </form>
     </AuthLayout>
   )

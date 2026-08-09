@@ -49,7 +49,7 @@ function createTestApp() {
   const middleware = createAuthenticationMiddleware(mockConfig);
   app.use('/protected', middleware);
   app.get('/protected/data', (req, res) => {
-    res.json({ userId: req.gatewayUserId });
+    res.json({ userId: req.gatewayUserId, trustedHeader: req.headers['x-user-id'] });
   });
   return app;
 }
@@ -143,6 +143,7 @@ describe('authenticationMiddleware', () => {
       .set('Authorization', 'Bearer valid-token');
     expect(res.status).toBe(200);
     expect(res.body.userId).toBe('7bc4918a-9079-4ea2-9e8e-369ad79a9f20');
+    expect(res.body.trustedHeader).toBe('7bc4918a-9079-4ea2-9e8e-369ad79a9f20');
   });
 
   it('应接受小写 UUID v4、可空 sessionId 和 +00:00 UTC 小数秒', async () => {

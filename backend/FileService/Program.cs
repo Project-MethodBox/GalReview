@@ -11,7 +11,8 @@ const long MultipartOverheadBytes = 1024 * 1024;
 builder.Services.Configure<FormOptions>(options => options.MultipartBodyLengthLimit = MaxFileSizeBytes + MultipartOverheadBytes);
 var extractedTextAllowedServices = InternalServiceAccessPolicy.CreateAllowlist(
     builder.Configuration.GetSection("InternalAccess:ExtractedTextAllowedServices"),
-    "KnowledgeService");
+    "KnowledgeService",
+    "PracticeService");
 var ocrBaseUri = new Uri(
     builder.Configuration["Ocr:BaseUrl"] ?? "http://127.0.0.1:5110/",
     UriKind.Absolute);
