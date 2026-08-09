@@ -16,4 +16,5 @@ ENV ASPNETCORE_URLS=http://+:5103
 EXPOSE 5103
 HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=6 \
   CMD curl --fail --silent http://127.0.0.1:5103/readyz > /dev/null || exit 1
+USER app
 ENTRYPOINT ["dotnet", "GalGame.FileService.dll"]
