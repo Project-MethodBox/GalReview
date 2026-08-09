@@ -35,7 +35,8 @@ export interface GatewayConfig {
 
 function env(key: string, fallback: string): string {
   const v = process.env[key];
-  return (v && v.length > 0) ? v : fallback;
+  // key exists (even if empty) → return the actual value; absent → fallback
+  return v !== undefined ? v : fallback;
 }
 
 function envInt(key: string, fallback: number): number {
