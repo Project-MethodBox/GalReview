@@ -72,7 +72,11 @@ export default function KnowledgePointsPage() {
 
   const statistics = useMemo(() => {
     const averageMastery = points.length ? Math.round(points.reduce((sum, point) => sum + point.mastery.score, 0) / points.length) : 0
-    const dueCount = points.filter((point) => new Date(point.mastery.nextReviewAt).getTime() <= Date.now()).length
+    const dueCount = points.filter((point) => {
+      if (!point.mastery.nextReviewAt) return false
+      const reviewTime = new Date(point.mastery.nextReviewAt).getTime()
+      return Number.isFinite(reviewTime) && reviewTime <= Date.now()
+    }).length
     return { averageMastery, dueCount }
   }, [points])
 
