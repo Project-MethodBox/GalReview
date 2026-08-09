@@ -97,6 +97,20 @@ public sealed class ReciteQuestionGeneratorTests
     }
 
     [Fact]
+    public async Task Term_definition_focus_is_automatically_bound_without_human_tagging()
+    {
+        const string text = "名词解释\n1. 第二性比：出生时同一世代雌雄个体数目的比例。";
+        var point = Point("第二性比（次级性比）");
+
+        var output = await CreateGenerator().GenerateAsync(Input(Material(text), [point]), CancellationToken.None);
+
+        var question = Assert.Single(output.Drafts);
+        Assert.Equal("请解释“第二性比”。", question.Prompt);
+        Assert.Equal(point.KnowledgePointId, question.KnowledgePointId);
+        Assert.Equal(QuestionStatus.Ready, question.Status);
+    }
+
+    [Fact]
     public async Task Flattened_pdf_pages_preserve_inline_questions_and_remove_known_page_noise()
     {
         const string text = "第一章 绪论 一、简答题（每小题5分） 4. 生态平衡的基本特征有哪些？ 【参考答案】（1）相对平衡；（2）物流和能流比例合理。 5. 循环农业坚持的4R原则是什么？ 【参考答案】适量化、再循环、再利用、可控化。 四、论述题 3. 解读中国生态农业原理之绿色发展原理。 山东农业大学农学院农业生态学教学组版权所有不得复制！ 17 【参考答案】绿色发展要求最大绿色覆盖并提高光合作用效率。";

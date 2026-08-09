@@ -329,7 +329,9 @@ public sealed class ReciteQuestionGenerator(
         else correctAnswers = [answer];
 
         var excerpt = material.Text[item.StartOffset..item.EndOffset];
-        var binding = BindPoint(prompt, answer, excerpt, points);
+        var source = new SourceReference(material.MaterialId, item.StartOffset, item.EndOffset,
+            material.SourceMapVersion, PracticeRules.Sha256(excerpt));
+        var binding = KnowledgePointBindingRules.Bind(kind, prompt, correctAnswers, excerpt, points, [source]);
         var answerSupported = EvidenceSupportsAnswer(excerpt, answer);
         var reliableChoice = kind != PracticeQuestionKind.SingleChoice || options.Length == 4;
         var ready = binding.PointId.HasValue && answerSupported && reliableChoice;
@@ -342,8 +344,6 @@ public sealed class ReciteQuestionGenerator(
         if (!reliableChoice)
             diagnostics.Add(new(material.MaterialId, "SOURCE_CHOICE_OPTIONS_UNRELIABLE",
                 $"原题“{TrimForDiagnostic(prompt)}”不是恰好四个选项，未自动收入 READY 题库。", false));
-        var source = new SourceReference(material.MaterialId, item.StartOffset, item.EndOffset,
-            material.SourceMapVersion, PracticeRules.Sha256(excerpt));
         return new(kind, EnsureQuestionPrompt(prompt, kind), options, correctAnswers,
             explicitAnswer ? "题目与答案按资料原文提取。" : "题目与答案按资料中的可核对问答结构提取。",
             ParseScore(item.SectionMeta, excerpt, kind), InferDifficulty(kind), binding.PointId, [source], ready ? QuestionStatus.Ready : QuestionStatus.Draft);
@@ -604,46 +604,6 @@ public sealed class ReciteQuestionGenerator(
         return matched;
     }
 
-    private static BindingResult BindPoint(string prompt, string answer, string excerpt, IReadOnlyList<PlanGraphPoint> points)
-    {
-        var normalizedPrompt = Normalize(prompt);
-        var exactPromptMatches = points.Where(point =>
-                Normalize(point.Title).Length >= 2
-                && Normalize(point.Title) == normalizedPrompt)
-            .ToArray();
-        if (exactPromptMatches.Length > 0)
-            return exactPromptMatches.Length == 1
-                ? new(exactPromptMatches[0].KnowledgePointId, false)
-                : new(null, true);
-
-        var promptMatches = points.Where(point =>
-                Normalize(point.Title).Length >= 2
-                && normalizedPrompt.Contains(Normalize(point.Title), StringComparison.Ordinal))
-            .Select(point => new { Point = point, Length = Normalize(point.Title).Length })
-            .OrderByDescending(item => item.Length).ToArray();
-        if (promptMatches.Length > 0)
-        {
-            var longest = promptMatches[0].Length;
-            var winners = promptMatches.Where(item => item.Length == longest).Select(item => item.Point).ToArray();
-            return winners.Length == 1 ? new(winners[0].KnowledgePointId, false) : new(null, true);
-        }
-
-        var normalizedEvidence = Normalize(answer + excerpt);
-        var evidenceMatches = points.Where(point =>
-                Normalize(point.Title).Length >= 2
-                && normalizedEvidence.Contains(Normalize(point.Title), StringComparison.Ordinal))
-            .Select(point => new { Point = point, Length = Normalize(point.Title).Length })
-            .OrderByDescending(item => item.Length).ToArray();
-        if (evidenceMatches.Length > 0)
-        {
-            var longest = evidenceMatches[0].Length;
-            var winners = evidenceMatches.Where(item => item.Length == longest).Select(item => item.Point).ToArray();
-            return winners.Length == 1 ? new(winners[0].KnowledgePointId, false) : new(null, true);
-        }
-        var tagMatches = points.Where(point => point.Tags.Any(tag => Normalize(tag).Length >= 3 && normalizedEvidence.Contains(Normalize(tag), StringComparison.Ordinal))).ToArray();
-        return tagMatches.Length == 1 ? new(tagMatches[0].KnowledgePointId, false) : new(null, tagMatches.Length > 1);
-    }
-
     private static (string Title, string Meta)? FindSection(string text, int offset)
     {
         var sections = SectionHeading.Matches(text[..Math.Clamp(offset, 0, text.Length)]);
@@ -765,7 +725,6 @@ public sealed class ReciteQuestionGenerator(
     private sealed record SourceMarker(int Index, int Length);
     private sealed record SourceItem(int StartOffset, int EndOffset, string Prompt, string Answer, string? SectionTitle, string SectionMeta);
     private sealed record SourceChunk(MaterialText Material, int StartOffset, string Text, IReadOnlyList<PlanGraphPoint> Points);
-    private sealed record BindingResult(Guid? PointId, bool Ambiguous);
     private sealed record ModelCompletion(string Content, long TokenUnits);
     private sealed record ModelCandidate(QuestionDraft Draft, Guid PointId, string SourceQuote);
     private sealed record GeneratedChunk(IReadOnlyList<QuestionDraft> Drafts, IReadOnlyList<PracticeJobDiagnostic> Diagnostics, long TokenUnits);

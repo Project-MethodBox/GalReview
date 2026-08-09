@@ -21,10 +21,10 @@ PracticeService 承载产品主线的 ReciteHelper 复习内核，负责研习�
 - 题目生成在读取资料和 PlanGraph 后，通过 Gateway 向 CreditService 预授权；成功按实际输入与生成内容结算，失败或无产物释放 held。credits 不足的 `402` 与详情原样交给前端处理。
 - 图谱归研习册而不是归藏书阁资料。浏览器先创建 `graphId=null` 的新册，再以 `studyProjectId + materialId` 请求 KnowledgeService 为本册识网，最后通过乐观并发 PATCH 绑定返回图谱；PracticeService 会反查 `studyProjectId` 与资料范围，拒绝跨册或旧 material-scoped 图谱。
 - 绑定本册 READY 识网后立即为全部章节创建 OPEN Learning Plan（最多 1000 点）并自动成题，不能建立空册后要求用户再找首次成题入口。首次生成省略 `targetCount`，由通过校验的唯一原题/知识原子决定规模；自动题型仅为单选、填空、名词解释、简答，判断题只来自整卷导入或人工题录。
-- `recite-question-v2` 先区分显式题库、半结构化讲义和普通教材正文。原题/答案/选项与“术语：定义”“问题标题：分点答案”优先忠实提取；普通正文再按本册 PlanGraph 的知识点与连续原文形成答案原子，调用 OpenAI-compatible 模型生成并进行第二次独立 QA 回验。
-- READY 是全布尔门禁：题型 schema、逐字 offset/quote/checksum、同一证据支持标准答案、独立回验答案一致、题干不泄露答案、唯一 pointId 必须全部成立。单选必须恰有 A-D 四项且只有一个最佳答案；任一门禁失败即拒绝或保留 DRAFT，禁止按数组序号、随机词或模糊位置猜签。
+- `recite-question-v2` 先区分显式题库、半结构化讲义和普通教材正文。原题/答案/选项与“术语：定义”“问题标题：分点答案”优先忠实提取；普通正文再按本册 PlanGraph 的知识点与连续原文形成答案原子，调用 OpenAI-compatible 模型生成并进行与生成调用分离的第二遍来源约束 QA 回验。
+- READY 是全布尔门禁：题型 schema、逐字 offset/quote/checksum、同一证据支持标准答案、第二遍回验答案一致、题干不泄露答案、唯一 pointId 必须全部成立。名词解释焦点、标题/标签、同资料来源区间和来源文本按离散顺序自动绑定；历史草稿也可经现有 PATCH 或会话入口自动修复，但来源失效或多候选时仍保留 DRAFT。单选必须恰有 A-D 四项且只有一个最佳答案；禁止按数组序号、随机词或模糊位置猜签。
 - 未配置 `QuestionGeneration:ApiKey` 时，显式题库与可核对半结构化问答仍可生成；普通正文返回 `QUESTION_MODEL_NOT_CONFIGURED`，不会回退为“请概括下述内容”、机械填空或随机干扰项。模型实际结算只接受供应商 `usage.total_tokens`；缺失 usage 作为上游契约错误处理。
-- SMART 与模拟试卷严格按 PlanGraph 目标顺序“一点一题”；缺题返回 `QUESTION_COVERAGE_GAP`，不以计划外题目凑数。普通答题、试卷和故事回响都通过同一 KnowledgeService evidence 入口更新 mastery。
+- SMART 与模拟试卷严格按 PlanGraph 目标顺序“一点一题”；计划内缺题点被跳过并继续扫描后续已覆盖点，不以计划外题目凑数，只有计划与 READY 题库零交集才返回 `QUESTION_COVERAGE_GAP`。普通答题、试卷和故事回响都通过同一 KnowledgeService evidence 入口更新 mastery。
 - PracticeService 不复制 SM-2 或图谱排序。`sm2-graph-v2` 由 KnowledgeService 先用 SM-2 的 `nextReviewAt` 形成到期集合，再用图谱次模覆盖选点，不存在“SM-2 百分比 + 图谱百分比”的混合分。
 
 ## 本地资产（开发前必做）

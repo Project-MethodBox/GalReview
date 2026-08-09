@@ -246,7 +246,7 @@ public sealed record CreateQuestionCommand(Guid OwnerUserId, Guid ProjectId, Que
 public sealed record UpdateQuestionCommand(Guid OwnerUserId, Guid QuestionId, QuestionInput Input) : IRequest<PracticeQuestion>;
 public sealed record DeleteQuestionCommand(Guid OwnerUserId, Guid QuestionId) : IRequest;
 
-public sealed class QuestionHandlers(IPracticeRepository repository) :
+public sealed class QuestionHandlers(IPracticeRepository repository, IPracticeGateway gateway) :
     IRequestHandler<ListQuestionsQuery, IReadOnlyList<PracticeQuestion>>, IRequestHandler<CreateQuestionCommand, PracticeQuestion>,
     IRequestHandler<UpdateQuestionCommand, PracticeQuestion>, IRequestHandler<DeleteQuestionCommand>
 {
@@ -264,13 +264,46 @@ public sealed class QuestionHandlers(IPracticeRepository repository) :
         var project = PracticeOwnership.Project(request.ProjectId, request.OwnerUserId, repository);
         return Task.FromResult(repository.CreateQuestion(PracticeRules.CreateQuestion(project, Draft(request.Input))));
     }
-    public Task<PracticeQuestion> Handle(UpdateQuestionCommand request, CancellationToken ct)
+    public async Task<PracticeQuestion> Handle(UpdateQuestionCommand request, CancellationToken ct)
     {
         var current = repository.GetQuestion(request.QuestionId) ?? throw PracticeOwnership.NotFound();
         var project = PracticeOwnership.Project(current.ProjectId, request.OwnerUserId, repository);
         if (request.Input.Version != current.Version) throw new PracticeDomainException(409, "VERSION_CONFLICT", "题目版本已经变化，请刷新后重试。");
-        var updated = PracticeRules.CreateQuestion(project, Draft(request.Input), current.QuestionId, current.Version + 1, current.CreatedAt);
-        repository.SaveQuestion(updated); return Task.FromResult(updated);
+        var input = request.Input;
+        if (project.GraphId is Guid graphId && input.Status == QuestionStatus.Ready)
+        {
+            var scope = await gateway.GetGraphScopeAsync(graphId, request.OwnerUserId, ct);
+            if (scope.StudyProjectId != project.ProjectId || scope.OwnerUserId != request.OwnerUserId)
+                throw new PracticeDomainException(409, "PROJECT_GRAPH_SCOPE_MISMATCH", "题目知识点必须来自当前研习册自己的图谱。");
+            if (scope.Points.Count == 0)
+                throw new PracticeDomainException(502, "KNOWLEDGE_POINTS_NOT_FOUND", "图谱归属已确认，但没有返回可用于题目补签的知识点。");
+
+            var pointId = input.KnowledgePointId;
+            if (!pointId.HasValue)
+            {
+                var binding = await AutomaticQuestionBinding.ResolveAsync(project, input.Kind, input.Prompt, input.Options,
+                    input.CorrectAnswers, input.SourceReferences, scope.Points, gateway,
+                    new Dictionary<Guid, MaterialText>(), ct);
+                if (!binding.PointId.HasValue)
+                {
+                    var code = binding.Rule == "SOURCE_NOT_VERIFIED"
+                        ? "QUESTION_SOURCE_VERIFICATION_FAILED"
+                        : binding.Ambiguous ? "QUESTION_BINDING_AMBIGUOUS" : "QUESTION_BINDING_REQUIRED";
+                    var message = binding.Rule == "SOURCE_NOT_VERIFIED"
+                        ? "题目来源或答案尚不能由原文校验，未自动收入正式题库。"
+                        : binding.Ambiguous
+                            ? "题目同时对应多个知识点，自动补签没有猜测选择。"
+                            : "题目未能唯一对应本册知识点，未自动收入正式题库。";
+                    throw new PracticeDomainException(422, code, message, new { binding.Rule });
+                }
+                pointId = binding.PointId;
+                input = input with { KnowledgePointId = pointId };
+            }
+            if (!scope.Points.Any(point => point.KnowledgePointId == pointId.Value))
+                throw new PracticeDomainException(422, "QUESTION_BINDING_INVALID", "题目知识点不属于当前研习册图谱。");
+        }
+        var updated = PracticeRules.CreateQuestion(project, Draft(input), current.QuestionId, current.Version + 1, current.CreatedAt);
+        repository.SaveQuestion(updated); return updated;
     }
     public Task Handle(DeleteQuestionCommand request, CancellationToken ct)
     {
@@ -293,6 +326,7 @@ public sealed class CreateExamPaperHandler(IPracticeRepository repository, IPrac
             throw new PracticeDomainException(400, "PLAN_REQUIRED", "模拟试卷必须提供当前研习册的 reviewPlanId 与 snapshotVersion，才能回写掌握度。");
         var plan = await gateway.GetPlanAsync(planId, request.SnapshotVersion, ct);
         PracticePlanRules.Validate(project, request.OwnerUserId, plan);
+        await AutomaticQuestionBinding.ReconcileDraftsAsync(project, plan.Points, repository, gateway, ct);
         if (request.KindCounts is { Count: > 0 })
             throw new PracticeDomainException(400, "VALIDATION_ERROR", "图谱试卷暂不接受固定题型配额；题型由各目标知识点已有题目决定。");
         var selected = PracticeRules.SelectSmartQuestions(repository.ListQuestions(project.ProjectId), request.QuestionCount, seed, plan.Points)
@@ -337,6 +371,8 @@ public sealed class SessionHandlers(IPracticeRepository repository, IPracticeGat
         {
             plan = await gateway.GetPlanAsync(planId, request.SnapshotVersion, ct);
             PracticePlanRules.Validate(project, request.OwnerUserId, plan);
+            if (request.Mode == PracticeSessionMode.SmartReview)
+                await AutomaticQuestionBinding.ReconcileDraftsAsync(project, plan.Points, repository, gateway, ct);
         }
         var seed = request.Seed ?? RandomNumberGenerator.GetInt32(int.MaxValue); IReadOnlyList<PracticeQuestion> selected;
         if (request.Mode == PracticeSessionMode.Exam)

@@ -68,13 +68,13 @@ public static class PracticeRules
             .Where(question => question.KnowledgePointId.HasValue)
             .GroupBy(question => question.KnowledgePointId!.Value)
             .ToDictionary(group => group.Key, group => group.ToArray());
-        var targets = orderedTargets.Take(count).ToArray();
-        var missing = targets
-            .Where(target => !readyByPoint.ContainsKey(target.KnowledgePointId))
-            .Select(target => target.KnowledgePointId)
+        var targets = orderedTargets
+            .Where(target => readyByPoint.ContainsKey(target.KnowledgePointId))
+            .Take(count)
             .ToArray();
-        if (missing.Length > 0)
-            throw new PracticeDomainException(422, "QUESTION_COVERAGE_GAP", "当前题库没有覆盖复习计划中的全部目标知识点。", new { knowledgePointIds = missing });
+        if (targets.Length == 0)
+            throw new PracticeDomainException(422, "QUESTION_COVERAGE_GAP", "当前复习计划中的目标知识点都还没有可练习题目。",
+                new { knowledgePointIds = orderedTargets.Select(target => target.KnowledgePointId).ToArray() });
         return targets.Select(target => readyByPoint[target.KnowledgePointId]
                 .OrderBy(question => Sha256($"{seed}:{question.QuestionId:D}"))
                 .First())

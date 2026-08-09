@@ -65,6 +65,6 @@ public sealed class ProjectHandlersTests
         public Task<PlanGraphSnapshot> GetPlanAsync(Guid planId, string snapshotVersion, CancellationToken ct) => throw new NotSupportedException();
         public Task<object> SubmitEvidenceAsync(PracticeSession session, IReadOnlyList<PracticeQuestion> questions, Guid resultId, Guid key, CancellationToken ct) => throw new NotSupportedException();
         public Task<KnowledgeGraphScope> GetGraphScopeAsync(Guid graphId, Guid ownerUserId, CancellationToken ct) =>
-            Task.FromResult(new KnowledgeGraphScope(graphId, materialId, StudyProjectId, owner));
+            Task.FromResult(new KnowledgeGraphScope(graphId, materialId, StudyProjectId, owner, []));
     }
 }

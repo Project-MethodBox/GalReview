@@ -145,7 +145,7 @@ public sealed class ContentHandlersTests
         public Task<object> SubmitEvidenceAsync(PracticeSession session, IReadOnlyList<PracticeQuestion> questions, Guid resultId,
             Guid idempotencyKey, CancellationToken cancellationToken) => Task.FromResult<object>(new { resultId });
         public Task<KnowledgeGraphScope> GetGraphScopeAsync(Guid requestedGraphId, Guid ownerUserId, CancellationToken cancellationToken) =>
-            Task.FromResult(new KnowledgeGraphScope(requestedGraphId, materialId, null, owner));
+            Task.FromResult(new KnowledgeGraphScope(requestedGraphId, materialId, null, owner, []));
     }
     private sealed class FakeBilling : ICreditBilling
     {

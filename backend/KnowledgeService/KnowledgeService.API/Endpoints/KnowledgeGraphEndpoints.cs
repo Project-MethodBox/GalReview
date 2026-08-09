@@ -69,7 +69,24 @@ internal static class KnowledgeGraphEndpoints
                     graph.GraphId,
                     graph.MaterialId,
                     graph.StudyProjectId,
-                    graph.OwnerUserId
+                    graph.OwnerUserId,
+                    Points = graph.Points
+                        .OrderBy(point => point.Ordinal)
+                        .Select(point => new
+                        {
+                            pointId = point.PointId,
+                            point.ChapterId,
+                            point.Title,
+                            point.Summary,
+                            point.Tags,
+                            sourceReferences = point.SourceReferences.Select(source => new
+                            {
+                                source.MaterialId,
+                                source.StartOffset,
+                                source.EndOffset
+                            }).ToArray()
+                        })
+                        .ToArray()
                 });
             });
 

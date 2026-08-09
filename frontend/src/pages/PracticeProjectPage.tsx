@@ -9,6 +9,29 @@ import type { Chapter, KnowledgeGraphSummary, KnowledgePoint, Material, PlanGrap
 
 const kindLabels: Record<PracticeQuestionKind, string> = { SINGLE_CHOICE: '单选题', FILL_BLANK: '填空题', TRUE_FALSE: '判断题', TERM_DEFINITION: '名词解释', ESSAY: '简答题' }
 
+function normalizeBindingText(value: string) {
+  return value.normalize('NFC').toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu, '')
+}
+
+function hasAutomaticBindingCandidate(question: PracticeQuestion, points: KnowledgePoint[]) {
+  if (question.status !== 'DRAFT' || question.knowledgePointId || question.sourceReferences.length === 0) return false
+  const quoted = question.prompt.match(/[“「『"]([^”」』"]{1,160})[”」』"]/u)?.[1]
+  const focus = normalizeBindingText(quoted || (question.kind === 'TERM_DEFINITION'
+    ? question.prompt.replace(/^(?:(?:请|试)?(?:解释|说明|定义|阐释)|什么是|何谓)\s*/u, '')
+    : question.prompt))
+  if (focus.length < 2) return false
+  const exact = points.filter((point) => normalizeBindingText(point.title) === focus
+    || point.tags.some((tag) => normalizeBindingText(tag) === focus))
+  if (exact.length === 1) return true
+  const containing = points.filter((point) => {
+    const title = normalizeBindingText(point.title)
+    return title.length >= 2 && (focus.includes(title) || title.includes(focus))
+  })
+  if (containing.length === 0) return false
+  const longest = Math.max(...containing.map((point) => normalizeBindingText(point.title).length))
+  return containing.filter((point) => normalizeBindingText(point.title).length === longest).length === 1
+}
+
 export default function PracticeProjectPage() {
   const { projectId = '' } = useParams(); const navigate = useNavigate(); const location = useLocation()
   const [details, setDetails] = useState<PracticeProjectDetails | null>(null); const [questions, setQuestions] = useState<PracticeQuestion[]>([])
@@ -33,6 +56,19 @@ export default function PracticeProjectPage() {
       api.getKnowledgeGraph(project.project.graphId), api.getChapters(project.project.graphId), api.getAllPoints(project.project.graphId),
     ])
     setGraph(summary); setChapters(chapterItems); setPoints(pointItems)
+    const automaticCandidates = page.items.filter((question) => hasAutomaticBindingCandidate(question, pointItems))
+    if (automaticCandidates.length > 0) {
+      const repaired = new Map<string, PracticeQuestion>()
+      for (let offset = 0; offset < automaticCandidates.length; offset += 6) {
+        const settled = await Promise.allSettled(automaticCandidates.slice(offset, offset + 6)
+          .map((question) => api.updatePracticeQuestion(question, 'READY')))
+        settled.forEach((result) => { if (result.status === 'fulfilled') repaired.set(result.value.questionId, result.value) })
+      }
+      if (repaired.size > 0) {
+        setQuestions(page.items.map((question) => repaired.get(question.questionId) || question))
+        setDetails(await api.getPracticeProject(projectId))
+      }
+    }
     setSelectedChapterIds((current) => current.length ? current.filter((id) => chapterItems.some((chapter) => chapter.chapterId === id)) : chapterItems.map((chapter) => chapter.chapterId))
     setKnowledgePointId((current) => current || pointItems[0]?.pointId || '')
     updateWorkflow({ projectId: project.project.projectId, material: projectMaterials[0], graph: summary, chapters: chapterItems })
