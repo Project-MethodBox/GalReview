@@ -52,6 +52,20 @@ public sealed class ChapterSegmenterTests
     }
 
     [Fact]
+    public void Auto_segments_compact_pdf_headings_and_preserves_introduction()
+    {
+        const string text = "微生物学绪论微生物与人类名词解释1.微生物：微小生物的总称。大题1.微生物作为模式生物有哪些优点：结构简单、繁殖快。第一章原核生物的形态、构造和功能名词解释1.细菌：一类原核生物。大题1.细菌有哪些基本形态：球状、杆状和螺旋状第二章真核微生物名词解释1.真菌：一类真核微生物。大题1.真菌有哪些主要类群：酵母菌、霉菌和蕈菌。";
+
+        var result = _segmenter.Segment(text, new SegmentationOptions());
+
+        Assert.Equal(3, result.Count);
+        Assert.Equal("绪论微生物与人类", result[0].Title);
+        Assert.Equal("第一章原核生物的形态、构造和功能", result[1].Title);
+        Assert.Equal("第二章真核微生物", result[2].Title);
+        Assert.All(result, chapter => Assert.Equal(SegmentationMode.HeadingRules, chapter.AppliedMode));
+    }
+
+    [Fact]
     public void Markdown_mode_honors_markdown_headings()
     {
         const string text = """

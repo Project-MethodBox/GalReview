@@ -120,6 +120,7 @@ public sealed class ChapterSegmenter : IChapterSegmenter
         SegmentationOptions options)
     {
         var segments = new List<ChapterSegment>();
+        AddInlinePreambleIfUseful(text, headings[0], options, segments);
         for (var index = 0; index < headings.Count; index++)
         {
             var heading = headings[index];
@@ -143,6 +144,62 @@ public sealed class ChapterSegmenter : IChapterSegmenter
         }
 
         return Reorder(segments);
+    }
+
+    private static void AddInlinePreambleIfUseful(
+        string text,
+        InlineChapterHeading firstHeading,
+        SegmentationOptions options,
+        ICollection<ChapterSegment> output)
+    {
+        var contentRange = TrimRange(text, 0, firstHeading.StartOffset);
+        if (contentRange.Content.Length <
+            Math.Max(40, options.MinChapterCharacters / 3))
+        {
+            return;
+        }
+
+        var introduction = contentRange.Content.IndexOf(
+            "绪论",
+            StringComparison.Ordinal);
+        if (introduction < 0)
+        {
+            return;
+        }
+
+        var sectionEnd = new[]
+        {
+            contentRange.Content.IndexOf("名词解释", introduction, StringComparison.Ordinal),
+            contentRange.Content.IndexOf("大题", introduction, StringComparison.Ordinal),
+            contentRange.Content.IndexOf("还有重要的知识点", introduction, StringComparison.Ordinal),
+            contentRange.Content.IndexOf("重要知识点", introduction, StringComparison.Ordinal)
+        }
+        .Where(index => index > introduction)
+        .DefaultIfEmpty(-1)
+        .Min();
+        if (sectionEnd < 0)
+        {
+            return;
+        }
+
+        var title = contentRange.Content[introduction..sectionEnd].Trim();
+        if (title.Length > 80)
+        {
+            title = title[..80].TrimEnd();
+        }
+        var preambleContent = contentRange.Content[sectionEnd..].TrimStart();
+        var preambleContentStart = contentRange.Start +
+            contentRange.Content.IndexOf(preambleContent, sectionEnd, StringComparison.Ordinal);
+
+        AddWithMaximumSize(
+            output,
+            title,
+            contentRange.Start + introduction,
+            preambleContentStart,
+            firstHeading.StartOffset,
+            preambleContent,
+            SegmentationMode.HeadingRules,
+            options.MaxChapterCharacters);
     }
 
     private static IReadOnlyList<ChapterSegment> SegmentByDelimiter(

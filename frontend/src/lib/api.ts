@@ -539,7 +539,7 @@ export const api = {
         studyProjectId,
         subjectHint: subjectHint?.trim().toUpperCase() || undefined,
         segmentationMode: 'AUTO',
-        extractorVersion: 'knowledge-extractor-v2',
+        extractorVersion: 'knowledge-extractor-v3',
       }),
     })
   },

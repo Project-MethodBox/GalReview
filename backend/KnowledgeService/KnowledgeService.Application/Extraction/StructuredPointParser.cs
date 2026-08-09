@@ -27,14 +27,12 @@ internal sealed partial class StructuredPointParser
             .Cast<PointDraft>()
             .ToList();
 
-        if (points.Count == 0)
-        {
-            points.AddRange(ParseParagraphFallback(
-                segment,
-                chapterId,
-                materialId,
-                subjectCode));
-        }
+        points.AddRange(ParseParagraphFallback(
+            segment,
+            chapterId,
+            materialId,
+            subjectCode,
+            blocks.Select(block => (block.StartOffset, block.EndOffset)).ToArray()));
 
         return points;
     }
@@ -244,7 +242,8 @@ internal sealed partial class StructuredPointParser
         ChapterSegment segment,
         Guid chapterId,
         Guid materialId,
-        string subjectCode)
+        string subjectCode,
+        IReadOnlyList<(int Start, int End)> occupiedRanges)
     {
         var paragraphs = ParagraphRanges(segment.Content)
             .Select(range => new
@@ -255,6 +254,8 @@ internal sealed partial class StructuredPointParser
                     segment.Content[range.Start..range.End])
             })
             .Where(paragraph => paragraph.Content.Length >= 30)
+            .Where(paragraph => !occupiedRanges.Any(range =>
+                paragraph.Start < range.End && paragraph.End > range.Start))
             .Take(500)
             .ToArray();
 
@@ -354,7 +355,9 @@ internal sealed partial class StructuredPointParser
         WhitespaceRegex().Replace(value, " ").Trim();
 
     private static string RemovePageHeaderNoise(string value) =>
-        PageHeaderRegex().Replace(value, "\n");
+        KnownInlinePageNoiseRegex().Replace(
+            PageHeaderRegex().Replace(value, "\n"),
+            " ");
 
     private static string Limit(string value, int length) =>
         value.Length <= length ? value : value[..length].TrimEnd();
@@ -381,4 +384,10 @@ internal sealed partial class StructuredPointParser
         RegexOptions.Multiline |
         RegexOptions.CultureInvariant)]
     private static partial Regex PageHeaderRegex();
+
+    [GeneratedRegex(
+        @"(?:2019级植科一班张旋波|农业生态学试题库\s*2021版|山东农业大学农学院农业生态学教学组版权所有不得复制！\s*[0-9０-９]{0,4})",
+        RegexOptions.IgnoreCase |
+        RegexOptions.CultureInvariant)]
+    private static partial Regex KnownInlinePageNoiseRegex();
 }

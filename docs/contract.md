@@ -807,7 +807,7 @@ interface GraphBuildRequest {
   minChapterCharacters?: number;               // 20-20000，默认 120
   maxChapterCharacters?: number;               // 500-500000，默认 60000，且不小于 min
   fixedWindowCharacters?: number;              // 500-100000，默认 8000
-  extractorVersion?: string;                   // 默认 knowledge-extractor-v2
+  extractorVersion?: string;                   // 默认 knowledge-extractor-v3
 }
 
 type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED";
@@ -904,7 +904,7 @@ interface KnowledgeRelation {
 
 构建与关系语义：
 
-- `AUTO` 先识别中文“第 X 章/节”、绪论、阿拉伯/罗马数字编号和强标题；显式结构不足时降级为句子/段落边界感知的固定窗口。`chapter-segmenter-v2` 还处理 PDF 提取器把整页保留为一行的情况，但只有“第 X 章标题后紧随题型栏”这一强结构成立时才建立内联章节；题型中的知识点只接受每栏从 `1.` 开始连续递增的顶层题号，不把页码、答案内 `(1)` 子项或普通数字当作知识点。`HEADING_RULES`、`MARKDOWN`、`DELIMITER` 可由调用方显式选择；`FIXED_WINDOW` 是确定性兜底。该多模式路由只借鉴 ReciteHelper 的“结构化/非结构化资料采用不同分支”思路，未复制其 AGPL-3.0 代码。
+- `AUTO` 先识别中文“第 X 章/节”、绪论、阿拉伯/罗马数字编号和强标题；显式结构不足时降级为句子/段落边界感知的固定窗口。`chapter-segmenter-v3` 处理 PDF 提取器把整页保留为一行、并删除章节标题/题型栏/题号之间空格的情况：只有“第 X 章标题后紧随题型栏或下一章”这一强结构成立时才建立内联章节，保留首章前真实“绪论”内容，并拒绝“见第一章/参见第一章”一类正文引用。题型中的知识点只接受每栏从 `1.` 开始连续递增、且位于栏首或上一完整句之后的顶层题号；术语以数字开头（如 `6.2μm质粒`）不得截断后续序列，页码、答案内 `(1)` 子项或普通数字不得冒充知识点。`HEADING_RULES`、`MARKDOWN`、`DELIMITER` 可由调用方显式选择；`FIXED_WINDOW` 是确定性兜底。该多模式路由只借鉴 ReciteHelper 的“结构化/非结构化资料采用不同分支”思路，未复制其 AGPL-3.0 代码。
 - 章节必须先于知识点生成。空标题忽略；重复标题通过父章节和 ordinal 区分；过长章节可产生子章节；不得为了窗口长度把一个段落切成两个来源不明的章节。
 - `conceptKey` 在单个图版本内唯一；同一 `materialId` 的后续图版本识别为同一概念时稳定复用。它只用于版本对照和审计；首版不据此继承 mastery。
 - 当 `type="PREREQUISITE"` 时，`fromPointId` 是基础/前置知识点，`toPointId` 是依赖它的上层知识点，即 Neo4j 中 `(from)-[:PREREQUISITE_OF]->(to)`；API 领域类型仍为 `PREREQUISITE`。
@@ -1328,8 +1328,8 @@ subject to:
 - `SubjectCode` 首版不是封闭枚举。服务在输入边界执行 `Trim()` 和 invariant 大写规范化，规范化结果必须匹配 `^[A-Z][A-Z0-9_]{0,31}$`；连字符不合法，无法可靠分类时使用 `GENERAL`。所有响应与持久化值均为规范化结果。真实样例允许的首批值至少包括 `GENERAL`、`AGRONOMY` 和 `BOTANY`。
 - API 关系类型固定为 `PREREQUISITE`、`RELATED`、`CONTRASTS`；Neo4j 物理关系分别为 `PREREQUISITE_OF`、`RELATED_TO`、`CONTRASTS_WITH`，章节归属使用 `Chapter-[:HAS_POINT]->KnowledgePoint`。
 - 长度上限：Chapter title 160、KnowledgePoint title 120、summary 4000、tags 最多 20 个且每个 1-40、SourceRef quote 240。超限抽取结果必须拒绝或确定性截断并记录 warning。
-- 当前 `knowledge-extractor-v2` 为确定性规则抽取器，只接收已切分章节文本，并增加内联题库条目读取与通用版权页眉清理。未来若接入外部模型，也只能传当前章节、必要父标题和有限相邻上下文，不得发送其他用户资料；输出必须通过结构化 schema、offset、pointId 唯一性和 DAG 校验后才能入库。
-- 当前算法版本冻结为：`chapter-segmenter-v2`、`knowledge-extractor-v2`、`graph-weight-v1`、`assessment-planner-v1`、`learning-planner-v1`、`sm2-graph-v2`、`PlanGraph schema 1.0`。
+- 当前 `knowledge-extractor-v3` 为确定性规则抽取器，只接收已切分章节文本；它读取带编号或无编号的内联“名词解释/大题/重要知识点”等题型栏，合并题型栏外互不重叠的普通段落，并清理已确认的页眉、水印文本。未来若接入外部模型，也只能传当前章节、必要父标题和有限相邻上下文，不得发送其他用户资料；输出必须通过结构化 schema、offset、pointId 唯一性和 DAG 校验后才能入库。
+- 当前算法版本冻结为：`chapter-segmenter-v3`、`knowledge-extractor-v3`、`graph-weight-v1`、`assessment-planner-v1`、`learning-planner-v1`、`sm2-graph-v2`、`PlanGraph schema 1.0`。v2 图保持不可变，升级不原地补写；要获得紧凑 PDF 修复，必须在原 `StudyProject` 作用域内使用新 `Idempotency-Key` 重建 v3 图并重新绑定，不得创建资料级共享图。
 - READY 图内容不可变。P1 的 `PATCH /knowledge-points/{pointId}` 只允许修改 DRAFT 图并依赖 `expectedUpdatedAt` 乐观并发；READY/SUPERSEDED 图返回 `409 GRAPH_IMMUTABLE`，修正需构建新版本。READY 仅可在新版本就绪后把生命周期状态迁移为 SUPERSEDED。
 - 所有知识点必须至少有一个可回到 `ExtractedTextDocument` offset 的 `SourceRef`；章节自身保存规范化文本的半开 offset 区间。来源不完整时构建失败，不以模型幻觉补齐。
 - 新图版本不得覆盖旧版本，且 mastery 固定从 0 开始。游戏包使用的内容严格以 `PlanGraph.snapshotVersion` 为边界。
@@ -2481,11 +2481,17 @@ PATCH `graphId`，PracticeService 再反查图谱的 `studyProjectId` 和来源�
 2. 半结构化讲义识别“名词解释”“大题”“重要知识点”“术语：定义”和“问题标题：分点答案”，从
    可核对答案原子形成题面，不强制模型重写已有问答。
 3. 普通教材正文先按 PlanGraph 知识点和连续原文建立 `EvidenceBundle/KnowledgeAtom`，再调用
-   OpenAI-compatible 模型答案先行生成；不得用固定 500/800 字符模板、全文随机词或知识点位置轮转凑题。
-4. 每题只允许绑定 PlanGraph 中唯一 `pointId`，去重键包含 pointId、知识原子和认知操作；无法唯一
+   OpenAI-compatible 模型答案先行生成；即使 PDF 一页或全文被抽成单行，也必须按不超过 1400 UTF-16
+   字符、优先在换行或完整句末结束的连续来源块拆分，不能把整份长文误算成一个最多 8 题的分片；不得用
+   固定 500/800 字符模板、全文随机词或知识点位置轮转凑题。
+4. 每题只允许绑定 PlanGraph 中唯一 `pointId`。确定性绑定按“题干与标题规范化后精确相等 → 题干中
+   最长且唯一的标题 → 答案/来源中最长且唯一的标题 → 唯一标签”依次判定，不使用混合权重；去重键包含
+   pointId、知识原子和认知操作；无法唯一
    绑定的原题保留 `DRAFT` 并记录诊断，禁止猜签。
-5. `READY` 必须同时通过 schema/题型形状、逐字 offset/quote/checksum、同一证据答案支持、独立 QA
-   回验答案一致、题干不泄露答案等布尔门禁。单选必须恰有 A-D 四项且证据只支持一个最佳答案；填空
+5. `READY` 必须同时通过 schema/题型形状、逐字 offset/quote/checksum、同一证据答案支持、与生成调用
+   分离的第二次 QA 回验答案一致、题干不泄露答案等布尔门禁。第二次回验可以使用同一 provider/model，
+   因而只表示分离的推理调用，不得表述为统计意义或组织意义上的“独立模型验证”。单选必须恰有 A-D
+   四项且证据只支持一个最佳答案；填空
    必须为明确短跨度；名词解释只用于真实术语—定义关系。任一门禁失败均拒绝或保留 `DRAFT`。
 6. 模型缺少 API key 时，不得回退到“请概括下述内容”“10. ____？”或随机干扰项。可直接核对的结构化
    题仍可生成；需要模型的普通正文返回明确诊断。模型调用成功的实际 credits 只使用供应商
@@ -2523,9 +2529,41 @@ type PracticeJob = {
 复杂理工题不在 v2 自动建库承诺内。质量设计依据如下，引用只支持对应工程决策，不替代项目真值集：
 
 - [Answer-focused and Position-aware Neural Question Generation](https://aclanthology.org/D18-1427/) 支持先确定答案焦点/位置，再生成题面；因此普通正文采用答案原子先行。
-- [Synthetic QA Corpora Generation with Roundtrip Consistency](https://aclanthology.org/P19-1620/) 展示用答案抽取回路筛选合成 QA；因此候选题由独立 QA 回验，而不接受生成模型自评。
+- [Synthetic QA Corpora Generation with Roundtrip Consistency](https://aclanthology.org/P19-1620/) 展示用答案抽取回路筛选合成 QA；因此候选题必须经过分离的第二次 QA 回验，而不直接接受第一次生成结果。
+- [Putting the Horse before the Cart: A Generator-Evaluator Framework for Question Generation from Text](https://aclanthology.org/K19-1076/) 在其数据与模型条件下显示 generator-evaluator 框架优于对照；本项目据此分离生成与回验职责，但不声称复现了论文模型或实验结果。
 - [QGEval](https://aclanthology.org/2024.emnlp-main.658/) 给出流畅、清晰、简洁、相关、一致、可回答和答案一致七个维度，并指出现有自动指标与人工判断对齐不足；因此这些维度进入人工黄金集，自动门禁不能替代人工验收。
+- [Evaluating Rewards for Question Generation Models](https://aclanthology.org/N19-1237/) 发现被优化的自动指标可能与人工判断错位并被模型利用；因此本项目不以一个合成质量分、任意混合权重或单一自动指标宣称题目有效。
 - [NBME Item-Writing Guide](https://www.nbme.org/sites/default/files/2021-02/NBME_Item%20Writing%20Guide_R_6.pdf) 要求聚焦清晰的 lead-in、同质且可信的选项并清除形式线索；因此单选采用 one-best-answer 门禁，不能可靠构造干扰项就不生成单选。
+- [Test-enhanced learning: taking memory tests improves long-term retention](https://pubmed.ncbi.nlm.nih.gov/16507066/) 与 [Retrieval practice produces more learning than elaborative studying with concept mapping](https://pubmed.ncbi.nlm.nih.gov/21252317/) 支持在各自实验条件下用主动提取促进延迟保持和概念学习；它们支持“让用户作答并获得反馈”的复习形态，不证明自动生成题目的内容质量。
+
+#### 14.3.1 证据等级与允许声明
+
+当前 `recite-question-v2` 的准确状态是 **研究依据支持的工程实现（research-informed / evidence-aligned）**，
+不是“千知万理的组合算法已经被研究证明有效”。引用论文只在各自数据集、模型、语言和实验任务内提供外部
+证据，不能外推为当前配置模型在中文农学、社科、人文资料上的题目质量或学习增益。
+
+| 组成 | 当前依据 | 当前项目内证据 | 允许声明 |
+|---|---|---|---|
+| 答案原子先行再写题 | EMNLP 2018 的 answer-focused QG | 提示词、来源与题型门禁单元测试 | 有研究依据并已实现；尚未完成中文领域效果复现 |
+| 生成后第二遍来源约束回验 | ACL/CoNLL 2019 的 roundtrip、generator-evaluator 思路 | 两次分离调用、答案集合严格相等与失败拒绝测试 | 有研究依据的精度门禁；同一模型第二次调用不是独立模型证明 |
+| 逐字来源、checksum、唯一 pointId、离散绑定优先级 | 项目可审计性与领域不变量 | 确定性测试与真实 PDF 技术复验 | 工程正确性已验证；不等于教育效果已验证 |
+| A-D one-best-answer | NBME 专业命题指南 | 题型布尔门禁测试 | 遵循权威命题规范；不是本项目随机对照试验证据 |
+| 用户主动提取、作答与反馈 | 2006/2011 retrieval-practice 实验 | Practice 会话与回写链路测试 | 复习形态有外部学习科学依据；不证明机器生成题等同人工好题 |
+| 1400 字符分片、每片至多 8 题、`temperature=0.1`、`max_tokens=6000` | 上下文、吞吐、成本和响应稳定性的运行约束 | 边界/回归测试 | 只能称工程参数；不得称为论文证明的最佳质量参数 |
+
+产品、README、部署说明和 UI 在完成下列验收前，只能使用“题目生成采用有研究依据的答案先行与来源
+回验设计”“已通过来源与结构技术门禁”，不得使用“经研究证明有效”“已证明提升学习效果”或同义文案：
+
+1. 冻结并版本化覆盖普通长文、半结构化讲义和显式题库的中文农学/社科/人文代表性资料集；同时冻结
+   人工命题、原 ReciteHelper 与当前实现的对照输出。
+2. 由不知道题目来源的领域评审者按 QGEval 七维，加上逐字来源正确性与知识点绑定正确性进行盲评；保留
+   每位评审原始记录、评审者一致性和分歧裁决，不能只报告聚合分数。
+3. 进行答案先行、第二遍回验等关键组件的消融与对照。样本量、主要终点、统计方法及优效/非劣界值必须
+   在看结果前依据人工基线和功效分析预注册，禁止事后挑阈值或发明混合权重。
+4. 若要声明“提升复习效果”，还必须在延迟测验上将当前自动题、人工题与重读等对照进行前瞻性学习实验；
+   题目质量盲评通过不能代替学习增益实验。
+5. 以上验证必须使用生产将采用的 provider/model/prompt/参数版本；任一项变化均记录算法版本并评估是否
+   需要重验。完整数据、排除规则、失败样本和置信区间写入 `docs/test_report.md` 后，方可升级声明等级。
 
 ### 14.4 练习、判分与证据
 

@@ -88,8 +88,9 @@ Neo4j 事务 HTTP 接口交叉核对实际节点和关系数量。它不会测�
 
 ## 算法约束
 
-- 当前 `chapter-segmenter-v2` 可识别分页提取文本中的行内中文章标题；
-  `knowledge-extractor-v2` 可在题库型章节中连续解析编号题项。章节响应的
+- 当前 `chapter-segmenter-v3` 可识别分页提取文本中无空格的行内中文章标题，保留真实绪论并处理
+  表格末词与下一章粘连；`knowledge-extractor-v3` 可读取无编号题型栏、连续顶层题号和数字起始术语，
+  同时保留题型栏外的普通段落。v2 图不可原地改写，升级时在原 StudyProject 内重建。章节响应的
   `segmentationMode` 固定使用
   `AUTO/HEADING_RULES/MARKDOWN/DELIMITER/FIXED_WINDOW`。
 - 图谱指纹首先覆盖 `studyProjectId`，并覆盖最终 `subjectCode`，以及构图 API 已暴露的 mode、delimiter、
