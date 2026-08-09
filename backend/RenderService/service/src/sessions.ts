@@ -33,6 +33,8 @@ export const SESSION_LIMITS = Object.freeze({
   maxResponseTimeMs: 86_400_000,
 })
 
+const MAX_SESSIONS = 1000
+
 const ANSWER_KINDS = new Set(['CHOICE', 'FILL_BLANK', 'TRUE_FALSE', 'SHORT_ANSWER', 'OTHER'])
 const EVENT_TYPES = new Set(['SCENE_ENTERED', 'CHOICE_SELECTED', 'RUNTIME_ERROR'])
 
@@ -74,12 +76,14 @@ interface SessionRecord {
   startedAt: string | null
   completedAt: string | null
   createdAt: string
+  updatedAt: number
   digest: PackageDigest
   snapshot: ProgressSnapshot | null
   snapshotChecksum: string | null
   eventIds: Set<string>
   result: StoredResult | null
   pendingResult: { idempotencyKey: string; checksum: string; resultId: string } | null
+  isSubmitting: boolean
 }
 
 interface ValidatedAnswer {
@@ -189,6 +193,17 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
   const newId = options.newId ?? randomUUID
   const sessions = new Map<string, SessionRecord>()
 
+  function evictOldSessions(): void {
+    if (sessions.size > MAX_SESSIONS) {
+      const oldest = [...sessions.entries()]
+        .sort(([, a], [, b]) => a.updatedAt - b.updatedAt)
+        .slice(0, sessions.size - MAX_SESSIONS)
+      for (const [id] of oldest) {
+        sessions.delete(id)
+      }
+    }
+  }
+
   function findOwned(sessionId: string, userId: string): SessionRecord | null {
     const record = sessions.get(sessionId)
     // Missing and not-owned are indistinguishable to the caller (§5.1 style).
@@ -201,6 +216,7 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
       record.status = 'RUNNING'
       record.startedAt = now().toISOString()
     }
+    record.updatedAt = Date.now()
   }
 
   function mapUpstreamFailure(result: UpstreamFailure, context: string) {
@@ -251,14 +267,17 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
         startedAt: null,
         completedAt: null,
         createdAt: now().toISOString(),
+        updatedAt: Date.now(),
         digest: digestPackage(read.package),
         snapshot: null,
         snapshotChecksum: null,
         eventIds: new Set(),
         result: null,
         pendingResult: null,
+        isSubmitting: false,
       }
       sessions.set(record.sessionId, record)
+      evictOldSessions()
       return { ok: true, status: 201, body: sessionView(record) }
     },
 
@@ -557,81 +576,90 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
           { expectedVersion: record.progressVersion })
       }
 
-      // resultId must stay stable across retries of the same submission
-      // (§8.2.1: retries must not mint new resultIds).
-      let resultId: string
-      if (record.pendingResult && record.pendingResult.idempotencyKey === body.idempotencyKey) {
-        resultId = record.pendingResult.resultId
-      } else {
-        resultId = newId()
-        record.pendingResult = { idempotencyKey: body.idempotencyKey, checksum: resultChecksum, resultId }
+      if (record.isSubmitting) {
+        return failure(409, 'STATE_CONFLICT', '会话正在提交结果，请勿重复提交')
       }
+      record.isSubmitting = true
+      try {
+        // resultId must stay stable across retries of the same submission
+        // (§8.2.1: retries must not mint new resultIds).
+        let resultId: string
+        if (record.pendingResult && record.pendingResult.idempotencyKey === body.idempotencyKey) {
+          resultId = record.pendingResult.resultId
+        } else {
+          resultId = newId()
+          record.pendingResult = { idempotencyKey: body.idempotencyKey, checksum: resultChecksum, resultId }
+        }
 
-      const submittedAt = now().toISOString()
-      if (answers.length > 0) {
-        const evidence = await gateway.submitEvidence(resultId, {
-          resultId,
-          idempotencyKey: body.idempotencyKey,
-          reviewPlanId: record.reviewPlanId,
-          snapshotVersion: record.snapshotVersion,
-          sessionId: record.sessionId,
-          packageId: record.packageId,
-          userId: record.userId,
-          completedAt: submittedAt,
-          durationSeconds: body.durationSeconds,
-          answerResults: answers.map((answer): KnowledgeAnswerEvidence => ({
-            attemptId: answer.attemptId,
-            questionId: answer.questionId,
-            knowledgePointId: answer.knowledgePointId,
-            answerKind: answer.answerKind as KnowledgeAnswerEvidence['answerKind'],
-            correct: answer.correct,
-            quality: answer.quality,
-            responseTimeMs: answer.responseTimeMs,
-            hintsUsed: answer.hintsUsed,
-            attemptNumber: answer.attemptNumber,
-            occurredAt: answer.occurredAt,
-          })),
-        }, correlationId)
-        if (!evidence.ok) {
-          // The session stays open and pendingResult keeps the resultId, so
-          // a retry reuses the same identity instead of minting a new one.
-          switch (evidence.kind) {
-            case 'conflict':
-              return failure(409, evidence.code || 'STATE_CONFLICT',
-                `KnowledgeService 拒绝了学习证据：${evidence.message}`)
-            case 'not_found':
-              return failure(422, 'REVIEW_PLAN_NOT_FOUND', '复习计划不存在或已失效')
-            case 'invalid':
-              return failure(422, evidence.code || 'REVIEW_EVIDENCE_INVALID',
-                `KnowledgeService 拒绝了学习证据：${evidence.message}`)
-            case 'contract':
-              return failure(502, 'UPSTREAM_CONTRACT_INVALID',
-                `KnowledgeService 返回违反契约的数据（${evidence.message}）`)
-            case 'forbidden':
-              return failure(503, 'SERVICE_UNAVAILABLE', '服务身份配置不可用')
-            default:
-              return failure(503, 'SERVICE_UNAVAILABLE', 'KnowledgeService 暂不可用，请稍后重试')
+        const submittedAt = now().toISOString()
+        if (answers.length > 0) {
+          const evidence = await gateway.submitEvidence(resultId, {
+            resultId,
+            idempotencyKey: body.idempotencyKey,
+            reviewPlanId: record.reviewPlanId,
+            snapshotVersion: record.snapshotVersion,
+            sessionId: record.sessionId,
+            packageId: record.packageId,
+            userId: record.userId,
+            completedAt: submittedAt,
+            durationSeconds: body.durationSeconds,
+            answerResults: answers.map((answer): KnowledgeAnswerEvidence => ({
+              attemptId: answer.attemptId,
+              questionId: answer.questionId,
+              knowledgePointId: answer.knowledgePointId,
+              answerKind: answer.answerKind as KnowledgeAnswerEvidence['answerKind'],
+              correct: answer.correct,
+              quality: answer.quality,
+              responseTimeMs: answer.responseTimeMs,
+              hintsUsed: answer.hintsUsed,
+              attemptNumber: answer.attemptNumber,
+              occurredAt: answer.occurredAt,
+            })),
+          }, correlationId)
+          if (!evidence.ok) {
+            // The session stays open and pendingResult keeps the resultId, so
+            // a retry reuses the same identity instead of minting a new one.
+            switch (evidence.kind) {
+              case 'conflict':
+                return failure(409, evidence.code || 'STATE_CONFLICT',
+                  `KnowledgeService 拒绝了学习证据：${evidence.message}`)
+              case 'not_found':
+                return failure(422, 'REVIEW_PLAN_NOT_FOUND', '复习计划不存在或已失效')
+              case 'invalid':
+                return failure(422, evidence.code || 'REVIEW_EVIDENCE_INVALID',
+                  `KnowledgeService 拒绝了学习证据：${evidence.message}`)
+              case 'contract':
+                return failure(502, 'UPSTREAM_CONTRACT_INVALID',
+                  `KnowledgeService 返回违反契约的数据（${evidence.message}）`)
+              case 'forbidden':
+                return failure(503, 'SERVICE_UNAVAILABLE', '服务身份配置不可用')
+              default:
+                return failure(503, 'SERVICE_UNAVAILABLE', 'KnowledgeService 暂不可用，请稍后重试')
+            }
           }
         }
-      }
-      // 纯讲解包（或没有任何实际作答）：按 §8.2.1 不调用 evidence 接口，
-      // 掌握度保持不变，会话仍可正常完成。
+        // 纯讲解包（或没有任何实际作答）：按 §8.2.1 不调用 evidence 接口，
+        // 掌握度保持不变，会话仍可正常完成。
 
-      record.status = 'COMPLETED'
-      record.completedAt = submittedAt
-      record.result = {
-        resultId,
-        idempotencyKey: body.idempotencyKey,
-        checksum: resultChecksum,
-        status: 'ACCEPTED',
-        submittedAt,
-      }
-      record.pendingResult = null
+        record.status = 'COMPLETED'
+        record.completedAt = submittedAt
+        record.updatedAt = Date.now()
+        record.result = {
+          resultId,
+          idempotencyKey: body.idempotencyKey,
+          checksum: resultChecksum,
+          status: 'ACCEPTED',
+          submittedAt,
+        }
+        record.pendingResult = null
 
-      return {
-        ok: true,
-        status: 200,
-        body: { resultId, sessionId: record.sessionId, status: 'ACCEPTED', submittedAt },
+        return {
+          ok: true,
+          status: 200,
+          body: { resultId, sessionId: record.sessionId, status: 'ACCEPTED', submittedAt },
+        }
+      } finally {
+        record.isSubmitting = false
       }
     },
 
