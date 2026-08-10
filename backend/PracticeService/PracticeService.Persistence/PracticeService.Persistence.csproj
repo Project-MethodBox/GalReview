@@ -9,6 +9,15 @@
     <PackageReference Include="MongoDB.Driver" Version="3.10.0" />
   </ItemGroup>
   <ItemGroup>
+    <!--
+      Model scoring moved to the standalone ModelService. Some Windows
+      deployments are updated by extracting over an existing directory, which
+      can leave this deleted legacy source file behind. Never compile it back
+      into PracticeService merely because it still exists on disk.
+    -->
+    <Compile Remove="ModelScoring.cs" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\PracticeService.Application\PracticeService.Application.csproj" />
     <ProjectReference Include="..\PracticeService.Domain\PracticeService.Domain.csproj" />
   </ItemGroup>
