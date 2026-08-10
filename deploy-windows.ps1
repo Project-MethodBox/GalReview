@@ -979,6 +979,12 @@ function Build-ProductionRelease {
         throw 'ModelService Resources are missing. Run scripts\download-model-resources.ps1 before building.'
     }
 
+    $legacyPracticeModelScoring = Join-Path $projectRoot 'backend\PracticeService\PracticeService.Persistence\ModelScoring.cs'
+    if (Test-Path -LiteralPath $legacyPracticeModelScoring -PathType Leaf) {
+        Write-Warning "Ignoring obsolete PracticeService source left by an overlay update: $legacyPracticeModelScoring"
+        Write-Warning 'Model scoring now belongs to ModelService. Delete the obsolete file when convenient; it is explicitly excluded from compilation.'
+    }
+
     New-Item -ItemType Directory -Force -Path $releasesRoot | Out-Null
     $releaseId = (Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss')
     $releaseRoot = Join-Path $releasesRoot $releaseId
