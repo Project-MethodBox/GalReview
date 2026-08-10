@@ -85,6 +85,7 @@ credits，成功后按实际使用扣除，失败不会占用额度。credits �
 
 > 开发或部署模型判分链前，必须先通过环境变量注入只读 OSCA 凭据，运行仓库内的 `scripts/download-model-resources.ps1`，并通过 `backend/ModelService/resources.manifest.json` 的 19 文件哈希校验；下载得到的 `Resources` 仍禁止提交。
 
+- [使用 Wiki](./wiki/Home.md)：面向用户、管理员和部署人员的分页面使用手册；部署后访问 `/wiki/`
 - [开发与接口说明](./docs/contract.md)
 - [ReciteHelper 迁移架构与变更台账](./docs/recitehelper-migration.md)
 - [部署指南](./docs/deploy.md)

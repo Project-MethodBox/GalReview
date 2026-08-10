@@ -390,6 +390,30 @@ docker compose --env-file .env -f compose.integration.yaml up -d --no-deps --wai
 | `mongo` | `mongo:8.0` | 供 FileService、GalGameService、PracticeService 使用；各自只访问 `qzwl_file`、`qzwl_galgame`、`qzwl_practice` 权威数据库 |
 | `neo4j` | `neo4j:2026.06.0` | 只由 KnowledgeService 写入；Browser/Bolt 宿主映射仅用于受限诊断 |
 
+### 静态 Wiki 构建与发布
+
+用户手册源位于仓库根目录 `wiki/`，所有图片、样式和脚本位于 `wiki/res/`。Frontend 的生产构建会在
+Vite 完成后运行 `frontend/scripts/build-wiki.mjs`，生成 `frontend/dist/wiki`。由于 Docker 构建需要同时
+读取 `frontend` 与 `wiki`，Compose 的 `frontend.build.context` 必须为仓库根目录，Dockerfile 为
+`frontend/Dockerfile`；根目录 `.dockerignore` 只把这两个目录送入构建上下文，禁止把 ModelService
+Resources 和其他后端目录带入前端镜像。
+
+本地验证：
+
+```powershell
+Set-Location frontend
+npm ci
+npm run build
+Test-Path .\dist\wiki\index.html
+Set-Location ..
+docker compose -f compose.integration.yaml build frontend
+docker compose -f compose.integration.yaml up -d --no-deps frontend
+Invoke-WebRequest http://127.0.0.1:5120/wiki/ -UseBasicParsing
+```
+
+发布后必须同时验证 `/wiki/`、至少一个中文文件名页面、`/wiki/res/` 下的一张图片以及产品首页的 Wiki
+入口。静态 Wiki 不依赖登录和 Gateway；若 API 故障但 Frontend 正常，Wiki 仍应可读。
+
 ### Knowledge/Practice v3 题库升级
 
 `chapter-segmenter-v3` / `knowledge-extractor-v3` 与 Practice 的长文分片、精确题干绑定必须作为同一

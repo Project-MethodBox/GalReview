@@ -2643,6 +2643,7 @@ type PracticeAnswerResult = {
 `idempotencyKey`。单选、判断使用规范化后的精确答案；填空按同位置的确定性等价规则判定，不使用编辑
 距离、NLI 或模糊相似度。`deterministic-fill-equivalence-v1` 只接受可证明不改变答案含义的表示差异：
 
+
 - Unicode NFKC、全半角、大小写、首尾句末标点，以及括号/逗号附近的空白差异；
 - 独立整数/小数的数值等价，中文整数和可选量词“个”，例如 `两个 = 二 = 2 = 2.0`；
 - 保留括号种类与元素顺序的纯数值元组，例如 `(1, 3) = (1,3)`，但 `(1,3) != (3,1)` 且
@@ -2935,3 +2936,22 @@ PracticeService 自动形成 `ABSTAINED`，不要求用户手动对照或自评�
   `7f0fefb68e92311d297c558a35a2a72557031d41`；下载器只允许这些精确 HTTPS 路径，不得跟随浮动分支。
 - `/healthz` 不因模型缺失而失败；`/readyz` 对任何必需资产的
   `MISSING | HASH_MISMATCH | LOAD_FAILED` 返回 `503`。PracticeService 不重复扫描这些资产。
+
+## 17. 静态使用 Wiki 合同
+
+### 17.1 路由与所有权
+
+- Frontend 拥有公开静态路径 `/wiki/`，该路径不要求用户登录，也不经过 Gateway API 转发。
+- Wiki 的源页面必须位于仓库根目录 `wiki/*.md`；截图、样式、脚本及其他页面资源必须位于
+  `wiki/res/`，不得散落到 Frontend `public` 或后端服务目录。
+- 产品落地页的顶部导航、首屏操作区和页脚说明区必须提供 `/wiki/` 入口，使用户在阅读简介后能进入
+  详细手册。
+
+### 17.2 构建与内容边界
+
+- `frontend` 执行生产构建时，必须在 React 构建后运行 `frontend/scripts/build-wiki.mjs`，把每个
+  `.md` 页面转换为同名 `.html`，把 `Home.md` 同时生成为 `/wiki/index.html`，并复制 `wiki/res`。
+- Wiki 静态页面只能解释现有合同和已实现界面，不得创造接口、虚构状态或用旧相似度/q 算法描述当前判分。
+- Wiki 视觉沿用 GalReview 的中性灰底、清楚分栏和文档排版；禁止使用发光渐变、悬浮胶囊堆叠、emoji
+  或拟人化 AI 宣传语言。
+- 业务合同发生变化时，必须同时更新对应 Wiki 页面；Wiki 与本文件冲突时，以本文件为准。

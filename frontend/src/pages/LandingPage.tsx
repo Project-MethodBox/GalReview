@@ -253,6 +253,7 @@ export default function LandingPage() {
             <Link to="#characters" onClick={(e) => { e.preventDefault(); scroll('#characters') }}>故事回响</Link>
             <Link to="#workflow" onClick={(e) => { e.preventDefault(); scroll('#workflow') }}>使用流程</Link>
             <Link to="#faq" onClick={(e) => { e.preventDefault(); scroll('#faq') }}>常见问题</Link>
+            <a href="/wiki/">使用 Wiki</a>
           </nav>
           <div className="landing-nav__actions">
             <Link className="landing-workspace-link" to={workspacePath}>
@@ -318,6 +319,7 @@ export default function LandingPage() {
             <div className="landing-hero__actions">
               <Link className="button button--primary landing-hero__cta landing-glass-button" to="/register">建立第一册研习</Link>
               <button className="button button--light landing-glass-button" onClick={() => scroll('#workflow')}>了解解析与复习流程</button>
+              <a className="button button--light landing-glass-button" href="/wiki/">查看详细使用 Wiki</a>
             </div>
           </div>
           <div className="landing-hero__preview" aria-hidden="true">
@@ -488,6 +490,7 @@ export default function LandingPage() {
               <h4>说明</h4>
               <nav>
                 <Link to="#faq" onClick={(e) => { e.preventDefault(); scroll('#faq') }}>常见问题</Link>
+                <a href="/wiki/">详细使用 Wiki</a>
                 <Link to="/login">登录</Link>
               </nav>
             </div>

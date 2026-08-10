@@ -331,7 +331,8 @@ services:
 
   frontend:
     build:
-      context: ./frontend
+      context: .
+      dockerfile: frontend/Dockerfile
     environment:
       GATEWAY_UPSTREAM: http://gateway:5000
       PORT: 8080

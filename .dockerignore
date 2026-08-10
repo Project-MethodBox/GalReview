@@ -1,0 +1,9 @@
+*
+!frontend/
+!frontend/**
+!wiki/
+!wiki/**
+frontend/node_modules
+frontend/dist
+wiki/.cache
+wiki/dist

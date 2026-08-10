@@ -1795,3 +1795,36 @@ Practice → Gateway → ModelService 成功时取得 NLI verdict，证明容器
 INTERNAL 身份探针结果为：无服务身份 `403`、正确密钥但调用方为 KnowledgeService `403`、
 精确 PracticeService 身份 `200`；成功响应保持统一 `data/meta/traceId` 信封。OCR 识别准确率、模型加载
 与接口均未测试，本节不作任何 OCR 声明。Docker 按用户要求保持运行。
+
+## 42. 2026-08-10 静态 Wiki 与产品入口验证
+
+### 42.1 内容与视觉
+
+新增 `wiki/Home.md` 及 14 个分页面，覆盖快速开始、账户、藏书阁、研习册、答题与智能复习、识网、
+故事回响、项目包、credits、个人设置、管理员、服务架构、部署和故障排查。采集的当前本地产品截图全部
+位于 `wiki/res`；截图使用真实注册、非 OCR 文本上传和轻量项目外壳，不用示意图冒充产品页面。真实自动
+成题截图任务超过总时限后被停止，没有再次触发生成，也没有把加载页写入 Wiki。Credits 服务在截图时返回
+不可用，因此没有使用失败状态截图；对应说明按当前前端实现和合同编写。
+
+Wiki 样式使用灰白纸面、固定目录、直角搜索框、表格和正文层级，没有 emoji、发光渐变、悬浮胶囊卡片或
+拟人化 AI 文案。以 1440×1000 浏览器实拍复核 `藏书阁与资料解析.html`，页面目录、中文标题、截图和正文
+均无明显遮挡。
+
+### 42.2 静态构建与 HTTP 结果
+
+| 检查 | 结果 |
+|---|---|
+| Frontend TypeScript + Vite | PASS；1401 modules transformed |
+| Wiki generator | PASS；15 Markdown pages generated |
+| Frontend Docker build | PASS；根上下文经 `.dockerignore` 仅发送 frontend/wiki，context 21.24 MB |
+| Markdown 内链与资源引用 | PASS；29 个仓库内引用，缺失 0 |
+| Wiki 视觉规则静态审计 | PASS；无 emoji、渐变、阴影、发光或胶囊式圆角规则 |
+| Frontend 完整依赖审计 | PASS；`nanoid` 构建期传递依赖由 3.3.16 锁定到 3.3.17 后，`npm audit` 为 0 |
+| `/wiki/` | HTTP 200，包含“千知万理使用 Wiki” |
+| `/wiki/快速开始.html` | HTTP 200 |
+| `/wiki/res/藏书阁资料就绪.png` | HTTP 200，`image/png` |
+| 产品首页入口 | 新 bundle 已部署；顶部导航、首屏和页脚均含 `/wiki/` 链接 |
+
+15 个同名 HTML、`/wiki/` 索引及 `wiki/res` 的 16 个资源逐一请求均为 HTTP 200；主页 bundle 中确认
+存在 3 个 `/wiki/` 入口。Frontend 容器使用新镜像重建，当前 16 个默认容器均为 healthy 并保持运行。
+Wiki 是 Frontend 的公开静态内容，不依赖用户会话；本轮没有调用 OCR，也没有关闭 Docker。

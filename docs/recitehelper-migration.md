@@ -327,6 +327,7 @@ ReciteHelper 使用 AGPL-3.0。迁移的源代码、提示词、模型和兼容�
 | 2026-08-10 | Practice/Deploy | 填空从逐字相等升级为 `deterministic-fill-equivalence-v1`，离散处理数值、数值元组格式与封闭专业别名；NLI 补充下载进一步锁定模型仓库和固定 revision | 接受 `两个/二/2`、坐标空白差异和 `G+/革兰氏阳性`，同时避免模糊相似度放过反义、换序或区间边界错误 | 填空专项 27/27；完整 Practice 回归见 test_report §40；下载脚本 AST、固定来源与本地 19 文件哈希门禁通过 | VERIFIED |
 | 2026-08-10 | Model/Practice/Gateway/Deploy | 新增四层 ModelService，以 MediatR CQRS 承载 NLI、SentencePiece、词典、哈希就绪与 `5109` INTERNAL 接口；Practice 只保留 rubric 与离散判分，通过 Gateway 消费 verdict；资源、清单和下载器迁至 ModelService | 模型运行时不属于研习册/练习聚合，继续置于 PracticeService 会扩大其边界并耦合部署 | Model 8/8、Practice 68/68、Gateway 204/204；16 个默认容器 healthy；真实主观题与填空 HTTP 见 test_report §41 | VERIFIED |
 | 2026-08-10 | Model/Deploy | 模型资源恢复升级为本地缓存、OSCA、受信离线副本、固定远端版本四级容灾；19 个文件全部有固定灾备，覆盖旧 SBERT、旧 q 模型、词典、vocab 与新 NLI，且不能关闭最终哈希门禁 | 避免不稳定对象存储成为开发和部署单点，同时不以未校验下载或算法降级换取可用性 | 本地缓存 19/19；空目录离线恢复 19/19；ReciteHelper 与 Hugging Face 固定源真实下载探针通过；两份大模型 URL/长度 HEAD 通过，见 test_report §41 | VERIFIED |
+| 2026-08-10 | Wiki/Frontend/Deploy | 新增根目录 15 页静态 Wiki 与真实界面截图；Frontend 构建将 Markdown 生成 `/wiki/`，产品首页顶部、首屏和页脚均提供入口；Wiki UI 使用 GalReview 中性文档风格 | 让不了解研习册、藏书阁、识网、故事回响和 credits 的用户能按页面完成操作，同时避免再部署一个动态文档服务 | Frontend typecheck/Vite/Wiki build PASS；完整 npm audit 0；16 个页面入口、16 个资源逐一 HTTP 200；见 test_report §42 | VERIFIED |
 
 状态只使用 `SPECIFIED | IMPLEMENTED | VERIFIED | BLOCKED`。代码合入后必须逐项更新，测试未运行或失败时不得写 `VERIFIED`。
 

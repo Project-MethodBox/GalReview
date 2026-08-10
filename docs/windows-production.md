@@ -2,6 +2,13 @@
 
 `deploy-windows.ps1` 用于 Windows Server 的非 Docker 生产部署。它不会调用 Vite 开发服务器；前端只发布 `vite build` 产生的 `dist`，并由 `frontend/server.mjs` 提供静态文件和同源 `/api` 代理。
 
+## 静态 Wiki
+
+Windows 生产发布不需要单独部署 Wiki 服务。Frontend 构建阶段从仓库根目录 `wiki` 生成
+`frontend/dist/wiki`，与主站由同一个 Node 静态服务提供。更新 Wiki 后必须重新执行 frontend 构建并发布
+新的 `dist`；只重启旧进程不会更新 `/wiki/`。发布后检查产品首页的“使用 Wiki”链接和
+`https://<站点>/wiki/`。
+
 ## 前置条件
 
 - Windows Server 已安装 Node.js 22 和 .NET 10 SDK；
