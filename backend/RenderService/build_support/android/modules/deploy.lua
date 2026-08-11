@@ -66,24 +66,6 @@ function uninstall(package_id, serial)
     os.execv(adb, {"-s", target, "uninstall", package_id})
 end
 
--- Recent log lines, optionally filtered to one tag (-s tag:*); used by the
--- run subcommand to show the app's first output without streaming forever.
-function logcat_dump(tag, serial)
-    local adb = adb_or_fail()
-    local target = pick_device(serial)
-    local args = {"-s", target, "logcat", "-d"}
-    if tag and tag ~= "" then
-        table.join2(args, {"-s", tag .. ":*"})
-    end
-    return os.iorunv(adb, args) or ""
-end
-
-function logcat_clear(serial)
-    local adb = adb_or_fail()
-    local target = pick_device(serial)
-    os.execv(adb, {"-s", target, "logcat", "-c"})
-end
-
 function avds()
     local emulator = sdk.emulator()
     if not emulator then

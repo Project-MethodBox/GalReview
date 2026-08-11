@@ -32,6 +32,34 @@ import("install_lock", {rootdir = path.join(os.scriptdir(), "..", "..", "..", "c
 local DEFAULT_NIGHTLY = "2026-02-18"
 local DIST_BASE = "https://static.rust-lang.org/dist"
 
+-- WebAssembly needs one rustc target per linear-memory model even though both
+-- compile through the same GCC triplet (wasm64 is a MULTILIB of
+-- wasm32-unknown-emscripten, not a triplet of its own), so the wasm row of the
+-- table below cannot answer alone -- see rust_target_for.
+--
+-- The 64-bit choice deserves its reasoning recorded. Upstream has no
+-- Emscripten wasm64 target and is unlikely to grow one soon: an Emscripten
+-- target carries std, and std's libc layer is written for 32-bit pointers.
+-- wasm64-unknown-unknown is the only 64-bit wasm target rustc offers (tier 3,
+-- no prebuilt std), and it is enough here because the engine crate is
+-- #![no_std]: cargo build-std compiles core/compiler_builtins/alloc for it,
+-- and this pipeline never uses rustc's linker -- Cargo only produces a
+-- staticlib whose member objects are absorbed into the engine archive, and
+-- GCC/emcc performs the final link. The Emscripten-specific half of a target
+-- definition (linker flavor, post-link arguments, executable suffix) would go
+-- unused either way; what has to be right is the data layout, the target
+-- features and the cfg surface, and those are. Verified end to end: the
+-- objects are genuine wasm64 (wasm-ld refuses them without -mwasm64) and the
+-- C++ allocator bridge keeps its mangled names, because size_t stays
+-- `unsigned long` on both models.
+-- Two differences to know before leaning on it: cfg(target_os = "emscripten")
+-- and cfg(unix) are FALSE under the 64-bit target (the engine crate uses
+-- neither -- it keys on pointer width), and its relocation model is static
+-- rather than PIC, so a wasm64 -sSIDE_MODULE link would fail loudly and want
+-- -Crelocation-model=pic added to the wasm rustflags.
+local WASM32_RUST_TARGET = "wasm32-unknown-emscripten"
+local WASM64_RUST_TARGET = "wasm64-unknown-unknown"
+
 -- GCC triplet -> rustc target, the frozen-design alignment table. windows
 -- MUST map to -gnu (MinGW ABI/CRT), never -msvc.
 local RUST_TARGETS = {
@@ -56,6 +84,12 @@ local RUST_TARGETS = {
 
 function rust_target_for(gcc_triplet)
     gcc_triplet = tostring(gcc_triplet or "")
+    -- The WebAssembly triplet is named after the 32-bit multilib but serves
+    -- both memory models, so the 64-bit selection comes from the configured
+    -- arch rather than from the triplet.
+    if gcc_triplet == WASM32_RUST_TARGET and settings.wasm_memory64() then
+        return WASM64_RUST_TARGET
+    end
     local mapped = RUST_TARGETS[gcc_triplet]
     if mapped then
         return mapped
@@ -90,7 +124,15 @@ end
 -- explicit commands (`xmake toolchains install rust`) stay unaffected. When
 -- no project is loadable in the calling context the answer is conservatively
 -- false -- Rust work must never start as a side effect of a failed probe.
+local project_enables_rust_cache
+
 function project_enables_rust()
+    -- memoized: project.targets() is NOT cheap in every calling context (a
+    -- toolchain-task caller may trigger a full project load), and callers sit
+    -- on per-module-unit hot paths; the answer is constant for the process
+    if project_enables_rust_cache ~= nil then
+        return project_enables_rust_cache
+    end
     local ok, enabled = errors.trycall(function ()
         local project = import("core.project.project")
         for _, target in pairs(project.targets()) do
@@ -100,7 +142,8 @@ function project_enables_rust()
         end
         return false
     end)
-    return ok == true and enabled == true
+    project_enables_rust_cache = ok == true and enabled == true
+    return project_enables_rust_cache
 end
 
 local function pin_file()
@@ -184,23 +227,6 @@ function target_lib_dir(rust_target)
     return path.join(rust_prefix(), "lib", "rustlib", rust_target, "lib")
 end
 
--- The exact link ingredients a no_std crate needs besides its own object
--- (spike-verified). liballoc is always part of the set -- the engine allocator
--- bridge is a permanent part of rs/runtime, so every crate's heap resolves.
-function core_rlibs(rust_target, opt)
-    local libdir = target_lib_dir(rust_target)
-    local stems = {"libcore-*.rlib", "libcompiler_builtins-*.rlib", "liballoc-*.rlib"}
-    local ingredients = {}
-    for _, stem in ipairs(stems) do
-        local matches = os.files(path.join(libdir, stem))
-        if #matches == 0 then
-            errors.fail("rust-std for %s is missing %s under %s; run `xmake toolchains install rust`", rust_target, stem, libdir)
-        end
-        table.insert(ingredients, matches[1])
-    end
-    return ingredients
-end
-
 local function component_url(component, rust_target, date)
     return string.format("%s/%s/%s-nightly-%s.tar.xz", DIST_BASE, date, component, rust_target)
 end
@@ -268,6 +294,22 @@ function target_std_installed(rust_target)
     return os.isdir(target_lib_dir(rust_target))
 end
 
+-- Either WebAssembly rustc target. Both are built through cargo build-std:
+-- the 64-bit one has no prebuilt std at all, and the 32-bit one must have
+-- core/compiler_builtins/alloc rebuilt under the atomics contract. Both
+-- therefore also need rustc's self-contained rust-objcopy.
+function is_wasm_target(rust_target)
+    return rust_target == WASM32_RUST_TARGET or rust_target == WASM64_RUST_TARGET
+end
+
+-- Tier-3 targets ship no rust-std dist component -- asking the dist server for
+-- one is a 404, not a recoverable miss. build-std compiles what the crate
+-- needs from the rust-src sources instead, so their absence is normal rather
+-- than an incomplete install.
+function has_prebuilt_std(rust_target)
+    return rust_target ~= WASM64_RUST_TARGET
+end
+
 function sysroot_src_installed()
     return os.isdir(path.join(rust_prefix(), "lib", "rustlib", "src", "rust", "library"))
 end
@@ -327,7 +369,7 @@ function install(targets)
     local needs_cargo = true
     local needs_wasm_objcopy = false
     for _, rust_target in ipairs(targets or {}) do
-        if rust_target == "wasm32-unknown-emscripten" then
+        if is_wasm_target(rust_target) then
             needs_wasm_objcopy = true
         end
     end
@@ -359,7 +401,7 @@ function install(targets)
         wanted[rust_target] = true
     end
     for rust_target in pairs(wanted) do
-        if not target_std_installed(rust_target) then
+        if has_prebuilt_std(rust_target) and not target_std_installed(rust_target) then
             errors.log("installing rust-std for " .. rust_target .. " (nightly " .. date .. ")")
             install_component("rust-std", rust_target, date, prefix,
                 path.join("rust-std-" .. rust_target))

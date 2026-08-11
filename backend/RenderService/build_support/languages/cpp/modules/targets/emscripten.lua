@@ -44,8 +44,16 @@ function compiler_exists(target_os)
     return c_compiler and cxx_compiler
 end
 
+-- Installation completeness ONLY -- deliberately not backend_smoke_current
+-- (2026-08-02): a stale smoke stamp is a "re-verify me" state, not a
+-- "toolchain missing" state. Folding the smoke into this verdict made every
+-- signature drift re-enter the FULL build_gcc_for pipeline (observed: an
+-- outdated stamp alone re-ran the mpfr/GCC prerequisite builds). Smoke
+-- freshness is owned by ensure_smoke_current, driven from
+-- finalize_existing_toolchain_install on both the install command's
+-- already-installed branch and toolchains.auto's before_build.
 function installed_extra(target_os)
-    return gccwasm.tools_ready(target_os) and gccwasm.backend_smoke_current(target_os)
+    return gccwasm.tools_ready(target_os)
 end
 
 -- The resolved emcc version joins the capability tag in both the install
@@ -73,11 +81,33 @@ function prepare_backend_tools(target_os)
     gccwasm.prepare_target_tools(target_os)
 end
 
+-- wasm64 is a MULTILIB of wasm32-unknown-emscripten, not a target triplet of
+-- its own: gcc/config/wasm/t-wasm carries MULTILIB_OPTIONS = mwasm64, which
+-- stays inert while the shared configure line (gccbuild) says
+-- --disable-multilib. Enabling it builds the compiler exactly once and only
+-- repeats the target runtime libraries under -mwasm64 into a wasm64/
+-- subdirectory, so a single installed toolchain serves both memory models and
+-- -mwasm64 selects the matching libgcc/libstdc++ by itself. The shared flag is
+-- replaced in place rather than overridden by a trailing --enable-multilib:
+-- autoconf's last-one-wins would work, but a configure line carrying both
+-- spellings reads like a mistake.
+local function enable_multilib(args)
+    for index, value in ipairs(args) do
+        if value == "--disable-multilib" then
+            args[index] = "--enable-multilib"
+            return args
+        end
+    end
+    table.insert(args, "--enable-multilib")
+    return args
+end
+
 function configure_args(target_os, args)
     -- prepare_target_tools is idempotent; calling it here keeps the
     -- --with-as/--with-ld arguments valid without assuming any dispatcher
     -- ordering between stage hooks and configure_args.
     local assembler, linker = gccwasm.prepare_target_tools(target_os)
+    enable_multilib(args)
     table.insert(args, "--with-as=" .. base.shpath(assembler))
     table.insert(args, "--with-ld=" .. base.shpath(linker))
     table.insert(args, "--enable-hosted-libstdcxx")
@@ -133,9 +163,26 @@ function smoke(target_os)
 end
 
 -- finalize_existing_toolchain_install hook: refresh a stale backend smoke
--- before an already-installed toolchain is reused.
+-- before an already-installed toolchain is reused. This hook runs OUTSIDE
+-- project loading, so it is the one legitimate place to ask "does this
+-- project actually use Rust" and reconcile it with what the recorded smoke
+-- covered: a Rust-enabled project sitting on a smoke that skipped the Rust
+-- leg must re-verify (the hot-path verdicts deliberately stay shape-blind
+-- to avoid the project.targets() livelock -- see gccwasm's capability note).
 function ensure_smoke_current(target_os)
-    if compiler_exists(target_os) and not gccwasm.backend_smoke_current(target_os) then
+    if not compiler_exists(target_os) then
+        return
+    end
+    local stale = not gccwasm.backend_smoke_current(target_os)
+    if not stale and gccwasm.rust_leg_marker(target_os) == "skipped" then
+        local rust_toolchain = import("toolchain",
+            {rootdir = path.join(os.scriptdir(), "..", "..", "..", "rust", "modules")})
+        if rust_toolchain.project_enables_rust() then
+            errors.log("recorded WebAssembly smoke skipped the Rust leg but this project enables rust.cargo; re-verifying")
+            stale = true
+        end
+    end
+    if stale then
         gccwasm.prepare_target_tools(target_os)
         gccwasm.run_backend_smoke(target_os)
         gccwasm.run_emscripten_link_smoke(target_os)
@@ -144,7 +191,8 @@ end
 
 function status_lines(target_os)
     local binary_tools = gccwasm.host_binary_tools()
-    print("wasm capability: " .. gccwasm.capability_name())
+    print("wasm capability: " .. gccwasm.capability_name()
+        .. " (rust leg: " .. gccwasm.rust_leg_marker(target_os) .. ")")
     print("wabt source:     " .. layout.wabt_source_dir())
     print("wabt revision:   " .. gccwasm.wabt_source_revision())
     print("wat2wasm:        " .. tostring(gccwasm.wabt_path(target_os)))

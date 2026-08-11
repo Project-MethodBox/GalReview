@@ -32,7 +32,10 @@ function toolchain_of(target, context)
         end
         local explicit
         for _, item in ipairs(table.wrap(target:get("toolchains"))) do
-            local name = tostring(item):lower()
+            -- strip the "@platform" suffix (gcc@mingw etc.) so the suffixed
+            -- spelling resolves like the bare one (folded in from the former
+            -- toolchains.auto copy of this logic, 2026-08-02)
+            local name = tostring(item):lower():gsub("@.*$", "")
             if name == "gcc" or name == "mingw" then
                 return name
             elseif name == "project_gcc" or name == "managed_gcc" then

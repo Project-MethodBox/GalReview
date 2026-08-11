@@ -222,7 +222,7 @@ function managed_toolchains_run_git(git, args, opt)
         shell_args = {"-c", command .. " > " .. base.shquote(logfile) .. " 2> " .. base.shquote(errfile)}
     end
     local ok = errors.trycall(function ()
-        os.runv(shell, shell_args, {envs = opt.envs, stdin = opt.stdin})
+        os.runv(shell, shell_args, {envs = opt.envs, stdin = opt.stdin, timeout = opt.timeout})
         return true
     end)
     local output = ""
@@ -317,6 +317,8 @@ end
 local function managed_toolchains_checkout_gcc_source(git, src, envs)
     local attempts = MANAGED_TOOLCHAINS_NETWORK_ATTEMPTS
     local args = {"-C", src, "checkout", "--force", "FETCH_HEAD"}
+    -- the tree is about to move: the memoized revision (if any) is stale
+    managed_toolchains_forget_gcc_source_revision(src)
     for attempt = 1, attempts do
         if attempt == attempts then
             managed_toolchains_run_git(git, args, {envs = envs})
@@ -500,16 +502,109 @@ function managed_toolchains_is_mounted_windows_drive_path(value)
     return false
 end
 
+-- Per-directory memoized: signature/stamp checks ask for the revision once
+-- per module unit (observed: 400+ identical `git rev-parse HEAD` spawns per
+-- wasm build), and the answer only changes when THIS module syncs the tree
+-- (sync_gcc_git_source drops the entry below).
+local source_revision_cache = {}
+
+-- Short repository probes (rev-parse and friends) run at every build
+-- startup, and the process-wait layer can lose a child's exit notification
+-- (observed live 2026-08-08: git long exited, the waiting xmake asleep at
+-- zero CPU forever). Timer wakeups travel a different scheduler channel
+-- than process events, so a generous timeout plus one retry turns that
+-- freeze into a bounded self-heal. Transfers (clone/fetch/bundle) keep
+-- unbounded time: minutes-long runs are legitimate there, and this wrapper
+-- must never cover them.
+local MANAGED_TOOLCHAINS_GIT_PROBE_TIMEOUT_MS = 60000
+
+function managed_toolchains_probe_git(git, args, opt)
+    opt = opt or {}
+    local timeout = opt.timeout or MANAGED_TOOLCHAINS_GIT_PROBE_TIMEOUT_MS
+    local ok, output = managed_toolchains_run_git(git, args,
+        {envs = opt.envs, try = true, timeout = timeout})
+    if not ok then
+        errors.warn("git probe did not complete (failure or lost process-exit wakeup); retrying once: git %s",
+            table.concat(args, " "))
+        ok, output = managed_toolchains_run_git(git, args,
+            {envs = opt.envs, try = true, timeout = timeout})
+    end
+    return ok, output
+end
+
+-- Resolve a checkout's HEAD commit by reading the repository files instead of
+-- spawning `git rev-parse`. Every managed source tree is checked out detached
+-- (`checkout --force FETCH_HEAD`), so .git/HEAD holds the raw commit and this
+-- is a single file read; symbolic HEADs resolve through the loose ref and then
+-- packed-refs. Returns nil when the layout is anything else, leaving the git
+-- fallback in charge.
+--
+-- Why read files instead of asking git: the revision is queried many times per
+-- build (source identity, stamps, configure signatures), and each query used to
+-- spawn a process for what is one small read. Avoiding the spawn also keeps
+-- these probes clear of the lost-child-exit-notification defect in xmake 3.0.9
+-- and older, where a short-lived child's exit wakeup can go missing and the
+-- build then sleeps forever at zero CPU (observed 2026-08-11 on a host still
+-- running 3.0.9; hosts on 3.1.0+ do not show it).
+function managed_toolchains_read_git_head(src)
+    local gitdir = path.join(src, ".git")
+    if not os.isdir(gitdir) then
+        return nil
+    end
+    -- io.readfile raises on a missing file, so every read here is gated
+    local headfile = path.join(gitdir, "HEAD")
+    if not os.isfile(headfile) then
+        return nil
+    end
+    local head = base.trim(io.readfile(headfile) or "")
+    local commit = head:match("^(%x+)$")
+    if commit and #commit == 40 then
+        return commit
+    end
+    local ref = head:match("^ref:%s+(%S+)$")
+    if not ref then
+        return nil
+    end
+    -- ref is a slash-separated git path; file APIs accept it verbatim on every host
+    local loosefile = path.join(gitdir, ref)
+    if os.isfile(loosefile) then
+        commit = base.trim(io.readfile(loosefile) or ""):match("^(%x+)$")
+        if commit and #commit == 40 then
+            return commit
+        end
+    end
+    local packedfile = path.join(gitdir, "packed-refs")
+    if os.isfile(packedfile) then
+        for line in (io.readfile(packedfile) or ""):gmatch("[^\r\n]+") do
+            local packed_commit, packed_ref = line:match("^(%x+)%s+(%S+)$")
+            if packed_ref == ref and #packed_commit == 40 then
+                return packed_commit
+            end
+        end
+    end
+    return nil
+end
+
 function managed_toolchains_gcc_source_revision(src)
-    if not os.isdir(path.join(src, ".git")) then
-        return ""
+    local key = path.absolute(src)
+    local cached = source_revision_cache[key]
+    if cached ~= nil then
+        return cached
     end
-    local git = managed_toolchains_preferred_git()
-    local ok, output = managed_toolchains_run_git(git, {"-C", src, "rev-parse", "HEAD"}, {envs = envs.proxy_envs(), try = true})
-    if ok then
-        return base.trim(output or "")
+    local revision = managed_toolchains_read_git_head(src) or ""
+    if revision == "" and os.isdir(path.join(src, ".git")) then
+        local git = managed_toolchains_preferred_git()
+        local ok, output = managed_toolchains_probe_git(git, {"-C", src, "rev-parse", "HEAD"}, {envs = envs.proxy_envs()})
+        if ok then
+            revision = base.trim(output or "")
+        end
     end
-    return ""
+    source_revision_cache[key] = revision
+    return revision
+end
+
+function managed_toolchains_forget_gcc_source_revision(src)
+    source_revision_cache[path.absolute(src)] = nil
 end
 
 -- Offline source insurance: a git bundle created from a synced tree lets any
@@ -684,6 +779,8 @@ function sync_gcc_git_source(target_os, force, refresh)
         managed_toolchains_configure_gcc_git_text_checkout(git, src, envs.proxy_envs())
     end
     managed_toolchains_configure_gcc_git_text_checkout(git, src, envs.proxy_envs())
+    -- a fresh clone/init may shadow an earlier memoized "" (no tree yet)
+    managed_toolchains_forget_gcc_source_revision(src)
 
     print("configuring GCC git remote: " .. url)
     local git_config = path.join(src, ".git", "config")
@@ -1308,12 +1405,31 @@ function sync_gcc_source(target_os, download_prerequisites, force, refresh)
         managed_toolchains_install_gcc_prerequisites(src)
     end
     local mounted_windows_drive_source = managed_toolchains_is_mounted_windows_drive_path(src)
+    -- A stamped tree that still carries every patch fingerprint is final:
+    -- skip the re-patch pass entirely (no needless rewrite churn, and
+    -- mounted Windows-drive trees keep avoiding redundant cross-host
+    -- writes -- this check subsumes the earlier marker-only mounted skip
+    -- with a stronger fingerprint probe). Everything else is restored to
+    -- the pristine pinned checkout first and re-patched from scratch: the
+    -- pending-snapshot layer edits text inside the anchored patches' own
+    -- replacement regions, so re-running the families over a final tree
+    -- would trip their strict anchor probes, and a stale tree patched in
+    -- place could stack states no probe anticipates. git restores tracked
+    -- files only; patch-materialized new files are untracked and their
+    -- owned writes are content-idempotent.
+    local patches_current = os.isfile(managed_toolchains_gcc_source_patch_marker(src, target_os))
+        and gccpatches.verify_patched_source(src, target_os)
+    if not patches_current and os.isdir(path.join(src, ".git")) then
+        errors.log("restoring the pristine GCC source checkout before patching")
+        managed_toolchains_run_git(managed_toolchains_preferred_git(),
+            {"-C", src, "reset", "--hard"}, {envs = envs.proxy_envs()})
+    end
     patch_gcc_libcody_revision_makefile(path.join(src, "libcody", "Makefile.in"), mounted_windows_drive_source)
     errors.log("patching GCC configure metadata")
     patch_windows_configure_sysroots(src)
     errors.log("patching GCC source")
-    if mounted_windows_drive_source and os.isfile(managed_toolchains_gcc_source_patch_marker(src, target_os)) then
-        errors.log("GCC source patch marker found; skipping Lua source patching on mounted Windows-drive source tree")
+    if patches_current then
+        errors.log("GCC source patches are current (stamp marker and fingerprints verified); skipping re-patch")
     else
         gccpatches.patch_gcc_source(src, target_os)
     end

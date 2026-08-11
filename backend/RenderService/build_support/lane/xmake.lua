@@ -22,7 +22,7 @@ task("lane")
         -- value positional, matching `xmake android` / `xmake toolchains`.
         options =
         {
-            {nil, "lane", "v", nil, "lane platform: windows, linux, macosx, ios, android, wasm"},
+            {nil, "lane", "v", nil, "lane platform: windows, linux, macosx, ios, android, wasm, wasm64"},
             {nil, "action", "v", "build", "config, build (default), rebuild, run, clean, or show"},
             {nil, "subject", "v", "", "target name (build/run/clean) or build mode (config: debug/release)"},
             {nil, "extra", "v", "", "target arch for the config action (default chosen per plat)"}

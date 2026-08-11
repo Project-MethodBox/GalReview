@@ -1,1 +1,0 @@
-vendored from gcc-mainline @ 4790838765e8a4b0580b11ba0d8c6671d7c3fc95 libstdc++-v3/include/std/format (P3391R2 constexpr std::format). Refresh when the wasm PR base or mainline <format> moves.

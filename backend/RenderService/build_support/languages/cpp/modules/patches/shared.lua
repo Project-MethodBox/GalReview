@@ -8,6 +8,7 @@
 
 import("base", {rootdir = path.join(os.scriptdir(), "..", "..", "..", "..", "core", "modules")})
 import("errors", {rootdir = path.join(os.scriptdir(), "..", "..", "..", "..", "core", "modules")})
+import("hosttools", {rootdir = path.join(os.scriptdir(), "..", "..", "..", "..", "core", "modules")})
 import("layout", {rootdir = path.join(os.scriptdir(), "..", "..", "..", "..", "core", "modules")})
 import("settings", {rootdir = path.join(os.scriptdir(), "..", "..", "..", "..", "core", "modules")})
 
@@ -121,19 +122,4 @@ function strict_write_owned(ctx, file, content, ownership_marker, label)
     end
     print("updating " .. label .. ": " .. path.relative(file, ctx.src))
     base.writefile_bytes(file, content)
-end
-
--- When upstream drift removes a patch anchor the local fix silently
--- stops applying. Warn at the apply site for context; the hard
--- postconditions checked before the stamp write (see the postcondition
--- checkpoint in gccpatches.lua) turn any surviving drift into a
--- failure instead of a stamped-but-unpatched source tree.
--- (The bb2601808 ADL backport is exempt: its anchor disappearing means
--- upstream itself contains the fix, which is the desired end state.)
-function warn_patch_drift(text, marker, what, consequence)
-    if not text:find(marker, 1, true) then
-        print("WARNING: GCC source patch anchor not found (upstream drift): " .. what)
-        print("         The local fix is NOT applied to this source tree. " .. consequence)
-        print("         Check whether upstream already fixed the issue; then update or retire the patch in build_support.")
-    end
 end

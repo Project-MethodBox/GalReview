@@ -12,6 +12,16 @@
 import("i18n")
 
 i18n.register({
+    -- platform lanes
+    ["xmake lane requires a platform lane, e.g. `xmake lane wasm build` (windows|linux|macosx|ios|android|wasm|wasm64)"] =
+        "xmake lane 需要指定平台 lane,例如 `xmake lane wasm build`(windows|linux|macosx|ios|android|wasm|wasm64)",
+    ["unknown lane action '%s' (use config|build|rebuild|run|clean|show)"] =
+        "未知的 lane 动作 '%s'(可用 config|build|rebuild|run|clean|show)",
+    ["lane %s: failed to launch the child xmake (%s): %s"] =
+        "lane %s:无法启动子 xmake(%s):%s",
+    ["lane %s: child `xmake %s` exited with status %d%s -- its diagnostics are in the output above%s"] =
+        "lane %s:子命令 `xmake %s` 以状态 %d 退出%s——其诊断信息见上方输出%s",
+
     -- run/staging framework
     ["%s failed"] = "%s 失败",
     ["%s failed; fix the reported cause and rerun the same xmake command"] =
@@ -47,12 +57,15 @@ i18n.register({
     ["GCC git checkout did not contain a GCC source tree"] = "GCC git 检出内容不包含 GCC 源码树",
     ["GCC mainline source is missing gcc/gengtype-lex.cc; install flex or allow xmake to bootstrap project-local generator tools"] =
         "GCC 主线源码缺少 gcc/gengtype-lex.cc;请安装 flex,或允许 xmake 自举项目本地生成器工具",
-    ["GCC source patch marker found; skipping Lua source patching on mounted Windows-drive source tree"] =
-        "检测到 GCC 源码补丁标记;挂载的 Windows 盘源码树跳过 Lua 侧补丁",
+    ["GCC source patches are current (stamp marker and fingerprints verified); skipping re-patch"] =
+        "GCC 源码补丁已是最新(标记与各补丁落地特征均已校验);跳过重打",
+    ["restoring the pristine GCC source checkout before patching"] =
+        "打补丁前先把 GCC 源码还原为干净检出",
     ["full GCC fetch failed (attempt %d/%d); retrying after a short delay"] =
         "GCC 全量拉取失败(第 %d/%d 次);稍后自动重试",
-    ["shallow GCC fetch failed (attempt %d/%d); retrying after a short delay"] =
-        "GCC 浅拉取失败(第 %d/%d 次);稍后自动重试",
+    -- %s 是传输方式名(shallow / blob-filtered shallow),保留原文
+    ["%s GCC fetch failed (attempt %d/%d); retrying after a short delay"] =
+        "%s 方式的 GCC 拉取失败(第 %d/%d 次);稍后自动重试",
     ["git command failed: git %s"] = "git 命令失败:git %s",
     ["no synced GCC source tree to bundle; run `xmake toolchains fetch %s` first"] =
         "没有可打包的已同步 GCC 源码树;请先运行 `xmake toolchains fetch %s`",
@@ -66,6 +79,12 @@ i18n.register({
         "无法解析上游跟踪分支 %s;钉住的修订保持 %s 不变",
     ["GCC source patches did not fully apply: %d postcondition(s) unmet"] =
         "GCC 源码补丁未完全生效:%d 个后置校验未满足",
+    ["cross binutils has no recorded snapshot identity (%s); rebuilding once to establish one"] =
+        "交叉 binutils 没有记录快照身份(%s);重建一次以建立身份",
+    ["cxxmodule.branch_layers declares branch(es) with no matching module in the tree (typo? unranks the real branch): %s"] =
+        "cxxmodule.branch_layers 声明了树中没有对应模块的分支(拼写错误?会使真实分支失去层级):%s",
+    ["cxxmodule.branch_layers omits real branch(es), leaving them unranked and direction-unguarded: %s"] =
+        "cxxmodule.branch_layers 遗漏了真实分支,使其没有层级、方向也不受约束:%s",
     ["GCC prerequisite archive did not contain the expected package directory: %s"] =
         "GCC 先决库归档中没有预期的包目录:%s",
     ["GCC prerequisite archive is missing before verification: %s"] = "校验前 GCC 先决库归档缺失:%s",
@@ -204,8 +223,10 @@ i18n.register({
     ["musl runtime install is incomplete: %s"] = "musl 运行时安装不完整:%s",
     ["musl runtime requires the stage GCC compiler to be installed first"] =
         "musl 运行时要求先安装阶段 GCC 编译器",
-    ["replacing Windows-hosted musl loader symlink with a sysroot-local copy: %s"] =
-        "把 Windows 宿主上的 musl 加载器符号链接替换为 sysroot 内本地副本:%s",
+    ["replacing the absolute musl loader symlink with a sysroot-local copy: %s"] =
+        "把绝对路径的 musl 加载器符号链接替换为 sysroot 内本地副本:%s",
+    ["could not remove the musl loader symlink; refusing to copy through it: %s"] =
+        "无法移除 musl 加载器符号链接;拒绝透过它复制:%s",
     ["MinGW-w64 CRT install is incomplete: %s"] = "MinGW-w64 CRT 安装不完整:%s",
     ["MinGW-w64 CRT requires the stage GCC compiler to be installed first"] =
         "MinGW-w64 CRT 要求先安装阶段 GCC 编译器",
@@ -218,8 +239,6 @@ i18n.register({
         "无效的 macosx_deployment_target '%s';应为 11.0 这类版本号",
     ["macosx_deployment_target should look like 11.0; current value is '%s'."] =
         "macosx_deployment_target 应形如 11.0;当前值为 '%s'。",
-    ["upstream GCC mainline does not provide an aarch64-apple-darwin target in gcc/config.gcc; select a supported macOS target such as x86_64, or use a Darwin arm64 GCC fork"] =
-        "上游 GCC 主线的 gcc/config.gcc 不提供 aarch64-apple-darwin 目标;请选择受支持的 macOS 目标(如 x86_64),或使用 Darwin arm64 的 GCC 分支",
 
     -- build-config option validation
     ["invalid toolchains_build_debug '%s'; expected auto, true, or false"] =
@@ -272,8 +291,18 @@ i18n.register({
         "受管 Emscripten 工具族安装结束但仍未被检测为完整:%s",
 
     -- wasm build-quality smoke assertions (languages/cpp/modules/gccwasm.lua)
-    ["GCC wasm backend DWARF canary tripped: -g changed the emitted object bytes, so the backend has grown debug output; revisit the wasm debug policy (symbols=none plus emcc -g2) before trusting this toolchain"] =
-        "GCC wasm 后端 DWARF 金丝雀触发:-g 改变了产出对象的字节,说明后端已长出调试输出;请先重审 wasm 调试策略(symbols=none 加 emcc -g2)再信任该工具链",
+    ["wasm64 parameterless main probe emitted no __main_argc_argv signature: %s"] =
+        "wasm64 无参 main 探测未产出 __main_argc_argv 签名:%s",
+    ["wasm64 gives a parameterless main a 32-bit argv (%s); every wasm64 program with a parameterless main would trap before main runs"] =
+        "wasm64 给无参 main 的 argv 是 32 位的(%s);任何无参 main 的 wasm64 程序都会在进入 main 之前陷入陷阱",
+    ["installed GCC WebAssembly compiler knows no wasm64 multilib (-print-multi-lib reported %s); the toolchain was configured without --enable-multilib"] =
+        "已安装的 GCC WebAssembly 编译器不认识 wasm64 multilib(-print-multi-lib 报告 %s);该工具链配置时未加 --enable-multilib",
+    ["the wasm64 multilib libstdc++ is not installed: -mwasm64 -print-file-name=libstdc++.a resolved to %s"] =
+        "wasm64 multilib 的 libstdc++ 未安装:-mwasm64 -print-file-name=libstdc++.a 解析到 %s",
+    ["GCC wasm debug-channel probe found a .debug_line section without -g; debug output must stay opt-in"] =
+        "GCC wasm 调试通道探针在未开 -g 时发现了 .debug_line 段;调试输出必须保持按需开启",
+    ["GCC wasm debug-channel probe found no .debug_line section under -g: the line-number debug channel regressed; revisit the pending toolchain snapshot in patches/wasm.lua"] =
+        "GCC wasm 调试通道探针在 -g 下未发现 .debug_line 段:行号调试通道已回归失效;请复查 patches/wasm.lua 的 pending 工具链快照",
     ["linked wasm lost the GCC-side function name %s from its name section; emcc -g2 no longer provides the function-name debugging baseline"] =
         "链接产物 wasm 的 name 节丢失了 GCC 侧函数名 %s;emcc -g2 不再提供函数名级调试底线",
     ["linked wasm %s lost the reachable smoke data marker %s; the emcc link dropped live GCC data"] =
@@ -282,12 +311,10 @@ i18n.register({
         "链接产物 wasm %s 仍包含不可达的冒烟数据标记 %s;emcc 链接的符号粒度死代码 GC 已回退",
     ["optimized wasm smoke artifact is not significantly smaller than the unoptimized one (%d vs %d bytes); the emcc -O3 wasm-opt pipeline did not take effect"] =
         "优化档 wasm 冒烟产物没有显著小于非优化档(%d 对 %d 字节);emcc -O3 的 wasm-opt 管线未生效",
-    ["wasm -fexceptions smoke exited 0: a throw no longer traps, so the documented exception policy (throw traps, catch unreachable) is stale; revisit docs/developer/wasm_exception_policy.md"] =
-        "wasm -fexceptions 冒烟以 0 退出:throw 不再落入 trap,已成文的异常策略(throw 即 trap、catch 不可达)失效;请重审 docs/developer/wasm_exception_policy.md",
     ["wasm -fexceptions smoke never reached its throw site (missing pre-throw marker); transcript: %s"] =
         "wasm -fexceptions 冒烟未到达 throw 点(缺少 throw 前标记);运行记录:%s",
-    ["wasm -fexceptions smoke executed a catch handler: wasm exceptions became functional, so the documented trap policy is stale; revisit docs/developer/wasm_exception_policy.md"] =
-        "wasm -fexceptions 冒烟执行了 catch 处理器:wasm 异常已变为可用,已成文的 trap 策略失效;请重审 docs/developer/wasm_exception_policy.md",
+    ["wasm -fexceptions smoke no longer completes the throw/catch round trip (exit %s): native wasm exception handling regressed; revisit docs/developer/wasm_exception_policy.md and the pending toolchain snapshot in patches/wasm.lua; transcript: %s"] =
+        "wasm -fexceptions 冒烟不再完成 throw/catch 往返(退出码 %s):原生 wasm 异常处理已回归失效;请重审 docs/developer/wasm_exception_policy.md 与 patches/wasm.lua 里的 pending 工具链快照;运行记录:%s",
     ["wasm smoke artifact %s size drifted past the one-tenth tolerance under an unchanged smoke signature (baseline %d bytes, now %d bytes); baseline refreshed -- investigate if no smoke-source change explains it"] =
         "wasm 冒烟产物 %s 在冒烟签名未变的情况下体积漂移超过十分之一容差(基线 %d 字节,当前 %d 字节);基线已刷新——若没有冒烟源变更可以解释,请排查",
 
@@ -304,8 +331,10 @@ i18n.register({
         "下载的 rust-src 在 %s 下没有 rust-src-nightly* 目录",
     ["rust-src was installed but %s still does not exist; the dist component layout may have changed"] =
         "rust-src 已安装但 %s 仍不存在;dist 组件布局可能已变更",
-    ["rust-std for %s is missing %s under %s; run `xmake toolchains install rust`"] =
-        "%s 的 rust-std 在 %s 下缺少 %s;请运行 `xmake toolchains install rust`",
+    ["Rust toolchain install finished but rustc's self-contained rust-objcopy is still missing: %s (cargo build-std of compiler_builtins needs it)"] =
+        "Rust 工具链安装已完成,但 rustc 自带的 rust-objcopy 仍然缺失:%s(cargo build-std 编译 compiler_builtins 需要它)",
+    ["Rust toolchain install finished but clippy-driver is still missing: %s"] =
+        "Rust 工具链安装已完成,但 clippy-driver 仍然缺失:%s",
     ["rust-std for %s was installed but %s still does not exist; the dist component layout may have changed"] =
         "%s 的 rust-std 已安装但 %s 仍不存在;dist 组件布局可能已变更",
     ["no rustc target mapping for GCC triplet %s; extend RUST_TARGETS in languages/rust/modules/toolchain.lua"] =
@@ -355,8 +384,10 @@ i18n.register({
     ["rust crate validation failed:\n  %s"] = "rust crate 校验失败:\n  %s",
 
     -- source sync retries / revision identity
-    ["blob-filtered GCC fetch failed (attempt %d/%d); retrying after a short delay"] =
-        "GCC blob 过滤拉取失败(第 %d/%d 次);稍后自动重试",
+    ["git probe did not complete (failure or lost process-exit wakeup); retrying once: git %s"] =
+        "git 短探针未完成(失败,或子进程退出通知丢失);重试一次:git %s",
+    ["shallow GCC fetch exhausted on every transport; falling back to a heavy full-history fetch"] =
+        "各种浅拉取方式均已用尽;回退到重量级的全历史拉取",
     ["GCC source checkout failed (attempt %d/%d); retrying after a short delay"] =
         "GCC 源码检出失败(第 %d/%d 次);稍后自动重试",
     ["GCC object batch %d/%d failed (attempt %d/%d); retrying after a short delay"] =
@@ -376,14 +407,10 @@ i18n.register({
         "无法应用 %s:上游锚点在 %s 中存在歧义",
     ["cannot apply %s: an upstream file already exists with different content: %s"] =
         "无法应用 %s:上游已存在内容不同的文件:%s",
-    ["cannot apply %s: the pinned upstream module export layout drifted in %s"] =
-        "无法应用 %s:钉住的上游模块导出布局在 %s 中已漂移",
-    ["cannot apply GCC WebAssembly extended freestanding ordered map module exports: the pinned upstream anchor drifted in %s"] =
-        "无法应用 GCC WebAssembly 扩展 freestanding 有序 map 模块导出:钉住的上游锚点在 %s 中已漂移",
-    ["cannot apply GCC WebAssembly extended freestanding string module exports: the pinned upstream anchor drifted in %s"] =
-        "无法应用 GCC WebAssembly 扩展 freestanding string 模块导出:钉住的上游锚点在 %s 中已漂移",
-    ["cannot apply GCC WebAssembly extended freestanding vector module exports: the pinned upstream anchor drifted in %s"] =
-        "无法应用 GCC WebAssembly 扩展 freestanding vector 模块导出:钉住的上游锚点在 %s 中已漂移",
+    ["this configuration pins %s to %s while the project's built-in default is now %s -- xmake froze the option when the configuration was written, so a bumped default cannot reach it; if the difference is not intentional, restate it (`xmake f --%s=%s -y`) in EVERY config store: the root, each lane under build/<plat>, and the test subproject"] =
+        "当前配置把 %s 钉在 %s,而项目内置默认值已是 %s——xmake 在写配置时就把该选项固化了,改默认值传不进来;若这不是有意覆盖,请在**每一份配置**里重新声明(`xmake f --%s=%s -y`):根配置、build/<plat> 下的每条 lane、以及测试子工程",
+    ["no source patch stamp registered for profile '%s'"] =
+        "源码档案 '%s' 没有登记补丁标记版本",
     ["cannot migrate %s: source file is missing: %s"] = "无法迁移 %s:源文件缺失:%s",
     ["cannot migrate %s: the project-owned patch is ambiguous in %s"] =
         "无法迁移 %s:项目所有的补丁在 %s 中存在歧义",
@@ -393,12 +420,18 @@ i18n.register({
     -- WABT fork build
     ["CMake is required to build the GCC WebAssembly WABT fork"] =
         "构建 GCC WebAssembly 的 WABT fork 需要 CMake",
+    ["WABT submodule third_party/picosha2 is still missing after sync: %s"] =
+        "同步后 WABT 子模块 third_party/picosha2 仍然缺失:%s",
     ["WABT checkout revision mismatch: expected %s, got %s"] =
         "WABT 检出修订不匹配:预期 %s,实际 %s",
     ["WABT checkout did not contain CMakeLists.txt: %s"] =
         "WABT 检出内容不包含 CMakeLists.txt:%s",
+    ["the pinned WABT fork checkout is missing %s (%s); the pin does not carry the fork's own changes"] =
+        "钉住的 WABT fork 检出缺少 %s(%s);该 pin 未携带 fork 自身的改动",
     ["WABT build completed without producing wat2wasm: %s"] =
         "WABT 构建完成但未产出 wat2wasm:%s",
+    ["discarding the WABT build directory: the build tool CMake recorded no longer exists (%s)"] =
+        "丢弃 WABT 构建目录:CMake 记录的构建工具已不存在(%s)",
     ["a WebAssembly-compatible %s tool was not found; install LLVM tools"] =
         "未找到兼容 WebAssembly 的 %s 工具;请安装 LLVM 工具",
 
@@ -433,14 +466,10 @@ i18n.register({
         "GCC WebAssembly WAT 未正常终止 __int128 截断探针:%s",
     ["GCC WebAssembly __int128 truncation probe did not lower through i32.wrap_i64: %s"] =
         "GCC WebAssembly __int128 截断探针未经 i32.wrap_i64 降级:%s",
-    ["GCC WebAssembly atomic compare-exchange probe did not emit the fixed-width libatomic import"] =
-        "GCC WebAssembly 原子比较交换探针未生成定宽 libatomic 导入",
-    ["GCC WebAssembly __atomic_compare_exchange_4 import must have 5 parameters, got %d"] =
-        "GCC WebAssembly __atomic_compare_exchange_4 导入必须有 5 个参数,实际 %d 个",
-    ["GCC WebAssembly __atomic_compare_exchange_4 import used a non-i32 parameter: %s"] =
-        "GCC WebAssembly __atomic_compare_exchange_4 导入使用了非 i32 参数:%s",
-    ["GCC WebAssembly __atomic_compare_exchange_4 import must return i32"] =
-        "GCC WebAssembly __atomic_compare_exchange_4 导入必须返回 i32",
+    ["GCC WebAssembly atomic compare-exchange probe regressed to the libatomic import call"] =
+        "GCC WebAssembly 原子比较交换探针回退成了 libatomic 导入调用",
+    ["GCC WebAssembly atomic compare-exchange probe did not lower to the native cmpxchg instruction"] =
+        "GCC WebAssembly 原子比较交换探针未下降为原生 cmpxchg 指令",
     ["GCC WebAssembly C++ __int128 ABI probe did not exercise an indirect call"] =
         "GCC WebAssembly C++ __int128 ABI 探针未覆盖间接调用",
     ["GCC WebAssembly __int128 runtime probe did not emit expected libcall: %s"] =
@@ -544,6 +573,20 @@ i18n.register({
         "无法注入 Rust 对象:目标静态库不存在:%s",
     ["no Unix-compatible archiver for the Rust objects on target %s (the MSVC link/lib fallback cannot process GNU archives); install the project GCC toolchain: `xmake toolchains install %s`"] =
         "目标 %s 上没有 Unix 兼容的归档器可处理 Rust 对象(MSVC link/lib 回退无法处理 GNU 归档);请安装项目 GCC 工具链:`xmake toolchains install %s`",
+    ["cannot read ar archive: %s"] =
+        "无法读取 ar 归档:%s",
+    ["thin ar archives are not supported for Rust staticlib absorption: %s"] =
+        "Rust staticlib 吸收不支持 thin ar 归档:%s",
+    ["not an ar archive (bad global magic): %s"] =
+        "不是 ar 归档(全局魔数损坏):%s",
+    ["corrupt ar member header at byte %d: %s"] =
+        "第 %d 字节处的 ar 成员头损坏:%s",
+    ["truncated ar member at byte %d: %s"] =
+        "第 %d 字节处的 ar 成员被截断:%s",
+    ["ar long-name reference %s has no name table entry: %s"] =
+        "ar 长名引用 %s 没有对应的名字表条目:%s",
+    ["Rust staticlib contains no object members to absorb: %s"] =
+        "Rust staticlib 中没有可吸收的对象成员:%s",
 
     -- preflight guidance (warnings/actions/titles routed through errors.format)
     ["Windows host MinGW settings are incomplete"] = "Windows 宿主 MinGW 设置不完整",

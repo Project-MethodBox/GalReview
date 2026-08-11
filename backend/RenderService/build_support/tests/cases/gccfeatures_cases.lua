@@ -46,6 +46,17 @@ function run(t)
         t.assert_true(not gccfeatures.is_gcc_toolchain(resolved), "clang is not gcc/mingw")
     end)
 
+    t.case("gccfeatures: the @platform suffix strips before resolution (folded from toolchains.auto)", function ()
+        local resolved = gccfeatures.toolchain_of(
+            fake_target({toolchains = {"gcc@mingw"}}), MANAGED_DEFAULT)
+        t.assert_eq(resolved, "gcc", "suffixed gcc spelling resolves like bare gcc")
+        local foreign = gccfeatures.toolchain_of(
+            fake_target({toolchains = {"clang@llvm"}}), MANAGED_DEFAULT)
+        t.assert_eq(foreign, "clang", "suffixed foreign toolchain stays foreign")
+        t.assert_true(not gccfeatures.is_gcc_toolchain(foreign),
+            "suffix stripping must not promote a foreign toolchain to GCC")
+    end)
+
     t.case("gccfeatures: an explicit external beside envs still outranks the default", function ()
         local resolved = gccfeatures.toolchain_of(
             fake_target({toolchains = {"envs", "msvc"}}), MANAGED_DEFAULT)

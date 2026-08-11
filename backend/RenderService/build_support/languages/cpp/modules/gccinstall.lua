@@ -50,13 +50,42 @@ function target_static_libgcc_available(target_os)
     return target_libgcc_file(target_os) ~= nil
 end
 
+-- The shallow probes below cover both installed layouts (host-style
+-- prefix/include/c++/* and cross-style prefix/<triplet>/include/c++/*
+-- via a one-level wildcard). The recursive whole-prefix fallbacks stay as
+-- the last resort for exotic layouts, but their positive verdicts are
+-- memoized: install gates re-ask once per module unit, and one recursive
+-- walk of an installed prefix (tens of thousands of files) per question
+-- was a major leg of the 2026-08-02 wasm-lane crawl. Only `true` is cached
+-- -- a missing runtime keeps re-probing so a bootstrap inside the same
+-- process can flip the verdict.
+local installed_probe_cache = {}
+
+local function sticky_probe(key, probe)
+    if installed_probe_cache[key] then
+        return true
+    end
+    local verdict = probe() == true
+    if verdict then
+        installed_probe_cache[key] = true
+    end
+    return verdict
+end
+
 function installed_cxx_header(prefix, name)
     for _, version_dir in ipairs(os.dirs(path.join(prefix, "include", "c++", "*"))) do
         if os.isfile(path.join(version_dir, name)) then
             return true
         end
     end
-    return #os.files(path.join(prefix, "**", "include", "c++", "*", name)) > 0
+    for _, version_dir in ipairs(os.dirs(path.join(prefix, "*", "include", "c++", "*"))) do
+        if os.isfile(path.join(version_dir, name)) then
+            return true
+        end
+    end
+    return sticky_probe("header:" .. prefix .. ":" .. name, function ()
+        return #os.files(path.join(prefix, "**", "include", "c++", "*", name)) > 0
+    end)
 end
 
 function installed_library(prefix, target_os, names)
@@ -68,7 +97,9 @@ function installed_library(prefix, target_os, names)
         end
     end
     for _, name in ipairs(names) do
-        if #os.files(path.join(prefix, "**", name)) > 0 then
+        if sticky_probe("library:" .. prefix .. ":" .. name, function ()
+            return #os.files(path.join(prefix, "**", name)) > 0
+        end) then
             return true
         end
     end
@@ -112,10 +143,12 @@ end
 -- Default installed-runtime completeness check shared by every target OS
 -- without an installed_extra provider override.
 function installed_runtime_complete(target_os)
-    local prefix = settings.gcc_prefix(target_os)
-    local has_meta = installed_cxx_header(prefix, "meta")
-    local has_libstdcxx = installed_library(prefix, target_os, {"libstdc++.a", "libstdc++.so", "libstdc++.dll.a"})
-    return has_meta and has_libstdcxx and installed_std_module_valid(prefix)
+    return sticky_probe("runtime:" .. target_os, function ()
+        local prefix = settings.gcc_prefix(target_os)
+        local has_meta = installed_cxx_header(prefix, "meta")
+        local has_libstdcxx = installed_library(prefix, target_os, {"libstdc++.a", "libstdc++.so", "libstdc++.dll.a"})
+        return has_meta and has_libstdcxx and installed_std_module_valid(prefix)
+    end)
 end
 
 function reset_build_dir(build)

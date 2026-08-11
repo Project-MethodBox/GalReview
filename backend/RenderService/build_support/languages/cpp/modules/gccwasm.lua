@@ -15,34 +15,33 @@ import("envs", {rootdir = path.join(os.scriptdir(), "..", "..", "..", "core", "m
 import("run", {rootdir = path.join(os.scriptdir(), "..", "..", "..", "core", "modules")})
 import("gccsources")
 import("gccemsdk")
+import("wabt", {rootdir = path.join(os.scriptdir(), "patches")})
 import("core.base.bytes")
 
 local RUST_MODULES_DIR = path.join(os.scriptdir(), "..", "..", "rust", "modules")
--- The declared capability depends on whether the smoke covered the Rust leg:
--- a project with no rust.cargo target never provisions Rust (owner boundary,
--- 2026-08-02), so its toolchain must not claim rust-atomic. Rust-enabled
--- projects compose the exact historical string, keeping installed stamps
--- valid; Rust-less checkouts get their own string and stamp.
-local WASM_CAPABILITY_PREFIX = "gcc17-hosted-emscripten-pthread-tls-atomic-locks-wait"
-local WASM_CAPABILITY_RUST_LEG = "-rust-atomic"
-local WASM_CAPABILITY_SUFFIX = "-concepts-contracts-coroutines-reflection-basic-abi-int128-backend-v43"
+-- Both capability strings are deliberately CONSTANTS (2026-08-02): a first
+-- attempt derived their rust segments from project_enables_rust(), but that
+-- walks project.targets() while these strings feed the smoke/install/
+-- configure signatures that install gates evaluate INSIDE target on_load --
+-- project loading re-entered itself and the wasm build livelocked. Whether
+-- the smoke's Rust leg actually ran is recorded separately in rust-leg.stamp
+-- (rust_leg_marker below): hot-path verdicts never ask "does this project
+-- use Rust"; only the smoke EXECUTION and the finalize-time shape check
+-- (targets/emscripten.lua ensure_smoke_current) do, and both run outside
+-- project loading.
+local WASM_CAPABILITY = "gcc17-hosted-emscripten-pthread-tls-atomic-locks-wait-rust-atomic-concepts-contracts-coroutines-reflection-basic-abi-int128-eh-backend-wasm64-multilib-v45"
+local WASM_SMOKE_CAPABILITY = "hosted-pthread-tls-native-atomics-shared-ptr-rust-int128-std-module-empty-abi-dwarf-line-name-section-eh-catch-opt-size-wasm64-multilib-main-signature-v11"
+
+-- Memoized once per process. Safe ONLY outside project loading (smoke
+-- execution, finalize hooks, status printing) -- never call this from
+-- signature or install-gate paths (the livelock above).
+local rust_leg_state
 
 local function rust_leg_enabled()
-    return import("toolchain", {rootdir = RUST_MODULES_DIR}).project_enables_rust()
-end
-
-local function wasm_capability()
-    return WASM_CAPABILITY_PREFIX .. (rust_leg_enabled() and WASM_CAPABILITY_RUST_LEG or "") .. WASM_CAPABILITY_SUFFIX
-end
--- Split like the toolchain capability above and for the same reason: the
--- smoke's Rust leg only runs for rust.cargo projects, and the declared smoke
--- capability must say what was actually verified.
-local WASM_SMOKE_CAPABILITY_PREFIX = "hosted-pthread-tls-atomic-lock-policy-shared-ptr"
-local WASM_SMOKE_CAPABILITY_RUST_LEG = "-rust"
-local WASM_SMOKE_CAPABILITY_SUFFIX = "-int128-std-module-empty-abi-dwarf-canary-name-section-eh-trap-opt-size-v8"
-
-local function wasm_smoke_capability()
-    return WASM_SMOKE_CAPABILITY_PREFIX .. (rust_leg_enabled() and WASM_SMOKE_CAPABILITY_RUST_LEG or "") .. WASM_SMOKE_CAPABILITY_SUFFIX
+    if rust_leg_state == nil then
+        rust_leg_state = import("toolchain", {rootdir = RUST_MODULES_DIR}).project_enables_rust() == true
+    end
+    return rust_leg_state
 end
 
 -- Debug/GC assertion anchors for the hosted link smoke. The two data markers
@@ -104,10 +103,18 @@ local function host_tool_candidates(name)
         end
     end
     if name == "wasm-ld" then
-        for _, candidate in ipairs(os.files(path.join(layout.toolchains_cache_root(), "rust", "**",
-            "gcc-ld", executable))) do
-            add(candidate)
-        end
+        -- rustc ships a self-contained wasm-ld at a KNOWN spot inside the
+        -- installed prefix: lib/rustlib/<host>/bin/gcc-ld/. This used to be
+        -- a recursive glob over .toolchains/.cache/rust/** -- tolerable when
+        -- that tree only held extracted dist staging, but since Cargo went
+        -- resident its CARGO_HOME (a crates.io registry of ~100k small
+        -- files) lives there too, and one glob costs minutes on Windows.
+        -- Called from tools_ready() on the install-gate hot path it turned
+        -- wasm builds into a 30+ minute crawl (observed 2026-08-02). Address
+        -- the known layout directly; half-extracted staging trees were never
+        -- a legitimate tool source anyway.
+        local rust_toolchain = import("toolchain", {rootdir = RUST_MODULES_DIR})
+        add(path.join(rust_toolchain.host_selfcontained_bin_dir(), "gcc-ld", executable))
     end
     return candidates
 end
@@ -300,9 +307,16 @@ function wabt_source_revision()
     if not os.isdir(path.join(src, ".git")) then
         return ""
     end
+    -- Read HEAD from the repository files first; see the note on
+    -- gccsources.managed_toolchains_read_git_head for why these probes must
+    -- not spawn a child process.
+    local revision = gccsources.managed_toolchains_read_git_head(src)
+    if revision then
+        return revision
+    end
     local git = gccsources.managed_toolchains_preferred_git()
-    local ok, output = gccsources.managed_toolchains_run_git(git,
-        {"-C", src, "rev-parse", "HEAD"}, {envs = envs.proxy_envs(), try = true})
+    local ok, output = gccsources.managed_toolchains_probe_git(git,
+        {"-C", src, "rev-parse", "HEAD"}, {envs = envs.proxy_envs()})
     return ok and base.trim(output or "") or ""
 end
 
@@ -314,13 +328,27 @@ function sync_wabt_source(force)
     local stamp = path.join(src, ".xmake-source")
     local signature = "url=" .. url .. "\nref=" .. ref .. "\n"
     local git = gccsources.managed_toolchains_preferred_git()
+    -- The fork's only submodule; its header is the whole payload the WABT
+    -- build consumes, so its presence means the checkout is complete.
+    local picosha2_header = path.join(src, "third_party", "picosha2", "picosha2.h")
     local function sync_submodules()
+        -- Skip once materialized: re-running sync/update on an already
+        -- populated submodule repeats network-capable work on every single
+        -- build for no effect, and drops two more short-lived children --
+        -- the shape whose exit wakeup xmake 3.0.9 and older can lose,
+        -- freezing a build at zero CPU.
+        if os.isfile(picosha2_header) then
+            return
+        end
         gccsources.managed_toolchains_run_git(git,
             {"-C", src, "submodule", "sync", "--", "third_party/picosha2"},
             {envs = envs.proxy_envs()})
         gccsources.managed_toolchains_run_git(git,
             {"-C", src, "submodule", "update", "--init", "--depth=1", "--", "third_party/picosha2"},
             {envs = envs.proxy_envs()})
+        if not os.isfile(picosha2_header) then
+            errors.fail("WABT submodule third_party/picosha2 is still missing after sync: %s", src)
+        end
     end
     if not force and os.isfile(path.join(src, "CMakeLists.txt")) and os.isfile(stamp)
         and (io.readfile(stamp) or ""):sub(1, #signature) == signature
@@ -392,6 +420,18 @@ function wabt_path(target_os)
     return path.join(settings.gcc_prefix(target_os), "bin", base.exe("wat2wasm"))
 end
 
+-- The absolute path CMake recorded for its generator's build tool, or nil when
+-- the cache has no such entry. The `-ADVANCED` companion entry cannot match:
+-- the pattern requires the colon directly after the variable name. Public so
+-- the fixtures can pin the parse against real cache layouts.
+function cmake_cached_make_program(cachefile)
+    local content = os.isfile(cachefile) and io.readfile(cachefile) or ""
+    local recorded = base.trim(content:match("CMAKE_MAKE_PROGRAM:[^=\r\n]*=([^\r\n]+)") or "")
+    if recorded ~= "" then
+        return recorded
+    end
+end
+
 function build_wabt(target_os, force)
     target_os = target_os or "emscripten"
     local src = sync_wabt_source(false)
@@ -415,12 +455,36 @@ function build_wabt(target_os, force)
         table.insert(args, "-G")
         table.insert(args, "Ninja")
     end
-    local signature = table.concat(args, "\n") .. "\nrevision=" .. wabt_source_revision() .. "\n"
+    local signature = table.concat(args, "\n") .. "\nrevision=" .. wabt_source_revision()
+        .. "\npatches=" .. wabt.source_patch_stamp() .. "\n"
     local sigfile = path.join(build, ".xmake-configure")
-    if force or (os.isfile(path.join(build, "CMakeCache.txt"))
+    local cachefile = path.join(build, "CMakeCache.txt")
+    if force or (os.isfile(cachefile)
         and base.trim(io.readfile(sigfile) or "") ~= base.trim(signature)) then
         layout.remove_toolchains_path(build)
+    else
+        -- CMake stores its generator's build tool as an absolute path in
+        -- CMAKE_MAKE_PROGRAM. On Windows that is whichever ninja was on PATH
+        -- at configure time, which can be the project's PRIVATE bootstrap
+        -- toolchain -- a tree deliberately deleted again once the build that
+        -- provisioned it finishes. The configure signature cannot notice:
+        -- its arguments are unchanged, so the stale cache survives and
+        -- `cmake --build` dies inside CMake with a bare "no such file or
+        -- directory" naming no tool. Validate the recorded tool rather than
+        -- pinning it into the signature: reacting to a BROKEN cache instead
+        -- of to a CHANGED tool path keeps a later re-provisioned bootstrap
+        -- from ping-ponging the build directory between two valid states.
+        local recorded = cmake_cached_make_program(cachefile)
+        if recorded and not os.isfile(recorded) then
+            errors.log("discarding the WABT build directory: the build tool CMake recorded no longer exists (%s)", recorded)
+            layout.remove_toolchains_path(build)
+        end
     end
+    -- The pinned fork now carries the changes this project used to patch in,
+    -- so the checkout is only verified -- nothing here mutates the source
+    -- tree any more, which is why the former patch marker and its
+    -- pristine-restore step are gone with it.
+    wabt.verify(src)
     os.mkdir(build)
     if not os.isfile(path.join(build, "CMakeCache.txt")) then
         run.run_program("configure GCC WebAssembly WABT fork", cmake, args, {target_os = target_os})
@@ -557,53 +621,81 @@ local function compiler_path(target_os, language)
     end
 end
 
-local function libgcc_path(target_os)
-    local candidates = os.files(path.join(settings.gcc_prefix(target_os), "lib", "gcc",
-        settings.managed_target(target_os), "*", "libgcc.a"))
+-- Joins `name` under `dir` through a memory model's multilib subdirectory. GCC
+-- installs the wasm64 runtime libraries into a wasm64/ folder beside the
+-- default wasm32 ones (MULTILIB_DIRNAMES in gcc/config/wasm/t-wasm, pinned by
+-- the source-patch postconditions), and -mwasm64 makes the driver search
+-- there, so every consumer that hands the linker an explicit archive path has
+-- to step into it as well.
+--
+-- The model is an explicit ARGUMENT rather than a read of the configured arch,
+-- and it defaults to 32-bit, because the two consumers differ: only the engine
+-- link follows the project's configured model, while this file's smoke always
+-- compiles its own objects for the default model and must keep linking the
+-- default runtime libraries even when the project around it is configured for
+-- wasm64. Reading the configured arch inside these helpers made the smoke hand
+-- wasm32 objects to the wasm64 libgcc, which wasm-ld rejects outright ("must
+-- specify -mwasm64 to process wasm64 object files").
+local function multilib_path(memory64, dir, name)
+    if memory64 then
+        return path.join(dir, "wasm64", name)
+    end
+    return path.join(dir, name)
+end
+
+local function libgcc_path(target_os, memory64)
+    local candidates = os.files(multilib_path(memory64, path.join(settings.gcc_prefix(target_os), "lib", "gcc",
+        settings.managed_target(target_os), "*"), "libgcc.a"))
     if #candidates ~= 1 then
         errors.fail("expected exactly one installed GCC WebAssembly libgcc archive, found %d", #candidates)
     end
     return candidates[1]
 end
 
-local function libstdcxx_path(target_os)
-    local archive = path.join(settings.gcc_prefix(target_os),
-        settings.managed_target(target_os), "lib", "libstdc++.a")
+local function libstdcxx_path(target_os, memory64)
+    local archive = multilib_path(memory64, path.join(settings.gcc_prefix(target_os),
+        settings.managed_target(target_os), "lib"), "libstdc++.a")
     if not os.isfile(archive) then
         errors.fail("installed GCC WebAssembly freestanding libstdc++ archive was not found: %s", archive)
     end
     return archive
 end
 
-local function libstdcxx_exp_path(target_os)
+local function libstdcxx_exp_path(target_os, memory64)
     local prefix = settings.gcc_prefix(target_os)
     local triplet = settings.managed_target(target_os)
     local candidates = {
-        path.join(prefix, "lib", "libstdc++exp.a"),
-        path.join(prefix, triplet, "lib", "libstdc++exp.a")
+        multilib_path(memory64, path.join(prefix, "lib"), "libstdc++exp.a"),
+        multilib_path(memory64, path.join(prefix, triplet, "lib"), "libstdc++exp.a")
     }
     for _, candidate in ipairs(candidates) do
         if os.isfile(candidate) then
             return candidate
         end
     end
-    local versioned = os.files(path.join(prefix, triplet, "lib", "gcc", triplet, "*", "libstdc++exp.a"))
+    local versioned = os.files(multilib_path(memory64, path.join(prefix, triplet, "lib", "gcc", triplet, "*"),
+        "libstdc++exp.a"))
     if #versioned == 1 then
         return versioned[1]
     end
     errors.fail("installed GCC WebAssembly experimental libstdc++ archive was not found under: %s", prefix)
 end
 
+-- The engine link's ingredients: these follow the project's configured memory
+-- model, unlike the smoke's own links above (see multilib_path).
 function installed_libgcc_path(target_os)
-    return libgcc_path(target_os or "emscripten")
+    target_os = target_os or "emscripten"
+    return libgcc_path(target_os, settings.wasm_memory64(target_os))
 end
 
 function installed_libstdcxx_path(target_os)
-    return libstdcxx_path(target_os or "emscripten")
+    target_os = target_os or "emscripten"
+    return libstdcxx_path(target_os, settings.wasm_memory64(target_os))
 end
 
 function installed_libstdcxx_exp_path(target_os)
-    return libstdcxx_exp_path(target_os or "emscripten")
+    target_os = target_os or "emscripten"
+    return libstdcxx_exp_path(target_os, settings.wasm_memory64(target_os))
 end
 
 local function installed_binary_tool_path(target_os, name)
@@ -626,24 +718,58 @@ local function archive_tools_ready(target_os)
         and installed_binary_tool_path(target_os, "ranlib") ~= nil
 end
 
+-- Sticky-true memoized: install gates re-ask per module unit, and the old
+-- probe recursively globbed the WHOLE installed prefix (tens of thousands of
+-- files) for libstdc++exp.a on every call -- one more leg of the 2026-08-02
+-- wasm-lane crawl. `true` is safe to cache (an installed runtime does not
+-- vanish mid-process); `false` keeps re-probing so an on_load bootstrap can
+-- flip the verdict within the same process. The exp archive lives in the
+-- same two known layouts as libgcc/installed_libstdcxx_exp_path, so probe
+-- those directly instead of walking the tree.
+local runtime_archives_ready_cache = {}
+
 local function runtime_archives_ready(target_os)
-    local libgcc_candidates = os.files(path.join(settings.gcc_prefix(target_os), "lib", "gcc",
-        settings.managed_target(target_os), "*", "libgcc.a"))
-    local libstdcxx = path.join(settings.gcc_prefix(target_os),
-        settings.managed_target(target_os), "lib", "libstdc++.a")
-    local libstdcxx_exp = os.files(path.join(settings.gcc_prefix(target_os), "**", "libstdc++exp.a"))
-    return #libgcc_candidates == 1 and os.isfile(libstdcxx) and #libstdcxx_exp > 0
+    if runtime_archives_ready_cache[target_os] then
+        return true
+    end
+    local prefix = settings.gcc_prefix(target_os)
+    local triplet = settings.managed_target(target_os)
+    local libgcc_candidates = os.files(path.join(prefix, "lib", "gcc", triplet, "*", "libgcc.a"))
+    local libstdcxx = path.join(prefix, triplet, "lib", "libstdc++.a")
+    local libstdcxx_exp = os.files(path.join(prefix, triplet, "lib", "gcc", triplet, "*", "libstdc++exp.a"))
+    if #libstdcxx_exp == 0 then
+        libstdcxx_exp = os.files(path.join(prefix, "lib", "gcc", triplet, "*", "libstdc++exp.a"))
+    end
+    if #libstdcxx_exp == 0 then
+        libstdcxx_exp = os.files(path.join(prefix, triplet, "lib", "libstdc++exp.a"))
+    end
+    local ready = #libgcc_candidates == 1 and os.isfile(libstdcxx) and #libstdcxx_exp > 0
+    if ready then
+        runtime_archives_ready_cache[target_os] = true
+    end
+    return ready
 end
 
 local function smoke_dir(target_os)
     return path.join(settings.state_cache_dir(target_os), "wasm-smoke")
 end
 
+-- Memoized per target_os: the signature is constant within one process (the
+-- wasm source tree does not move mid-build), yet install gates re-evaluate
+-- it per module unit and every evaluation used to spawn two `git rev-parse`
+-- processes (gcc + wabt revisions) -- the visible half of the 2026-08-02
+-- wasm-lane crawl.
+local smoke_signature_cache = {}
+
 local function smoke_signature(target_os)
+    local cached = smoke_signature_cache[target_os]
+    if cached then
+        return cached
+    end
     local source = settings.gcc_source_profile(target_os)
-    return table.concat({
-        "capability=" .. wasm_capability(),
-        "smoke_capability=" .. wasm_smoke_capability(),
+    local signature = table.concat({
+        "capability=" .. WASM_CAPABILITY,
+        "smoke_capability=" .. WASM_SMOKE_CAPABILITY,
         "gcc_ref=" .. source.ref,
         "gcc_revision=" .. gccsources.managed_toolchains_gcc_source_revision(settings.gcc_source_dir(target_os)),
         "c_compiler=" .. tostring(compiler_path(target_os, "c") or ""),
@@ -662,6 +788,8 @@ local function smoke_signature(target_os)
         "node_version=" .. node_version(),
         "triplet=" .. settings.managed_target(target_os)
     }, "\n") .. "\n"
+    smoke_signature_cache[target_os] = signature
+    return signature
 end
 
 local function backend_only_smoke_current(target_os)
@@ -1722,36 +1850,71 @@ local function verify_int128_low_truncation_wat(wat, function_name)
     end
 end
 
-local function verify_atomic_compare_exchange_import_wat(wat_file)
+-- Since the native-atomics toolchain snapshot, -pthread implies -matomics
+-- and this probe must lower straight to the native instruction. The
+-- fixed-width libatomic import this probe used to pin (resolved by the
+-- emcc link against compiler-rt) reappearing means the native lowering
+-- regressed to the libcall path.
+local function verify_atomic_compare_exchange_wat(wat_file)
     local wat = io.readfile(wat_file) or ""
-    local import_marker = "(import \"env\" \"__atomic_compare_exchange_4\""
-    local import_line = nil
-    for line in wat:gmatch("[^\r\n]+") do
-        if line:find(import_marker, 1, true) then
-            import_line = line
-            break
-        end
+    if wat:find("(import \"env\" \"__atomic_compare_exchange_4\"", 1, true) then
+        errors.fail("GCC WebAssembly atomic compare-exchange probe regressed to the libatomic import call")
     end
-    if not import_line then
-        errors.fail("GCC WebAssembly atomic compare-exchange probe did not emit the fixed-width libatomic import")
+    if not wat:find("i32.atomic.rmw.cmpxchg", 1, true) then
+        errors.fail("GCC WebAssembly atomic compare-exchange probe did not lower to the native cmpxchg instruction")
     end
-    local parameter_list = import_line:match("%(param%s+([^%)]+)%)")
-    local parameters = {}
-    for parameter_type in (parameter_list or ""):gmatch("%S+") do
-        table.insert(parameters, parameter_type)
+end
+
+-- Both linear-memory models must be installed and selectable. The wasm64
+-- runtime libraries exist only because the emscripten target configures
+-- --enable-multilib, and losing them is invisible until some later wasm64 link
+-- fails on a missing archive. -print-multi-lib lists the variants the driver
+-- knows about; -print-file-name resolves the archive the driver would actually
+-- hand the linker and echoes the bare name back when it finds nothing. The
+-- pair proves both halves without linking anything.
+local function assert_wasm64_multilib(target_os, cxx_compiler)
+    local shell = envs.shell_envs(path.join(settings.gcc_prefix(target_os), "bin"))
+    local variants = base.trim(os.iorunv(cxx_compiler, {"-print-multi-lib"},
+        {envs = shell, try = true}) or "")
+    if not variants:find("wasm64", 1, true) then
+        errors.fail("installed GCC WebAssembly compiler knows no wasm64 multilib (-print-multi-lib reported %s); the toolchain was configured without --enable-multilib",
+            variants ~= "" and variants:gsub("%s+", " ") or "nothing")
     end
-    if #parameters ~= 5 then
-        errors.fail("GCC WebAssembly __atomic_compare_exchange_4 import must have 5 parameters, got %d",
-            #parameters)
+    local archive = base.trim(os.iorunv(cxx_compiler, {"-mwasm64", "-print-file-name=libstdc++.a"},
+        {envs = shell, try = true}) or "")
+    if not os.isfile(archive) or not archive:gsub("\\", "/"):find("/wasm64/", 1, true) then
+        errors.fail("the wasm64 multilib libstdc++ is not installed: -mwasm64 -print-file-name=libstdc++.a resolved to %s",
+            archive ~= "" and archive or "nothing")
     end
-    for _, parameter_type in ipairs(parameters) do
-        if parameter_type ~= "i32" then
-            errors.fail("GCC WebAssembly __atomic_compare_exchange_4 import used a non-i32 parameter: %s",
-                parameter_type)
-        end
+end
+
+-- A main that declares fewer than two parameters is completed by the backend
+-- itself: it is emitted as __main_argc_argv with the missing argc/argv appended
+-- to its signature. argv is a pointer, so under -mwasm64 it must be i64 --
+-- hardcoding the wasm32 shape there makes wasm-ld replace the entry point with
+-- a trapping stub, and every wasm64 program whose main takes no parameters dies
+-- before main runs (found 2026-08-11, fixed in the toolchain line; nothing else
+-- in this smoke could see it, because the link still succeeds).
+-- The probe is compile-only on purpose: this backend writes WAT text as its
+-- assembly, so the signature is readable without linking -- which is just as
+-- well, since emcc's MEMORY64 output refuses to start on the managed Node
+-- (22.x, below the hard v23 floor emcc writes into the generated loader).
+local function assert_wasm64_main_signature(target_os, cxx_compiler, root)
+    local source = path.join(root, "wasm64_main_signature.cpp")
+    local assembly = path.join(root, "wasm64_main_signature.wat")
+    io.writefile(source, "int main()\n{\n\treturn 0;\n}\n")
+    os.tryrm(assembly)
+    run.run_program("compile GCC WebAssembly wasm64 parameterless main probe", cxx_compiler,
+        {"-mwasm64", "-S", source, "-o", assembly},
+        {target_os = target_os, envs = envs.shell_envs(path.join(settings.gcc_prefix(target_os), "bin"))})
+    local text = os.isfile(assembly) and io.readfile(assembly) or ""
+    local signature = text:match('%(@sym %(name "__main_argc_argv"%)%)(.-)%(result')
+    if not signature then
+        errors.fail("wasm64 parameterless main probe emitted no __main_argc_argv signature: %s", assembly)
     end
-    if import_line:match("%(result%s+([^%)]+)%)") ~= "i32" then
-        errors.fail("GCC WebAssembly __atomic_compare_exchange_4 import must return i32")
+    if not signature:find("(param i64)", 1, true) then
+        errors.fail("wasm64 gives a parameterless main a 32-bit argv (%s); every wasm64 program with a parameterless main would trap before main runs",
+            base.trim((signature:gsub("%s+", " "))))
     end
 end
 
@@ -1768,12 +1931,14 @@ function run_backend_smoke(target_os)
     if not cxx_compiler then
         errors.fail("experimental GCC WebAssembly C++ compiler is not installed")
     end
+    assert_wasm64_multilib(target_os, cxx_compiler)
     local linker = wasm_ld_path()
     local node = node_path()
     if not linker or not node then
         preflight(target_os)
     end
     local root, source, cxx_helper, cxx_entry = write_smoke_sources(target_os)
+    assert_wasm64_main_signature(target_os, cxx_compiler, root)
     local object = path.join(root, "basic_c_scalar.o")
     local module = path.join(root, "basic_c_scalar.wasm")
     run.run_program("compile GCC WebAssembly scalar C smoke object", compiler,
@@ -1850,6 +2015,21 @@ function run_backend_smoke(target_os)
     table.insert(entry_args, cxx_entry_object)
     run.run_program("compile GCC WebAssembly freestanding C++ entry", cxx_compiler,
         entry_args, {target_os = target_os, envs = cxx_envs})
+    -- GCC's freestanding contract lets the compiler call the four mem*
+    -- functions even under -ffreestanding -fno-builtin, and since the
+    -- native-EH toolchain snapshot the -O0 empty-aggregate {} init above
+    -- really does (a one-byte memset zeroing the padding byte). Satisfy
+    -- the contract with the profile's own no-libc runtime piece instead of
+    -- a smoke-local stub -- the link then exercises the production
+    -- memory.c on top of the C++ objects, and --gc-sections drops its
+    -- unused pieces.
+    local freestanding_runtime_source = path.join(settings.gcc_source_dir(target_os),
+        "libgcc", "config", "wasm", "memory.c")
+    local freestanding_runtime_object = path.join(root, "freestanding_runtime.o")
+    run.run_program("compile GCC WebAssembly freestanding runtime piece", compiler,
+        {"-O2", "-ffreestanding", "-fno-builtin", "-c",
+            freestanding_runtime_source, "-o", freestanding_runtime_object},
+        {target_os = target_os, envs = cxx_envs})
     local cxx_module = path.join(root, "freestanding_cxx_frontend.wasm")
     run.run_program("link GCC WebAssembly freestanding C++ smoke module", linker, {
         "--no-entry",
@@ -1857,6 +2037,7 @@ function run_backend_smoke(target_os)
         "--export=gcc_wasm_cxx_frontend",
         cxx_helper_object,
         cxx_entry_object,
+        freestanding_runtime_object,
         "-o", cxx_module
     }, {target_os = target_os})
     local cxx_script = table.concat({
@@ -2693,8 +2874,8 @@ local function write_emscripten_dwarf_canary_source(root)
     return source
 end
 
-local function write_emscripten_eh_trap_smoke_source(root)
-    local source = path.join(root, "emscripten_eh_trap.cpp")
+local function write_emscripten_eh_catch_smoke_source(root)
+    local source = path.join(root, "emscripten_eh_catch.cpp")
     io.writefile(source, table.concat({
         "#include <cstdio>",
         "#include <stdexcept>",
@@ -2829,7 +3010,7 @@ function run_emscripten_link_smoke(target_os)
     })
     run.run_program("compile hosted libstdc++ std module empty-record ABI consumer", cxx_compiler,
         std_module_consumer_args, {target_os = target_os, envs = cxx_envs, curdir = root})
-    run.run_program("compile GCC WebAssembly fixed-width atomic compare-exchange WAT probe", cxx_compiler, {
+    run.run_program("compile GCC WebAssembly native atomic compare-exchange WAT probe", cxx_compiler, {
         "-std=c++26",
         "-O0",
         "-pthread",
@@ -2838,7 +3019,7 @@ function run_emscripten_link_smoke(target_os)
         "-S", atomic_compare_exchange_source,
         "-o", atomic_compare_exchange_wat
     }, {target_os = target_os, envs = cxx_envs})
-    verify_atomic_compare_exchange_import_wat(atomic_compare_exchange_wat)
+    verify_atomic_compare_exchange_wat(atomic_compare_exchange_wat)
     run.run_program("compile hosted GCC WebAssembly language and pthread smoke", cxx_compiler, {
         "-std=c++26",
         "-O2",
@@ -2853,25 +3034,31 @@ function run_emscripten_link_smoke(target_os)
         "-o", cxx_object
     }, {target_os = target_os, envs = cxx_envs})
 
-    -- DWARF canary (upstream watchdog): the GCC 17 wasm backend emits no
-    -- debug output today, so -g must stay a warned byte-level no-op and
-    -- production ships name-section debugging via emcc -g2 with symbols=none
-    -- (toolchains.auto). The moment upstream grows real debug output these
-    -- objects diverge and this assertion fires first, signalling that the
-    -- wasm debug policy must be redesigned around real DWARF.
+    -- Debug-channel probe (formerly the upstream DWARF no-op watchdog):
+    -- since the toolchain snapshot's line-number channel, -g emits
+    -- .file/.loc and the assembler builds a relocatable .debug_line with a
+    -- skeleton CU, so the -g object must carry that section and the plain
+    -- object must not -- debug output stays opt-in, and a -g object
+    -- without the section means the debug channel regressed to the old
+    -- no-op. Production still ships name-section debugging via emcc -g2
+    -- with symbols=none (toolchains.auto); adopting -g line tables there
+    -- is a separate policy decision.
     local dwarf_canary_source = write_emscripten_dwarf_canary_source(root)
     local dwarf_canary_plain = path.join(root, "emscripten_dwarf_canary_plain.o")
     local dwarf_canary_debug = path.join(root, "emscripten_dwarf_canary_debug.o")
-    run.run_program("compile GCC WebAssembly DWARF canary without -g", cxx_compiler, {
+    run.run_program("compile GCC WebAssembly debug-channel probe without -g", cxx_compiler, {
         "-std=c++26", "-O2", "-pthread", "-fno-exceptions", "-fno-rtti",
         "-c", dwarf_canary_source, "-o", dwarf_canary_plain
     }, {target_os = target_os, envs = cxx_envs})
-    run.run_program("compile GCC WebAssembly DWARF canary with -g (expected warned no-op)", cxx_compiler, {
+    run.run_program("compile GCC WebAssembly debug-channel probe with -g", cxx_compiler, {
         "-std=c++26", "-O2", "-pthread", "-fno-exceptions", "-fno-rtti", "-g",
         "-c", dwarf_canary_source, "-o", dwarf_canary_debug
     }, {target_os = target_os, envs = cxx_envs})
-    if linked_artifact_bytes(dwarf_canary_plain) ~= linked_artifact_bytes(dwarf_canary_debug) then
-        errors.fail("GCC wasm backend DWARF canary tripped: -g changed the emitted object bytes, so the backend has grown debug output; revisit the wasm debug policy (symbols=none plus emcc -g2) before trusting this toolchain")
+    if linked_artifact_bytes(dwarf_canary_plain):find(".debug_line", 1, true) then
+        errors.fail("GCC wasm debug-channel probe found a .debug_line section without -g; debug output must stay opt-in")
+    end
+    if not linked_artifact_bytes(dwarf_canary_debug):find(".debug_line", 1, true) then
+        errors.fail("GCC wasm debug-channel probe found no .debug_line section under -g: the line-number debug channel regressed; revisit the pending toolchain snapshot in patches/wasm.lua")
     end
 
     -- Rust leg: only for projects that opted into Rust via add_rules
@@ -2937,8 +3124,12 @@ function run_emscripten_link_smoke(target_os)
     })
     run.run_program("link GCC and Rust objects through the Emscripten pthread runtime", emcc,
         table.join(common_link_args, {"-o", output}), {target_os = target_os})
+    -- The pinned emsdk node (22.16) validates the exnref/try_table
+    -- instructions that the exceptions-enabled libstdc++ now carries only
+    -- behind this flag (the wasm-EH proposal is default-on from node 24);
+    -- revisit at the next emsdk bump.
     run.run_program("execute hosted GCC/Rust Emscripten pthread smoke", node_path(),
-        {output}, {target_os = target_os, curdir = root})
+        {"--experimental-wasm-exnref", output}, {target_os = target_os, curdir = root})
 
     -- production-release mirror: the same inputs at -O3 -g2 must keep the
     -- full wasm-opt pipeline (a link-level -g would degrade it to "limited
@@ -2947,7 +3138,7 @@ function run_emscripten_link_smoke(target_os)
     run.run_program("link optimized GCC and Rust objects through the Emscripten pthread runtime", emcc,
         table.join(common_link_args, {"-O3", "-o", opt_output}), {target_os = target_os})
     run.run_program("execute optimized hosted GCC/Rust Emscripten pthread smoke", node_path(),
-        {opt_output}, {target_os = target_os, curdir = root})
+        {"--experimental-wasm-exnref", opt_output}, {target_os = target_os, curdir = root})
 
     local output_wasm = path.join(root, "emscripten_hosted_runtime.wasm")
     local opt_wasm = path.join(root, "emscripten_hosted_runtime_opt.wasm")
@@ -2973,20 +3164,22 @@ function run_emscripten_link_smoke(target_os)
             opt_size, nonopt_size)
     end
 
-    -- -fexceptions hardening (policy option B, docs/developer/wasm_exception_policy.md):
-    -- on this target a throw must compile, trap at runtime (the libgcc
-    -- unwinder is a __builtin_trap stub) and never reach a catch handler.
-    -- Asserting that end-to-end turns any emcc/libgcc/backend change of
-    -- exception semantics into a loud revalidation instead of silent drift.
-    local eh_source = write_emscripten_eh_trap_smoke_source(root)
-    local eh_object = path.join(root, "emscripten_eh_trap.o")
-    local eh_output = path.join(root, "emscripten_eh_trap.js")
-    local eh_log = path.join(root, "emscripten_eh_trap.log")
-    run.run_program("compile GCC WebAssembly -fexceptions trap-policy smoke", cxx_compiler, {
+    -- -fexceptions capability canary (docs/developer/wasm_exception_policy.md):
+    -- since the standalone toolchain line's native wasm-EH work (carried by
+    -- the pending snapshot in patches/wasm.lua), a throw must unwind for
+    -- real and reach its catch handler -- the engine's own policy stays
+    -- option A (-fno-exceptions), but this end-to-end round trip guards the
+    -- toolchain capability, so any emcc/libgcc/backend regression of
+    -- exception semantics fails loudly instead of drifting silently.
+    local eh_source = write_emscripten_eh_catch_smoke_source(root)
+    local eh_object = path.join(root, "emscripten_eh_catch.o")
+    local eh_output = path.join(root, "emscripten_eh_catch.js")
+    local eh_log = path.join(root, "emscripten_eh_catch.log")
+    run.run_program("compile GCC WebAssembly -fexceptions round-trip smoke", cxx_compiler, {
         "-std=c++26", "-O2", "-pthread", "-fexceptions", "-fno-rtti",
         "-c", eh_source, "-o", eh_object
     }, {target_os = target_os, envs = cxx_envs})
-    run.run_program("link GCC WebAssembly -fexceptions trap-policy smoke through emcc", emcc, {
+    run.run_program("link GCC WebAssembly -fexceptions round-trip smoke through emcc", emcc, {
         eh_object,
         libstdcxx_exp_path(target_os),
         libstdcxx_path(target_os),
@@ -3005,32 +3198,44 @@ function run_emscripten_link_smoke(target_os)
     -- xmake open two handles that each write from offset 0, and the stream
     -- flushed last silently overwrites the other (verified empirically) --
     -- which would erase the pre-throw stdout marker under the stderr trace.
-    local eh_err_log = path.join(root, "emscripten_eh_trap.err.log")
-    local eh_exit = os.execv(node_path(), {eh_output},
+    local eh_err_log = path.join(root, "emscripten_eh_catch.err.log")
+    local eh_exit = os.execv(node_path(), {"--experimental-wasm-exnref", eh_output},
         {try = true, curdir = root, stdout = eh_log, stderr = eh_err_log})
     local eh_transcript = (os.isfile(eh_log) and (io.readfile(eh_log) or "") or "")
         .. "\n" .. (os.isfile(eh_err_log) and (io.readfile(eh_err_log) or "") or "")
-    if eh_exit == 0 then
-        errors.fail("wasm -fexceptions smoke exited 0: a throw no longer traps, so the documented exception policy (throw traps, catch unreachable) is stale; revisit docs/developer/wasm_exception_policy.md")
-    end
     if not eh_transcript:find("eh-smoke-before-throw", 1, true) then
         errors.fail("wasm -fexceptions smoke never reached its throw site (missing pre-throw marker); transcript: %s",
             eh_transcript:sub(1, 400))
     end
-    if eh_transcript:find("eh-smoke-caught", 1, true) then
-        errors.fail("wasm -fexceptions smoke executed a catch handler: wasm exceptions became functional, so the documented trap policy is stale; revisit docs/developer/wasm_exception_policy.md")
+    if eh_exit ~= 0 or not eh_transcript:find("eh-smoke-caught", 1, true) then
+        errors.fail("wasm -fexceptions smoke no longer completes the throw/catch round trip (exit %s): native wasm exception handling regressed; revisit docs/developer/wasm_exception_policy.md and the pending toolchain snapshot in patches/wasm.lua; transcript: %s",
+            tostring(eh_exit), eh_transcript:sub(1, 400))
     end
 
     local sizes_summary = record_smoke_sizes(root, target_os, {output, output_wasm, opt_output, opt_wasm})
+    io.writefile(path.join(root, "rust-leg.stamp"), rust_leg_enabled() and "verified" or "skipped")
     io.writefile(path.join(root, "emscripten.stamp"), smoke_signature(target_os))
     print("GCC concepts, contracts, coroutines, reflection, std-module empty-record ABI, pthread/TLS/atomic wait/shared_ptr"
         .. (rust_leg_enabled() and ", and Rust atomic" or "") .. " Emscripten smoke passed: " .. output)
-    print("wasm build-quality assertions passed (DWARF canary no-op, -g2 name section, symbol-granular GC, full -O3 wasm-opt pipeline, -fexceptions throw traps); sizes: " .. sizes_summary)
+    print("wasm build-quality assertions passed (-g line-table debug channel, -g2 name section, native atomics, symbol-granular GC, full -O3 wasm-opt pipeline, -fexceptions throw/catch round trip, wasm64 multilib); sizes: " .. sizes_summary)
     return true
 end
 
 function capability_name()
-    return wasm_capability()
+    return WASM_CAPABILITY
+end
+
+-- Reports whether the recorded smoke run covered the Rust leg: "verified",
+-- "skipped", or "verified" for stamps predating the marker (they were
+-- written by unconditional-Rust smokes). Constant-cost file read -- safe on
+-- every path, unlike rust_leg_enabled().
+function rust_leg_marker(target_os)
+    local marker = path.join(smoke_dir(target_os), "rust-leg.stamp")
+    if not os.isfile(marker) then
+        return "verified"
+    end
+    local content = base.trim(io.readfile(marker) or "")
+    return content == "skipped" and "skipped" or "verified"
 end
 
 function reset_build_cache(target_os)

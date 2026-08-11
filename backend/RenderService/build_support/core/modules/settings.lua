@@ -139,6 +139,42 @@ function warn_config_pin_drift()
     end
 end
 
+local source_pin_warned
+
+-- Every source pin this project bumps by editing its built-in default. xmake
+-- freezes an option's value into the config store at configure time, so a
+-- bumped default stays INVISIBLE to an already-configured checkout: the sync
+-- keeps restoring the old revision, the patch families verify the old tree,
+-- and the command exits 0 having done nothing (lived through on 2026-08-12 --
+-- a pin jump that silently rebuilt the previous baseline). Worse, each config
+-- store carries its own copy: the root, every lane, and the test subproject
+-- must each be re-stated, and one that is missed builds different sources than
+-- its siblings with no other symptom.
+--
+-- Warning rather than failing is deliberate: a stored value that differs from
+-- the default is also exactly what a legitimate `--<pin>=` override looks
+-- like, and nothing persisted distinguishes the two. So this says what it
+-- sees, names the fix, and leaves the judgement to the operator.
+local SOURCE_PINS = {"wasm_gcc_ref", "wasm_wabt_ref", "gcc_ref", "darwin_arm64_gcc_ref"}
+
+function warn_source_pin_drift()
+    if source_pin_warned then
+        return
+    end
+    source_pin_warned = true
+    for _, pin in ipairs(SOURCE_PINS) do
+        local builtin = defaults[pin]
+        if builtin and builtin ~= "" then
+            local active = tostring(value_or(pin, builtin))
+            if active ~= builtin then
+                errors.warn(
+                    "this configuration pins %s to %s while the project's built-in default is now %s -- xmake froze the option when the configuration was written, so a bumped default cannot reach it; if the difference is not intentional, restate it (`xmake f --%s=%s -y`) in EVERY config store: the root, each lane under build/<plat>, and the test subproject",
+                    pin, active, builtin, pin, builtin)
+            end
+        end
+    end
+end
+
 function config_bool(name, default)
     local value = tostring(value_or(name, "")):lower()
     if value == "" or value == "auto" then
@@ -374,6 +410,19 @@ end
 
 function target_arch_folder(target_os)
     return base.arch_folder_name(target_arch(target_os))
+end
+
+-- WebAssembly memory model. wasm64 is a MULTILIB of wasm32-unknown-emscripten,
+-- not a triplet of its own, so it can only come from the configured arch:
+-- managed_target/target_arch stay wasm32 for both models on purpose -- they key
+-- the toolchain prefix, and one installed toolchain serves both. Everything
+-- that differs between the models (the -mwasm64 compile flag, emcc's
+-- -sMEMORY64 link flag, and the wasm64/ multilib subdirectory holding the
+-- matching libgcc/libstdc++) asks this predicate instead of parsing the arch
+-- in place.
+function wasm_memory64(target_os)
+    target_os = target_os or configured_target_os()
+    return target_os == "emscripten" and configured_arch() == "wasm64"
 end
 
 function uses_darwin_arm64_gcc(target_os)

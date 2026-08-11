@@ -45,11 +45,22 @@ function run(t)
         local replica, tgtdir, settings = fresh(t)
         local defaults = import("defaults",
             {rootdir = path.join(replica, "core", "modules"), anonymous = true}).values()
-        local deployment = tostring(settings.value_or("ios_deployment_target", defaults.ios_deployment_target))
+        -- Pin the SDK resolution instead of recording empty keys: on a mac
+        -- host with Xcode, resolve_ios_sdk() answers through xcrun, so an
+        -- empty ios_sdk recording is a genuine mismatch there (seen on the
+        -- CI macOS runners, 2026-08-03). A fake SDK directory routed through
+        -- the IOS_SDK environment fallback keeps the resolution identical on
+        -- every host, version included (parsed from the iPhoneOS<v>.sdk name).
+        local sdk = path.join(replica, "iPhoneOS1.0.sdk")
+        os.mkdir(sdk)
+        os.setenv("IOS_SDK", sdk)
         write_stamp(settings, "ios", {
-            "ios_sdk=", "ios_sdk_version=", "ios_deployment_target=" .. deployment})
+            "ios_sdk=" .. sdk, "ios_sdk_version=1.0",
+            "ios_deployment_target=" .. tostring(defaults.ios_deployment_target)})
         local ios = import("ios", {rootdir = tgtdir, anonymous = true})
-        t.assert_true(ios.installed_extra("ios"), "matching keys must pass")
+        local verdict = ios.installed_extra("ios")
+        os.setenv("IOS_SDK", "")
+        t.assert_true(verdict, "matching keys must pass")
     end)
 
     t.case("stamps: ios deployment-target drift trips the gate", function ()

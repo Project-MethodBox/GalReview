@@ -130,10 +130,15 @@ rule("rust.cargo")
 
         -- provision the pinned toolchain on demand, mirroring toolchains.auto;
         -- Cargo is always required now (it owns the whole crate build), wasm
-        -- additionally needs rust-src + rust-objcopy for build-std
-        local needs_wasm = rust_target == "wasm32-unknown-emscripten"
+        -- additionally needs rust-src + rust-objcopy for build-std. A target
+        -- without a prebuilt std (64-bit wasm) must not be waited on to appear:
+        -- build-std is what supplies its core/alloc, so demanding a rust-std
+        -- directory would re-enter the installer forever.
+        local needs_wasm = toolchain.is_wasm_target(rust_target)
+        local std_ready = not toolchain.has_prebuilt_std(rust_target)
+            or toolchain.target_std_installed(rust_target)
         if settings.config_bool("toolchains_auto", true) then
-            if not (toolchain.host_installed() and toolchain.target_std_installed(rust_target)
+            if not (toolchain.host_installed() and std_ready
                 and toolchain.clippy_installed() and toolchain.cargo_installed()
                 and (not needs_wasm or (toolchain.host_objcopy_installed()
                     and toolchain.sysroot_src_installed()))) then
@@ -162,8 +167,7 @@ rule("rust.cargo")
             work_root = path.join(target:objectdir(), "rust", ".cargo-" .. rust_target)
         })
 
-        local ar_program = cargo.resolve_archiver(target)
-        local objects = cargo.unpack_objects({built.staticlib}, ar_program,
+        local objects = cargo.unpack_objects({built.staticlib},
             path.join(target:objectdir(), "rust", ".staticlib-" .. rust_target),
             target:objectdir())
 

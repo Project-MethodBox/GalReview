@@ -11,12 +11,26 @@
 -- the holder process exits, so a killed or crashed build never strands the
 -- lock and no stale-lock recovery is needed.
 --
--- NOT reentrant within a single process: never nest guard() on the same
--- lock file (a second acquire on the same path from the same process would
--- deadlock). Sequential acquire/release of the same lock in one process is
--- fine; only holding-then-re-acquiring is the hazard.
+-- Acquisition is a cooperative try-and-yield loop, never a blocking lock():
+-- xmake runs build jobs as coroutines on one thread, so two targets that
+-- both provision the same managed component reach this guard within a
+-- single process. A blocking acquire there stops the whole scheduler --
+-- the holder coroutine can never resume to release, so the build hangs
+-- forever at zero CPU with no child process (observed deterministically
+-- when two targets in one project both needed the Rust wasm runtime;
+-- single-job builds of the same tree passed, which is what identified it).
+-- os.sleep yields inside a coroutine and plainly sleeps outside one, so the
+-- same loop serves in-process jobs and independent processes alike.
+--
+-- Still NOT reentrant: never nest guard() on the same lock file within one
+-- call chain (the inner acquire would wait for an outer one that cannot
+-- return). Sequential acquire/release of the same lock is fine, and so is
+-- concurrent acquisition from separate jobs, which now queues instead of
+-- deadlocking.
 
 import("errors")
+
+local ACQUIRE_POLL_INTERVAL_MS = 50
 
 -- Run fn while holding the exclusive per-prefix install lock at lockfile.
 -- Returns fn's result. The lock is released even if fn raises, and the raise
@@ -25,7 +39,9 @@ import("errors")
 function guard(lockfile, fn)
     os.mkdir(path.directory(lockfile))
     local lock = io.openlock(lockfile)
-    lock:lock()
+    while not lock:trylock() do
+        os.sleep(ACQUIRE_POLL_INTERVAL_MS)
+    end
     local ok, result = errors.trycall(fn)
     lock:unlock()
     if not ok then

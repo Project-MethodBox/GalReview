@@ -451,7 +451,12 @@ end
 function finalize_existing_toolchain_install(target_os)
     local provider = gcctargets.provider_of(target_os)
     if provider.ensure_smoke_current then
-        provider.ensure_smoke_current(target_os)
+        -- Same per-prefix lock as build_gcc_for: a stale smoke re-run rewrites
+        -- shared state-dir stamps, and concurrent lanes must not race it (the
+        -- second process re-checks under the lock and finds it fresh).
+        install_lock.guard(install_lock_file(target_os), function ()
+            provider.ensure_smoke_current(target_os)
+        end)
     end
     if provider.finalize then
         provider.finalize(target_os)
@@ -1189,10 +1194,40 @@ function install_lock_file(target_os)
     return path.join(path.directory(settings.stamp_file(target_os)), "install.lock")
 end
 
+-- Targets this process is currently building, for the re-entrancy guard below.
+local building_toolchain = {}
+
+-- True while THIS process is inside build_gcc_for for `target_os`. The
+-- auto-bootstrap gates in cpp/xmake.lua consult it so that a project load
+-- triggered from inside a toolchain build (the emscripten smoke asks whether
+-- the project uses Rust) stands down instead of asking for a bootstrap of the
+-- very toolchain being built -- whose install stamp does not exist yet, and
+-- cannot until the build finishes.
+function build_in_progress(target_os)
+    return building_toolchain[layout.ensure_toolchain_platform(target_os)] == true
+end
+
 function build_gcc_for(target_os, opt)
     opt = opt or {}
     target_os = layout.ensure_toolchain_platform(target_os)
     settings.validate_config(target_os)
+    -- In-process re-entrancy guard. A nested build of the SAME target inside
+    -- one process can only come from work the outer build itself triggered:
+    -- the emscripten smoke asks whether the project uses Rust, which loads the
+    -- project, and the toolchains.auto gate then finds no install stamp -- the
+    -- outer build writes it only after the smoke (see the tail of this
+    -- function) -- and asks for a bootstrap. The per-prefix lock below is an
+    -- advisory FILE lock, not a recursive mutex, so that nested call can never
+    -- acquire it and waits forever on a build only its own caller can finish
+    -- (observed 2026-08-11: zero CPU, no children, stalled right after the
+    -- backend smoke). The outer call owns the work; the nested one reports
+    -- where it will land. A failing build leaves the flag set, which is
+    -- harmless: the failure raises out of the whole command, and every
+    -- bootstrap caller re-checks toolchain_installed() right after and raises
+    -- if it is still missing.
+    if building_toolchain[target_os] then
+        return settings.gcc_prefix(target_os)
+    end
     -- Cross-process install lock (per prefix): serialize concurrent builds of
     -- the same toolchain prefix across independent xmake processes so two runs
     -- never interleave configure/make/install into one prefix. Every path that
@@ -1201,7 +1236,8 @@ function build_gcc_for(target_os, opt)
     -- one lock on the funnel serializes them all. Keyed beside the install
     -- stamp (per host/target/arch), so distinct prefixes never contend.
     local lockfile = install_lock_file(target_os)
-    return install_lock.guard(lockfile, function ()
+    building_toolchain[target_os] = true
+    local prefix = install_lock.guard(lockfile, function ()
     -- Another process may have finished the install while we waited for the
     -- lock; ensure-callers (install / auto-bootstrap) pass skip_if_installed
     -- and re-check under the lock to skip a redundant rebuild, while force
@@ -1293,4 +1329,6 @@ function build_gcc_for(target_os, opt)
     cleanup_windows_bootstrap_toolchain_after_success(target_os)
     end)
     end)
+    building_toolchain[target_os] = nil
+    return prefix
 end

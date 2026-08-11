@@ -67,10 +67,6 @@ end
 
 MANAGED_TOOLCHAINS_OWNER_ROOT = MANAGED_TOOLCHAINS_OWNER_ROOT or managed_toolchains_detect_owner_root()
 
-function toolchains_owner_root()
-    return MANAGED_TOOLCHAINS_OWNER_ROOT
-end
-
 -- pinned master snapshot (2026-07-07): the module-streaming cluster
 -- machinery is layout-sensitive, so an unpinned moving branch makes every
 -- fresh CI toolchain a new gamble (2026-07-10 master silently wrote a
@@ -93,9 +89,9 @@ default_darwin_arm64_gcc_git_url = "https://github.com/iains/gcc-darwin-arm64.gi
 -- GCC patch family reads the module value, so this literal must stay equal
 -- to it (check_options_file verifies at configure time)
 default_ios_deployment_target = "15.0"
-default_wasm_gcc_ref = "ac20dcd5f8c5ae858f9b2d9cdf4140c0738e5e27"
-default_wasm_gcc_git_url = "https://forge.sourceware.org/gcc/gcc-TEST.git"
-default_wasm_wabt_ref = "651c9ffbce3d0525d2d1324fab79160e5fcf8173"
+default_wasm_gcc_ref = "ee5f1859289f4ebc80d6a302e40893235f3c92ae"
+default_wasm_gcc_git_url = "https://forge.sourceware.org/feedable/gcc-TEST.git"
+default_wasm_wabt_ref = "f2d60b0532f35e13f86899f0581ab87fc029db36"
 default_wasm_wabt_git_url = "https://github.com/feedab1e/wabt.git"
 default_binutils_snapshot_url = "https://ftp.gnu.org/gnu/binutils/binutils-2.45.tar.xz"
 default_mingw_w64_snapshot_url = "https://downloads.sourceforge.net/project/mingw-w64/mingw-w64/mingw-w64-release/mingw-w64-v14.0.0.tar.bz2"

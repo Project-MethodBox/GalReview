@@ -11,6 +11,7 @@ import("gccmodulecache_cases", {rootdir = path.join(os.scriptdir(), "cases")})
 import("checksums_cases", {rootdir = path.join(os.scriptdir(), "cases")})
 import("rust_validate_cases", {rootdir = path.join(os.scriptdir(), "cases")})
 import("rust_cargo_cases", {rootdir = path.join(os.scriptdir(), "cases")})
+import("rust_archive_cases", {rootdir = path.join(os.scriptdir(), "cases")})
 import("rust_toolchain_cases", {rootdir = path.join(os.scriptdir(), "cases")})
 import("rust_link_export_cases", {rootdir = path.join(os.scriptdir(), "cases")})
 import("wasm_runtime_cases", {rootdir = path.join(os.scriptdir(), "cases")})
@@ -24,6 +25,9 @@ import("stamps_cases", {rootdir = path.join(os.scriptdir(), "cases")})
 import("patch_families_cases", {rootdir = path.join(os.scriptdir(), "cases")})
 import("hostboot_cases", {rootdir = path.join(os.scriptdir(), "cases")})
 import("install_lock_cases", {rootdir = path.join(os.scriptdir(), "cases")})
+import("git_head_cases", {rootdir = path.join(os.scriptdir(), "cases")})
+import("gccwasm_cases", {rootdir = path.join(os.scriptdir(), "cases")})
+import("lane_cases", {rootdir = path.join(os.scriptdir(), "cases")})
 import("envs_cases", {rootdir = path.join(os.scriptdir(), "cases")})
 
 local SUITES = {
@@ -33,6 +37,7 @@ local SUITES = {
     {name = "checksums", entry = function (t) checksums_cases.run(t) end},
     {name = "rust_validate", entry = function (t) rust_validate_cases.run(t) end},
     {name = "rust_cargo", entry = function (t) rust_cargo_cases.run(t) end},
+    {name = "rust_archive", entry = function (t) rust_archive_cases.run(t) end},
     {name = "rust_toolchain", entry = function (t) rust_toolchain_cases.run(t) end},
     {name = "rust_link_export", entry = function (t) rust_link_export_cases.run(t) end},
     {name = "wasm_runtime", entry = function (t) wasm_runtime_cases.run(t) end},
@@ -46,6 +51,9 @@ local SUITES = {
     {name = "patch_families", entry = function (t) patch_families_cases.run(t) end},
     {name = "hostboot", entry = function (t) hostboot_cases.run(t) end},
     {name = "install_lock", entry = function (t) install_lock_cases.run(t) end},
+    {name = "git_head", entry = function (t) git_head_cases.run(t) end},
+    {name = "gccwasm", entry = function (t) gccwasm_cases.run(t) end},
+    {name = "lane", entry = function (t) lane_cases.run(t) end},
     {name = "envs", entry = function (t) envs_cases.run(t) end}
 }
 

@@ -7,6 +7,14 @@
 -- (so the raise propagates AND a later acquire does not deadlock). Full
 -- cross-process contention cannot be exercised from one xmake process; that is
 -- covered by the real toolchain-install paths that funnel through guard().
+--
+-- The in-process contention property -- two build-job coroutines reaching the
+-- same guard must queue instead of hanging the scheduler -- likewise has no
+-- deterministic single-thread fixture (the cooperative wait only yields under
+-- xmake's own coroutine scheduler). Its real proof is a parallel build of a
+-- project whose targets both provision one managed component: that
+-- deterministically deadlocked while guard used a blocking acquire, and passes
+-- with the try-and-yield loop.
 
 local install_lock = import("install_lock",
     {rootdir = path.join(os.scriptdir(), "..", "..", "core", "modules"), anonymous = true})

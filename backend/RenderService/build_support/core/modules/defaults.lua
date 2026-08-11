@@ -25,9 +25,17 @@ local DEFAULTS = {
     -- default AND the ios patch family's config.gcc fallback -- the patch
     -- module reads this value; do not fork the literal there.
     ios_deployment_target = "15.0",
-    wasm_gcc_ref = "ac20dcd5f8c5ae858f9b2d9cdf4140c0738e5e27",
-    wasm_gcc_git_url = "https://forge.sourceware.org/gcc/gcc-TEST.git",
-    wasm_wabt_ref = "651c9ffbce3d0525d2d1324fab79160e5fcf8173",
+    -- The WebAssembly line was ported onto GCC master on 2026-08-12 and now
+    -- TRACKS mainline instead of consuming a pinned upstream revision, so the
+    -- pin below is a commit of that line itself and exists on no public
+    -- remote: the URL keeps pointing at the upstream fork it descends from
+    -- (whose branch still sits at the old revision), and the pinned commit is
+    -- restored from the local git bundle in .toolchains/.cache/bundles --
+    -- exactly the offline channel bundles were added for. Seed that bundle on
+    -- a new machine before the first sync, or the fetch has nowhere to go.
+    wasm_gcc_ref = "ee5f1859289f4ebc80d6a302e40893235f3c92ae",
+    wasm_gcc_git_url = "https://forge.sourceware.org/feedable/gcc-TEST.git",
+    wasm_wabt_ref = "f2d60b0532f35e13f86899f0581ab87fc029db36",
     wasm_wabt_git_url = "https://github.com/feedab1e/wabt.git",
     binutils_snapshot_url = "https://ftp.gnu.org/gnu/binutils/binutils-2.45.tar.xz",
     mingw_w64_snapshot_url = "https://downloads.sourceforge.net/project/mingw-w64/mingw-w64/mingw-w64-release/mingw-w64-v14.0.0.tar.bz2",

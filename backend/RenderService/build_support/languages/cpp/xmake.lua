@@ -19,6 +19,46 @@ includes(path.join(os.scriptdir(), "toolchains", "gcc_feature_rules.lua"))
 -- this binder before help can fail).
 local bind_gcc_features_help_errors = managed_toolchains_bind_gcc_features_help_errors
 
+-- Shared admission gate for toolchains.auto and gcc.platform (a chunk-local
+-- upvalue on purpose: callbacks can reach it, while cross-chunk globals do
+-- not survive the cold-configure sandbox -- see gcc_feature_rules.lua).
+-- Returns nil when managed GCC must keep its hands off the target (auto
+-- switch off, foreign plat, explicit non-GCC toolchain), else the resolved
+-- { target_os, declared }. Identity comes from gccfeatures.toolchain_of --
+-- the ONE resolution implementation, shared with gcc.features, so the rules
+-- cannot drift apart. It is deliberately order-free: every rule calls this
+-- gate itself instead of reading another rule's leftovers, because rule
+-- dependencies execute depended-upon FIRST (probe-verified 2026-08-02), so
+-- gcc.platform runs before toolchains.auto and could never see its data.
+-- import is script-scope only, while this chunk-local body resolves globals
+-- through the description chunk's _ENV (get_config/is_plat exist there,
+-- import does not -- the gcc_feature_rules.lua sandbox note). Every callback
+-- assigns the script-scope import here before calling the gate.
+local script_import
+
+local function managed_gcc_context(target)
+    local settings = script_import("settings", {rootdir = CORE_MODULES_DIR})
+    local enabled = tostring(settings.value_or("toolchains_auto", "true")):lower()
+    if enabled == "false" or enabled == "0" or enabled == "off" or enabled == "no" then
+        return nil
+    end
+    local target_os = settings.configured_target_os()
+    if target_os ~= "windows" and target_os ~= "linux" and target_os ~= "android"
+        and target_os ~= "macosx" and target_os ~= "ios" and target_os ~= "emscripten" then
+        return nil
+    end
+    local gccfeatures = script_import("gccfeatures", {rootdir = CPP_MODULES_DIR})
+    local declared = gccfeatures.toolchain_of(target, {
+        global_toolchain = get_config("toolchain"),
+        mingw_plat = is_plat("mingw"),
+        default_toolchain = settings.default_project_gcc_toolchain_for_current_platform()
+    })
+    if not gccfeatures.is_gcc_toolchain(declared) then
+        return nil
+    end
+    return {target_os = target_os, declared = declared}
+end
+
 toolchain("project_gcc")
     set_kind("standalone")
     set_description("Project-local GCC toolchain")
@@ -164,78 +204,22 @@ toolchain("project_gcc")
         end
     end)
 
-rule("toolchains.auto")
+-- Platform-ABI and gap-fix flag injection for managed-GCC targets: this rule
+-- owns "how objects are compiled and linked ON this platform" (runtimes,
+-- PIC, the emscripten target shape, --embed-dir), as opposed to "WHICH
+-- toolchain compiles them and is it present" (toolchains.auto) and "which
+-- NAMED features are switched on" (gcc.features). Attached automatically as
+-- a dependency of toolchains.auto -- projects keep writing the classic trio
+-- (or just gcc.managed) and never list this rule by hand.
+rule("gcc.platform")
     on_load(function (target)
+        script_import = import
+        local context = managed_gcc_context(target)
+        if not context then
+            return
+        end
         local settings = import("settings", {rootdir = CORE_MODULES_DIR})
-
-        -- constant-drift and config-pin sentinels: both warn once per
-        -- process, cost one file read each, and exist because the failure
-        -- modes they catch are silent (options.lua literals diverging from
-        -- core/modules/defaults.lua; a bare `xmake f`/implicit reconfigure
-        -- resetting plat/arch/mode to defaults behind the user's back)
-        import("catalog", {rootdir = CORE_MODULES_DIR})
-        import("defaults", {rootdir = CORE_MODULES_DIR}).check_options_file(OPTIONS_FILE)
-        settings.warn_config_pin_drift()
-
-        local enabled = tostring(settings.value_or("toolchains_auto", "true")):lower()
-        if enabled == "false" or enabled == "0" or enabled == "off" or enabled == "no" then
-            return
-        end
-
-        local target_os = settings.configured_target_os()
-        if target_os ~= "windows" and target_os ~= "linux" and target_os ~= "android"
-            and target_os ~= "macosx" and target_os ~= "ios" and target_os ~= "emscripten" then
-            return
-        end
-
-        local requested = target:get("toolchains") or get_config("toolchain") or ""
-        local declared_toolchain = ""
-        for _, item in ipairs(table.wrap(requested)) do
-            local name = tostring(item):lower():gsub("@.*$", "")
-            if name == "gcc" or name == "mingw" then
-                declared_toolchain = name
-            elseif name ~= "" then
-                return
-            end
-        end
-        if declared_toolchain == "" then
-            declared_toolchain = settings.default_project_gcc_toolchain_for_current_platform()
-        end
-        if declared_toolchain == "" then
-            return
-        end
-        target:data_set("toolchains.auto.declared", declared_toolchain)
-
-        -- Apple MANAGED-GCC project builds must agree with the managed
-        -- toolchain arch. This check deliberately sits AFTER the external-
-        -- toolchain bypass above: `--toolchain=<other>` is documented to skip
-        -- the managed GCC wiring entirely, so e.g. a macosx x86_64 build on
-        -- an explicit non-GCC toolchain must not be stopped by a gate about
-        -- a toolchain it never uses (external review, 2026-07-18).
-        -- the managed triplet is clamped to aarch64 (the only validated
-        -- Darwin profile), but a residual `-a x64` in the project config
-        -- would still drive per-arch flags (-m64) and per-arch build
-        -- directories against the arm64 compiler. Toolchain-only commands
-        -- keep working off the clamped triplet; the project build stops
-        -- loudly with the full reconfigure line instead.
-        if target_os == "macosx" or target_os == "ios" then
-            local base = import("base", {rootdir = CORE_MODULES_DIR})
-            local errors = import("errors", {rootdir = CORE_MODULES_DIR})
-            local configured = base.canonical_arch(settings.configured_arch(), target_os)
-            local managed = settings.target_arch(target_os)
-            if configured ~= managed then
-                errors.fail("Apple project builds need the configured arch to match the managed toolchain arch %s, but the configuration says %s; rerun the full configure: xmake f -p %s -a arm64 -m <mode>",
-                    managed, configured, target_os == "ios" and "iphoneos" or "macosx")
-            end
-        end
-
-
-        local hostboot = import("hostboot", {rootdir = CPP_MODULES_DIR})
-        local gccstatus = import("gccstatus", {rootdir = CPP_MODULES_DIR})
-        local gccbuild = import("gccbuild", {rootdir = CPP_MODULES_DIR})
-        local triplet = settings.managed_target(target_os)
-        local bindir = path.join(settings.gcc_prefix(target_os), "bin")
-        target:set("toolchains", "project_gcc")
+        local target_os = context.target_os
         -- Every managed target is GCC/libstdc++, so declare the C++ runtime
         -- explicitly (matching project_gcc's set_runtimes default). Without it,
         -- xmake's get_cpplibrary_name falls back to a hard-coded plat allowlist
@@ -247,11 +231,40 @@ rule("toolchains.auto")
         -- <X>". Setting the runtime makes the detection runtime-based and thus
         -- correct on every plat (wasm/emscripten already relied on this below).
         target:set("runtimes", "stdc++_static")
+        -- Android engine archives exist to be linked into the APK's shared
+        -- library, so every member object must be position-independent -- and
+        -- the managed GCC, unlike NDK clang, does not default to PIC. This is
+        -- platform ABI, not project policy, so it is injected here instead of
+        -- being repeated as an is_os("android") stanza in every project file.
+        -- cxflags covers C units too; shared targets get -fPIC from xmake.
+        if target_os == "android" and target:is_static() then
+            target:add("cxflags", "-fPIC")
+        end
+        -- Android executables must be PIE for the same reason: the platform
+        -- loader has rejected non-PIE executables since API 21, and the
+        -- managed GCC defaults to no-pie (verified ET_EXEC on the 2026-08-03
+        -- CI binary). The engine archives feeding the link are already
+        -- -fPIC, so only the binary's own units and the link driver flag are
+        -- missing. Shared targets get PIC/-shared from xmake itself.
+        if target_os == "android" and target:is_binary() then
+            target:add("cxflags", "-fPIE")
+            target:add("ldflags", "-pie")
+        end
         if target_os == "emscripten" then
             -- GCC remains the only C/C++ compiler. The pthread option selects
             -- the Emscripten ABI macros and the POSIX gthread implementation;
-            -- emcc is installed below only as the final linker/runtime driver.
+            -- emcc (wired by toolchains.auto) is only the final linker driver.
             target:add("cxflags", "-pthread", {force = true})
+
+            -- 64-bit linear memory. Both sides of the toolchain have to agree:
+            -- -mwasm64 makes GCC emit 64-bit pointers and select the wasm64
+            -- multilib of libgcc/libstdc++, and -sMEMORY64 makes emcc link
+            -- against its own wasm64 sysroot and pass the matching emulation
+            -- to wasm-ld. Neither implies the other -- mixing widths fails at
+            -- link time -- so both come from the single settings predicate.
+            if settings.wasm_memory64(target_os) then
+                target:add("cxflags", "-mwasm64", {force = true})
+            end
 
             -- Debug information on this target is name-section function names,
             -- not DWARF (probe evidence, 2026-07): the GCC 17 wasm backend
@@ -283,6 +296,10 @@ rule("toolchains.auto")
                 target:add("ldflags", "-nostdlibxx", "-pthread", "-sPTHREAD_POOL_SIZE=4", "-g2", {force = true})
                 target:add("shflags", "-nostdlibxx", "-pthread", "-sPTHREAD_POOL_SIZE=4", "-g2", {force = true})
                 target:add("syslinks", "stdc++exp", "gcc")
+                if settings.wasm_memory64(target_os) then
+                    target:add("ldflags", "-sMEMORY64=1", {force = true})
+                    target:add("shflags", "-sMEMORY64=1", {force = true})
+                end
             end
             if target:is_binary() then
                 target:set("extension", ".js")
@@ -306,6 +323,166 @@ rule("toolchains.auto")
                 target:add("shflags", "-sSIDE_MODULE=1", {force = true})
             end
         end
+
+        -- add_embeddirs -> --embed-dir: xmake maps target.embeddirs to gcc's
+        -- nf_embeddir only for a fully-registered toolchain tool, NOT for the
+        -- bare-path toolset toolchains.auto installs (verified 2026-07-23:
+        -- --embed-dir is silently dropped for both this rule and a plain
+        -- set_toolset("cxx", <path>), while -D/-I still come through, so C++26
+        -- `#embed <name>` fails with "no include path in which to search for
+        -- <name>"). Inject it explicitly, absolute so it resolves from any
+        -- compile cwd, mirroring xmake's own --embed-dir=<dir> (tools/gcc.lua
+        -- nf_embeddir).
+        for _, embeddir in ipairs(table.wrap(target:get("embeddirs"))) do
+            target:add("cxflags", "--embed-dir=" .. path.absolute(embeddir, target:scriptdir()), {force = true})
+        end
+    end)
+
+    on_config(function (target)
+        -- The wasm link ingredients resolve version-globbed paths inside the
+        -- installed toolchain, so they join at config time -- strictly after
+        -- toolchains.auto's on_load bootstrap has provisioned GCC on a fresh
+        -- machine (all on_load hooks run before any on_config).
+        script_import = import
+        local context = managed_gcc_context(target)
+        if not context then
+            return
+        end
+        if context.target_os == "emscripten" and (target:is_binary() or target:is_shared()) then
+            local gccwasm = import("gccwasm", {rootdir = CPP_MODULES_DIR})
+            -- emcc classifies stdc++ as a driver-owned runtime and drops the
+            -- ordinary syslink entry under -nostdlibxx. A full archive path
+            -- keeps the project-built GCC libstdc++ in the user-link group,
+            -- after dependency archives and before the final GCC runtime.
+            target:add("links", gccwasm.installed_libstdcxx_path(context.target_os))
+            target:add("linkdirs",
+                path.directory(gccwasm.installed_libstdcxx_path(context.target_os)),
+                path.directory(gccwasm.installed_libstdcxx_exp_path(context.target_os)),
+                path.directory(gccwasm.installed_libgcc_path(context.target_os)))
+        end
+    end)
+
+rule("toolchains.auto")
+    add_deps("gcc.platform")
+    on_load(function (target)
+        script_import = import
+        local settings = import("settings", {rootdir = CORE_MODULES_DIR})
+
+        -- constant-drift and config-pin sentinels: both warn once per
+        -- process, cost one file read each, and exist because the failure
+        -- modes they catch are silent (options.lua literals diverging from
+        -- core/modules/defaults.lua; a bare `xmake f`/implicit reconfigure
+        -- resetting plat/arch/mode to defaults behind the user's back)
+        import("catalog", {rootdir = CORE_MODULES_DIR})
+        import("defaults", {rootdir = CORE_MODULES_DIR}).check_options_file(OPTIONS_FILE)
+        settings.warn_config_pin_drift()
+        settings.warn_source_pin_drift()
+
+        -- Refuse the poisoned `-P` combination before it can write anything.
+        -- xmake resolves config.directory() (and a relative builddir) against
+        -- the CURRENT directory whenever that directory carries a .xmake
+        -- marker (the issue-#820 "independent working directory" rule), so
+        -- `xmake build -P ./WhiteHopeEngine.Test` from the checkout root runs
+        -- the subproject against the ROOT's config store: one shared
+        -- localcache and one stored builddir serve two different projectdirs,
+        -- and per-source keys flip between them -- the `__\...` object trees
+        -- and `..\`-relative compiles that rot later root builds. The store
+        -- is resolved before any project script runs, so it cannot be
+        -- re-keyed from here; stop loudly with the working alternatives
+        -- instead. An explicit XMAKE_CONFIGDIR (how `xmake lane` isolates its
+        -- children) is a deliberate override and passes.
+        local config = import("core.project.config")
+        local function canonical_dir(value)
+            value = path.translate(path.absolute(value))
+            return os.host() == "windows" and value:lower() or value
+        end
+        -- Only build-state-mutating tasks are guarded. Generator/query tasks
+        -- (`xmake project -k compile_commands` from the IDE plugins, `xmake
+        -- show`) legitimately load subprojects with `-P` from an alien cwd
+        -- and write no build trees -- and, observed live 2026-08-08, an
+        -- on_load raise inside the project-generator context wedges that
+        -- process at zero CPU instead of exiting, leaving the IDE with a
+        -- dead generator.
+        local option = import("core.base.option")
+        local guarded_tasks = {build = true, config = true, rebuild = true,
+            run = true, install = true, uninstall = true, clean = true,
+            package = true, test = true}
+        local taskname = option.taskname and option.taskname() or ""
+        local configdir_owner = path.directory(path.directory(path.directory(path.translate(path.absolute(config.directory())))))
+        if guarded_tasks[taskname]
+            and os.getenv("XMAKE_CONFIGDIR") == nil
+            and canonical_dir(os.projectdir()) ~= canonical_dir(configdir_owner) then
+            -- Refuse with a plain print and a hard exit, NOT a raise: an
+            -- errors.fail from on_load wedges some task contexts at zero CPU
+            -- forever (observed live 2026-08-08 on IDE-spawned `xmake f -P
+            -- <subproject>` runs, which then sat holding the store lock). A
+            -- policy refusal needs no backtrace, and os.exit() cannot get
+            -- lost in the scheduler's error propagation.
+            print(string.format(
+                "error: this run mixes the project at %s with the config store owned by %s"
+                .. " (the current directory's .xmake captured config.directory()), which corrupts"
+                .. " the shared build trees; run the subproject from its own directory WITH an"
+                .. " explicit `-P .` (a bare run there walks back up to the outermost xmake.lua),"
+                .. " e.g. `cd WhiteHopeEngine.Test` then `xmake build -P . -y <target>`, or give"
+                .. " the child an explicit XMAKE_CONFIGDIR the way `xmake lane` does",
+                os.projectdir(), configdir_owner))
+            os.exit(1)
+        end
+
+        -- Anchor a relative builddir to this project's own root: the same
+        -- issue-#820 rule would otherwise re-anchor it to whichever cwd the
+        -- command happens to run from. An absolute value (e.g. a lane's
+        -- pinned `-o`) passes through untouched; force covers the readonly
+        -- mark a command-line `-o` carries.
+        local builddir = config.get("builddir") or "build"
+        if not path.is_absolute(builddir) then
+            config.set("builddir", path.absolute(builddir, os.projectdir()), {force = true})
+        end
+
+        local context = managed_gcc_context(target)
+        if not context then
+            return
+        end
+        local target_os = context.target_os
+        -- Kept as a fast-path marker for this rule's own later hooks and for
+        -- gccfeatures.toolchain_of's first-priority read; the authoritative
+        -- resolution is managed_gcc_context (shared with gcc.platform and
+        -- gcc.features), never this data by itself.
+        target:data_set("toolchains.auto.declared", context.declared)
+
+        -- Apple MANAGED-GCC project builds must agree with the managed
+        -- toolchain arch. This check deliberately sits AFTER the external-
+        -- toolchain bypass above: `--toolchain=<other>` is documented to skip
+        -- the managed GCC wiring entirely, so e.g. a macosx x86_64 build on
+        -- an explicit non-GCC toolchain must not be stopped by a gate about
+        -- a toolchain it never uses (external review, 2026-07-18).
+        -- the managed triplet is clamped to aarch64 (the only validated
+        -- Darwin profile), but a residual `-a x64` in the project config
+        -- would still drive per-arch flags (-m64) and per-arch build
+        -- directories against the arm64 compiler. Toolchain-only commands
+        -- keep working off the clamped triplet; the project build stops
+        -- loudly with the full reconfigure line instead.
+        if target_os == "macosx" or target_os == "ios" then
+            local base = import("base", {rootdir = CORE_MODULES_DIR})
+            local errors = import("errors", {rootdir = CORE_MODULES_DIR})
+            local configured = base.canonical_arch(settings.configured_arch(), target_os)
+            local managed = settings.target_arch(target_os)
+            if configured ~= managed then
+                errors.fail("Apple project builds need the configured arch to match the managed toolchain arch %s, but the configuration says %s; rerun the full configure: xmake f -p %s -a arm64 -m <mode>",
+                    managed, configured, target_os == "ios" and "iphoneos" or "macosx")
+            end
+        end
+
+
+        local hostboot = import("hostboot", {rootdir = CPP_MODULES_DIR})
+        local gccstatus = import("gccstatus", {rootdir = CPP_MODULES_DIR})
+        local gccbuild = import("gccbuild", {rootdir = CPP_MODULES_DIR})
+        local triplet = settings.managed_target(target_os)
+        local bindir = path.join(settings.gcc_prefix(target_os), "bin")
+        target:set("toolchains", "project_gcc")
+        -- Target-shape flags (runtimes/PIC/emscripten ABI/--embed-dir) live in
+        -- gcc.platform, attached via add_deps above; this rule only wires
+        -- WHICH tools compile and link.
         target:set("toolset.cc", hostboot.managed_tool(bindir, triplet, "gcc"))
         target:set("toolset.cxx", hostboot.managed_tool(bindir, triplet, "g++"))
         target:set("toolset.cpp", hostboot.managed_tool(bindir, triplet, "gcc") .. " -E")
@@ -339,19 +516,6 @@ rule("toolchains.auto")
         target:set("toolset.ranlib", hostboot.managed_tool(bindir, triplet, gccstatus.project_gcc_ranlib_tool_name(target_os)))
         target:set("toolset.strip", hostboot.managed_tool(bindir, triplet, "strip"))
         target:set("toolset.objcopy", hostboot.managed_tool(bindir, triplet, "objcopy"))
-
-        -- add_embeddirs -> --embed-dir: xmake maps target.embeddirs to gcc's
-        -- nf_embeddir only for a fully-registered toolchain tool, NOT for the
-        -- bare-path toolset this managed GCC installs above (verified 2026-07-23:
-        -- --embed-dir is silently dropped for both this rule and a plain
-        -- set_toolset("cxx", <path>), while -D/-I still come through, so C++26
-        -- `#embed <name>` fails with "no include path in which to search for
-        -- <name>"). Inject it explicitly, absolute so it resolves from any
-        -- compile cwd, mirroring xmake's own --embed-dir=<dir> (tools/gcc.lua
-        -- nf_embeddir).
-        for _, embeddir in ipairs(table.wrap(target:get("embeddirs"))) do
-            target:add("cxflags", "--embed-dir=" .. path.absolute(embeddir, target:scriptdir()), {force = true})
-        end
         if target_os == "windows" then
             target:set("toolset.mrc", hostboot.managed_tool(bindir, triplet, "windres"))
             target:set("toolset.dlltool", hostboot.managed_tool(bindir, triplet, "dlltool"))
@@ -363,12 +527,18 @@ rule("toolchains.auto")
         -- the probe fails with "compiler(gcc): does not support c++ module!".
         -- Ensure the toolchain exists already at load time (before any
         -- on_config); on provisioned machines this is a pure check.
-        if not gccbuild.toolchain_installed(target_os) then
+        if not gccbuild.toolchain_installed(target_os) and not gccbuild.build_in_progress(target_os) then
             -- build_gcc_for now takes the per-prefix cross-process install lock
             -- itself and re-checks under it (skip_if_installed), so the former
             -- outer bootstrap.lock here is gone: nesting the same lock in one
             -- process would self-deadlock, and a second lock name would not
             -- serialize against the explicit `xmake toolchains` commands.
+            -- build_in_progress covers the one case where this load IS the
+            -- nesting: a toolchain build whose smoke loads the project to ask
+            -- whether it uses Rust. That toolchain's stamp is written only
+            -- after the smoke, so the check above is guaranteed false there --
+            -- without the second condition every such load asks to bootstrap
+            -- the toolchain that is being built around it.
             print("bootstrapping missing project-local GCC for " .. target_os)
             gccbuild.build_gcc_for(target_os, {skip_if_installed = true})
             if not gccbuild.toolchain_installed(target_os) then
@@ -377,40 +547,20 @@ rule("toolchains.auto")
         end
         hostboot.ensure_windows_host_binutils_aliases(target_os)
         hostboot.ensure_linux_host_binutils_aliases(target_os)
-        if target_os == "emscripten" and (target:is_binary() or target:is_shared()) then
-            local gccwasm = import("gccwasm", {rootdir = CPP_MODULES_DIR})
-            -- emcc classifies stdc++ as a driver-owned runtime and drops the
-            -- ordinary syslink entry under -nostdlibxx. A full archive path
-            -- keeps the project-built GCC libstdc++ in the user-link group,
-            -- after dependency archives and before the final GCC runtime.
-            target:add("links", gccwasm.installed_libstdcxx_path(target_os))
-            target:add("linkdirs",
-                path.directory(gccwasm.installed_libstdcxx_path(target_os)),
-                path.directory(gccwasm.installed_libstdcxx_exp_path(target_os)),
-                path.directory(gccwasm.installed_libgcc_path(target_os)))
-        end
     end)
 
     on_config(function (target)
-        local settings = import("settings", {rootdir = CORE_MODULES_DIR})
-        local enabled = tostring(settings.value_or("toolchains_auto", "true")):lower()
-        if enabled == "false" or enabled == "0" or enabled == "off" or enabled == "no" then
+        script_import = import
+        local context = managed_gcc_context(target)
+        if not context then
             return
         end
-        local uses_project_gcc = target:data("toolchains.auto.declared") == "gcc" or target:data("toolchains.auto.declared") == "mingw"
-        if not uses_project_gcc then
-            return
-        end
-        local target_os = settings.configured_target_os()
-        if target_os ~= "windows" and target_os ~= "linux" and target_os ~= "android"
-            and target_os ~= "macosx" and target_os ~= "ios" and target_os ~= "emscripten" then
-            return
-        end
+        local target_os = context.target_os
         local hostboot = import("hostboot", {rootdir = CPP_MODULES_DIR})
         local gccbuild = import("gccbuild", {rootdir = CPP_MODULES_DIR})
-        if not gccbuild.toolchain_installed(target_os) then
+        if not gccbuild.toolchain_installed(target_os) and not gccbuild.build_in_progress(target_os) then
             -- build_gcc_for takes the per-prefix install lock itself now (see
-            -- the on_load twin); the former outer bootstrap.lock is gone.
+            -- the on_load twin, which also explains build_in_progress).
             print("bootstrapping missing project-local GCC for " .. target_os)
             gccbuild.build_gcc_for(target_os, {skip_if_installed = true})
             if not gccbuild.toolchain_installed(target_os) then
@@ -422,34 +572,16 @@ rule("toolchains.auto")
     end)
 
     before_build(function (target)
-        local settings = import("settings", {rootdir = CORE_MODULES_DIR})
-        local enabled = tostring(settings.value_or("toolchains_auto", "true")):lower()
-        if enabled == "false" or enabled == "0" or enabled == "off" or enabled == "no" then
+        -- managed_gcc_context resolves identity through gccfeatures
+        -- .toolchain_of, which already folds in everything the former ad-hoc
+        -- three-way probe here re-derived (declared data, toolset.cxx smell,
+        -- explicit gcc/mingw entries) -- one implementation, not four.
+        script_import = import
+        local context = managed_gcc_context(target)
+        if not context then
             return
         end
-
-        local uses_project_gcc = target:data("toolchains.auto.declared") == "gcc" or target:data("toolchains.auto.declared") == "mingw"
-        local cxx_toolset = tostring(target:get("toolset.cxx") or "")
-        if uses_project_gcc and (cxx_toolset:find("g++", 1, true) or cxx_toolset:find("gcc", 1, true)) then
-            uses_project_gcc = true
-        end
-        for _, item in ipairs(table.wrap(target:get("toolchains"))) do
-            local name = tostring(item):lower():gsub("@.*$", "")
-            if name == "gcc" or name == "mingw" then
-                uses_project_gcc = true
-                break
-            end
-        end
-        if not uses_project_gcc then
-            return
-        end
-
-        local target_os = settings.configured_target_os()
-        if target_os ~= "windows" and target_os ~= "linux" and target_os ~= "android"
-            and target_os ~= "macosx" and target_os ~= "ios" and target_os ~= "emscripten" then
-            return
-        end
-
+        local target_os = context.target_os
         local errors = import("errors", {rootdir = CORE_MODULES_DIR})
         local hostboot = import("hostboot", {rootdir = CPP_MODULES_DIR})
         local gccbuild = import("gccbuild", {rootdir = CPP_MODULES_DIR})
@@ -470,6 +602,14 @@ rule("toolchains.auto")
         end
         hostboot.ensure_windows_host_binutils_aliases(target_os)
         hostboot.ensure_linux_host_binutils_aliases(target_os)
+        -- Smoke freshness: installed_extra deliberately no longer folds a
+        -- stale smoke stamp into "toolchain not installed" (that re-entered
+        -- the FULL rebuild pipeline), so refresh it here instead. Project
+        -- loading is complete at before_build, so the finalize path may
+        -- consult project truth (ensure_smoke_current reads
+        -- project_enables_rust); no-op for providers without the hook,
+        -- ~60ms verdict when the recorded smoke is fresh.
+        gccbuild.finalize_existing_toolchain_install(target_os)
         local function clear_memcache(owner)
             local getter = owner and owner.memcache
             if type(getter) == "function" then
@@ -639,6 +779,17 @@ rule("gcc.modules")
         gccmodulecache.prepare(target)
     end)
 
+-- One-line opt-in for the whole managed-GCC stack: toolchain selection and
+-- bootstrap (toolchains.auto, which itself depends on gcc.platform for the
+-- platform-ABI flags), named feature injection (gcc.features) and C++20
+-- module automation (gcc.modules). Rule dependencies execute depended-upon
+-- first, so the effective order is platform -> auto -> features -> modules.
+-- The classic explicit trio add_rules("toolchains.auto", "gcc.features",
+-- "gcc.modules") keeps working unchanged -- this is the same set expressed
+-- as one dependency-ordered name.
+rule("gcc.managed")
+    add_deps("toolchains.auto", "gcc.features", "gcc.modules")
+
 includes(path.join(os.scriptdir(), "toolchains", "commands_help.lua"))
 
 -- Callback-reachable captures of the commands_help.lua globals (see the
@@ -664,6 +815,10 @@ task("toolchains")
         import("catalog", {rootdir = CORE_MODULES_DIR})
         local option = import("core.base.option")
         local errors = import("errors", {rootdir = CORE_MODULES_DIR})
+        -- The source-pin sentinel belongs here as much as in the build rule:
+        -- these commands are exactly where a frozen pin does its damage,
+        -- syncing and stamping the previous baseline while reporting success.
+        import("settings", {rootdir = CORE_MODULES_DIR}).warn_source_pin_drift()
         bind_help_errors(errors)
         bind_gcc_features_help_errors(errors)
         local i18n = import("i18n", {rootdir = CORE_MODULES_DIR})

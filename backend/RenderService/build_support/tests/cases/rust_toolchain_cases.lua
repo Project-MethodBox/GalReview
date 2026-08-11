@@ -35,6 +35,27 @@ function run(t)
             "no rustc target mapping", "ios simulator must not mis-map")
     end)
 
+    t.case("rust_target: both WebAssembly targets are recognized as wasm", function ()
+        -- Both memory models go through cargo build-std and need rustc's
+        -- self-contained rust-objcopy; the callers ask this predicate instead
+        -- of comparing against the 32-bit name, which is what made the 64-bit
+        -- model silently miss build-std when it was a literal comparison.
+        t.assert_true(toolchain.is_wasm_target("wasm32-unknown-emscripten"), "32-bit wasm target")
+        t.assert_true(toolchain.is_wasm_target("wasm64-unknown-unknown"), "64-bit wasm target")
+        t.assert_true(not toolchain.is_wasm_target("x86_64-pc-windows-gnu"), "a native target is not wasm")
+    end)
+
+    t.case("rust_target: the 64-bit wasm target declares no prebuilt std", function ()
+        -- tier 3: no rust-std dist component exists, so the installer must not
+        -- request one (a 404, not a recoverable miss) and the build gate must
+        -- not wait for a rust-std directory that can never appear
+        t.assert_true(not toolchain.has_prebuilt_std("wasm64-unknown-unknown"),
+            "wasm64 has no dist rust-std")
+        t.assert_true(toolchain.has_prebuilt_std("wasm32-unknown-emscripten"),
+            "wasm32 emscripten ships rust-std")
+        t.assert_true(toolchain.has_prebuilt_std("x86_64-pc-windows-gnu"), "host target ships rust-std")
+    end)
+
     t.case("rust_target: an entirely unknown triplet fails loudly", function ()
         t.expect_raise(function () toolchain.rust_target_for("sparc-unknown-frobozz") end,
             "no rustc target mapping", "unknown triplet")

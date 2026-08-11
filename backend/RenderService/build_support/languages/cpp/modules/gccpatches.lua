@@ -35,7 +35,7 @@ import("wasm", {rootdir = path.join(os.scriptdir(), "patches")})
 local PROFILE_PATCH_STAMP = {
     ["mainline"] = 70,
     ["darwin-arm64"] = 70,
-    ["wasm-experimental"] = 71,
+    ["wasm-experimental"] = 76,
 }
 
 function source_patch_stamp_version(target_os)
@@ -61,6 +61,34 @@ function source_patch_marker_name(target_os)
     return ".xmake-gcc-source-patched-v" .. source_patch_stamp_version(target_os)
 end
 
+local function unmet_postconditions(src, postconditions)
+    local unmet = {}
+    for _, condition in ipairs(postconditions) do
+        local file = path.join(src, condition.file)
+        local content = os.isfile(file) and io.readfile(file) or nil
+        if not content or (condition.fingerprint and not content:find(condition.fingerprint, 1, true)) then
+            table.insert(unmet, string.format("%s (%s)", condition.what, condition.file))
+        end
+    end
+    return unmet
+end
+
+-- True when the tree demonstrably carries every registered patch
+-- fingerprint. gccsources.sync_gcc_source pairs this with the stamp marker
+-- to skip the pristine-restore + full re-patch pass on trees that are
+-- already final; re-running the anchored families over a snapshot-layered
+-- tree would trip their strict anchor probes (the snapshot edits inside
+-- earlier replacement regions), so a stamped tree is either verified as-is
+-- or restored and re-patched from scratch -- never patched in place twice.
+function verify_patched_source(src, target_os)
+    local ctx = {src = src, target_os = target_os, postconditions = {}}
+    mainline.register_postconditions(ctx)
+    darwin.register_postconditions(ctx)
+    ios.register_postconditions(ctx)
+    wasm.register_postconditions(ctx)
+    return #unmet_postconditions(src, ctx.postconditions) == 0
+end
+
 function patch_gcc_source(src, target_os)
     -- Cross-module per-run state travels through this explicit context
     -- table: xmake import() exposes only functions, never module data.
@@ -73,16 +101,29 @@ function patch_gcc_source(src, target_os)
         },
         postconditions = {}
     }
-    -- Order is behavior-critical: mainline.apply() consumes the wasm
-    -- freestanding flags, so wasm.apply() must run first. darwin.apply()
-    -- runs for every profile; its patches are anchor self-gated. ios.apply()
-    -- is profile gated to darwin-arm64 trees and must follow darwin.apply():
-    -- its libgcc case reuses the t-darwin-no-eh fragment file that
-    -- darwin.apply() materializes.
-    wasm.apply(ctx)
-    darwin.apply(ctx)
-    ios.apply(ctx)
-    mainline.apply(ctx)
+    -- The WebAssembly line was ported onto GCC master and now carries every
+    -- fix this project used to patch in: on 2026-08-12 all 60 registered
+    -- witnesses verified present in its PRISTINE checkout, so re-applying the
+    -- wasm and mainline families there would only fail on anchors that no
+    -- longer exist. That profile is therefore verified rather than patched --
+    -- the postcondition checkpoint below still runs, and is now the whole
+    -- guarantee: a pin that silently lost a fix fails the sync exactly as a
+    -- lost patch write used to.
+    --
+    -- Order is behavior-critical for the profiles that still patch:
+    -- mainline.apply() consumes the wasm freestanding flags, so wasm.apply()
+    -- must run first. darwin.apply() runs for every profile; its patches are
+    -- anchor self-gated. ios.apply() is profile gated to darwin-arm64 trees
+    -- and must follow darwin.apply(): its libgcc case reuses the
+    -- t-darwin-no-eh fragment file that darwin.apply() materializes.
+    if settings.gcc_source_profile(target_os).name ~= "wasm-experimental" then
+        wasm.apply(ctx)
+        darwin.apply(ctx)
+        ios.apply(ctx)
+        mainline.apply(ctx)
+    else
+        darwin.apply(ctx)
+    end
 
     -- Hard patch postconditions: re-read every functional patch's fingerprint
     -- from disk before the stamp is written. The apply-site drift warnings
@@ -95,15 +136,7 @@ function patch_gcc_source(src, target_os)
     darwin.register_postconditions(ctx)
     ios.register_postconditions(ctx)
     wasm.register_postconditions(ctx)
-    local postconditions = ctx.postconditions
-    local unmet = {}
-    for _, condition in ipairs(postconditions) do
-        local file = path.join(src, condition.file)
-        local content = os.isfile(file) and io.readfile(file) or nil
-        if not content or (condition.fingerprint and not content:find(condition.fingerprint, 1, true)) then
-            table.insert(unmet, string.format("%s (%s)", condition.what, condition.file))
-        end
-    end
+    local unmet = unmet_postconditions(src, ctx.postconditions)
     if #unmet > 0 then
         print("GCC source patch postconditions FAILED for this source tree:")
         for _, entry in ipairs(unmet) do

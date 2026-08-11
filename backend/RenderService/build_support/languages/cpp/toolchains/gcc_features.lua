@@ -207,7 +207,7 @@ MANAGED_GCC_FEATURE_GROUPS = {
         "sized_deallocation",
         "elide_constructors",
         "assume_sane_new_delete",
-        "no_exceptions",
+        "exceptions",
         "no_rtti",
         "diagnostics_show_template_tree",
         "pretty_templates",

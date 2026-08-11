@@ -18,34 +18,51 @@
 import("base")
 import("errors")
 
--- Default target arch per lane (a lane is named after its plat). Overridden
--- when the caller passes --arch; plats absent here let xmake/policy choose
--- (android arch policy, macosx/ios aarch64 clamp).
-local DEFAULT_ARCH =
+-- Lane registry: which plat a lane configures and, where the project pins one,
+-- which arch. A lane is normally named after its plat; a lane whose name
+-- differs exists to give a SECOND arch of that plat its own configuration, so
+-- both can stay configured and build concurrently (wasm64 is a multilib of
+-- wasm32-unknown-emscripten -- same plat, same toolchain, different memory
+-- model). Lanes absent from the table configure the plat they are named after
+-- and let xmake/policy choose the arch (android arch policy, macosx/ios
+-- aarch64 clamp); an explicit --arch always wins.
+local LANES =
 {
-    windows = "x64",
-    mingw = "x86_64",
-    linux = "x86_64",
-    wasm = "wasm32",
-    emscripten = "wasm32"
+    windows = {plat = "windows", arch = "x64"},
+    mingw = {plat = "mingw", arch = "x86_64"},
+    linux = {plat = "linux", arch = "x86_64"},
+    wasm = {plat = "wasm", arch = "wasm32"},
+    wasm64 = {plat = "wasm", arch = "wasm64"},
+    emscripten = {plat = "emscripten", arch = "wasm32"}
 }
 local DEFAULT_MODE = "debug"
 
--- A lane owns its platform's conventional build/<plat>/ directory and nothing
--- else. Products land in the ordinary build/<plat>/<arch>/<mode>/ tree -- the
--- exact path a plain `xmake build` produces, so a lane never invents a separate
--- output folder (the build dir is left at its default; only config/lock/mapper
--- are isolated). The per-lane config/lock and the C++ module mapper live in
--- dot-dirs beside the products, under the same build/<plat>/ home.
-local function lane_layout(root, lane)
-    local home = path.join(root, "build", lane)
+local function lane_spec(lane)
+    return LANES[lane] or {plat = lane}
+end
+
+-- A lane owns state inside its platform's conventional build/<plat>/ directory
+-- and nothing else. Products land in the ordinary build/<plat>/<arch>/<mode>/
+-- tree -- the exact path a plain `xmake build` produces, so a lane never
+-- invents a separate output folder (the build dir is left at its default; only
+-- config/lock/mapper are isolated). The plat's own lane keeps that directory as
+-- its config home; a second-arch lane nests its state in a dot-dir beside it,
+-- which keeps every artifact of one platform under one build/<plat>/ roof --
+-- the visible subfolders there are then exactly the arch product trees.
+-- Public because it doubles as the fixture surface for the lane mapping.
+function lane_layout(root, lane)
+    local spec = lane_spec(lane)
+    local home = path.join(root, "build", spec.plat)
+    local state = lane == spec.plat and home or path.join(home, "." .. lane)
     return
     {
         name = lane,
+        plat = spec.plat,
+        arch = spec.arch,
         home = home,
-        configdir = home,
-        xtmpdir = path.join(home, ".mapper"),
-        ostmpdir = path.join(home, ".ostmp")
+        configdir = state,
+        xtmpdir = path.join(state, ".mapper"),
+        ostmpdir = path.join(state, ".ostmp")
     }
 end
 
@@ -92,18 +109,33 @@ local function is_configured(layout)
 end
 
 -- Spawn the child xmake with the lane environment. stdio is inherited so the
--- build streams live; os.execv raises on a non-zero child exit, surfacing the
--- failure as a task failure.
+-- build streams live. The child's failure is re-reported here instead of
+-- letting os.execv raise: its message ("execv(...) failed(-1), unknown
+-- reason") hides which side failed. A non-zero status is the child's own
+-- exit code and its diagnostics are already in the streamed output above;
+-- -1 is also what a parent-side wait failure yields (xmake reuses it as a
+-- sentinel), and a nil status means the child could not be spawned at all.
 local function run_child(root, layout, argv)
     os.mkdir(layout.configdir)
     os.mkdir(layout.xtmpdir)
-    os.execv(xmake_program(), argv, {curdir = root, envs = lane_envs(layout)})
+    local program = xmake_program()
+    local status, why = os.execv(program, argv, {curdir = root, envs = lane_envs(layout), try = true})
+    if status == nil then
+        errors.fail("lane %s: failed to launch the child xmake (%s): %s",
+            layout.name, program, why or "unknown spawn error")
+    end
+    if status ~= 0 then
+        errors.fail("lane %s: child `xmake %s` exited with status %d%s -- its diagnostics are in the"
+            .. " output above%s", layout.name, table.concat(argv, " "), status,
+            why and (" (" .. why .. ")") or "",
+            status == -1 and " (a -1 can also mean the parent failed waiting on the child)" or "")
+    end
 end
 
-local function do_config(root, lane, layout, opt)
-    local arch = opt.arch or DEFAULT_ARCH[lane]
+local function do_config(root, layout, opt)
+    local arch = opt.arch or layout.arch
     local mode = opt.mode or DEFAULT_MODE
-    local argv = {"f", "-p", lane}
+    local argv = {"f", "-p", layout.plat}
     if arch then
         table.insert(argv, "-a")
         table.insert(argv, arch)
@@ -120,9 +152,9 @@ local function do_config(root, lane, layout, opt)
     run_child(root, layout, argv)
 end
 
-local function ensure_configured(root, lane, layout, opt)
+local function ensure_configured(root, layout, opt)
     if not is_configured(layout) then
-        do_config(root, lane, layout, opt)
+        do_config(root, layout, opt)
     end
 end
 
@@ -140,7 +172,7 @@ end
 
 function run(lane, action, subject, extra)
     if not lane or lane == "" then
-        errors.fail("xmake lane requires a platform lane, e.g. `xmake lane wasm build` (windows|linux|macosx|ios|android|wasm)")
+        errors.fail("xmake lane requires a platform lane, e.g. `xmake lane wasm build` (windows|linux|macosx|ios|android|wasm|wasm64)")
     end
     action = clean_arg(action) or "build"
     subject = clean_arg(subject)
@@ -149,12 +181,12 @@ function run(lane, action, subject, extra)
     local layout = lane_layout(root, lane)
 
     if action == "config" or action == "configure" or action == "f" then
-        do_config(root, lane, layout, {mode = subject, arch = extra})
+        do_config(root, layout, {mode = subject, arch = extra})
         return
     end
 
     if action == "build" or action == "b" or action == "rebuild" then
-        ensure_configured(root, lane, layout, {})
+        ensure_configured(root, layout, {})
         local argv = {"build"}
         if action == "rebuild" then
             table.insert(argv, "-r")

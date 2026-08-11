@@ -30,6 +30,7 @@ import("settings", {rootdir = path.join(os.scriptdir(), "..", "..", "..", "core"
 import("hosttools", {rootdir = path.join(os.scriptdir(), "..", "..", "..", "core", "modules")})
 import("envs", {rootdir = path.join(os.scriptdir(), "..", "..", "..", "core", "modules")})
 import("toolchain")
+import("archive")
 
 local BUILD_STD_CRATES = "core,compiler_builtins,alloc"
 local WASM_TARGET_RUSTFLAG = "-Ctarget-feature=+atomics,+bulk-memory,+mutable-globals"
@@ -46,8 +47,8 @@ local function toml_path(value)
     return tostring(value):gsub("\\", "/"):gsub('"', '\\"')
 end
 
--- Resolves the Unix-ar-compatible archiver that unpacks the Rust staticlib
--- and injects its objects into the engine archive. target:tool("ar") alone
+-- Resolves the Unix-ar-compatible archiver that injects the Rust staticlib's
+-- object members into the engine archive. target:tool("ar") alone
 -- is not trustworthy: when the project GCC toolchain is absent, xmake
 -- silently falls back to the MSVC toolchain, whose "ar" answer is link.exe
 -- -- feeding it Unix ar verbs produces the baffling `LNK1181: cannot open
@@ -238,9 +239,10 @@ local function cargo_environment(work_root, manifest, opt)
     cargo_envs.RUSTDOC = toolchain.rustdoc_path()
 
     local rustflags = {}
-    if opt.rust_target == "wasm32-unknown-emscripten" then
+    if toolchain.is_wasm_target(opt.rust_target) then
         -- the atomics contract must match the Emscripten pthread final link;
-        -- build-std below rebuilds core/compiler_builtins/alloc with it
+        -- build-std below rebuilds core/compiler_builtins/alloc with it.
+        -- Both memory models take it: the 64-bit link is a pthread link too.
         table.insert(rustflags, WASM_TARGET_RUSTFLAG)
     end
     cargo_envs.CARGO_ENCODED_RUSTFLAGS = table.concat(rustflags, string.char(31))
@@ -249,7 +251,7 @@ end
 
 local function common_args(subcommand, manifest, opt, host_config_written)
     local args = {subcommand}
-    if opt.rust_target == "wasm32-unknown-emscripten" then
+    if toolchain.is_wasm_target(opt.rust_target) then
         table.insert(args, "-Z")
         table.insert(args, "build-std=" .. BUILD_STD_CRATES)
     end
@@ -363,17 +365,25 @@ local function safe_remove_tree(candidate, owner)
     os.tryrm(candidate)
 end
 
--- The staticlib is a rustc product, not a foreign-linker input. Extract and
--- flatten its object members under unique names before the Engine archive
--- consumes them; unique names prevent `ar r` from replacing equal-basename
--- members from different source archives.
-function unpack_objects(archives, ar_program, output_dir, owner_dir)
+-- The staticlib is a rustc product, not a foreign-linker input. Flatten its
+-- object members under unique names before the Engine archive consumes
+-- them; unique names prevent `ar r` from replacing equal-basename members
+-- from different source archives. The members are read natively
+-- (archive.lua) and each one is written straight to its short flattened
+-- name: the previous `ar x` step materialized rustc's member names (84
+-- characters observed) under the objectdir first, and with a deep build
+-- directory (`xmake f -o <path>`) that crossed the Windows MAX_PATH ceiling
+-- of the non-long-path-aware binutils, killing the extraction mid-archive
+-- with `<member>.rcgu.o: No such file or directory`. Writing only
+-- rust-NNNN-NNNN.o names keeps this step inside the same path budget as
+-- every other objectdir artifact.
+function unpack_objects(archives, output_dir, owner_dir)
     output_dir = path.absolute(output_dir)
     owner_dir = path.absolute(owner_dir)
     local marker = path.join(output_dir, ".unpacked")
     local signature_lines = {}
-    for _, archive in ipairs(archives or {}) do
-        table.insert(signature_lines, path.absolute(archive) .. "=" .. hash.sha256(archive))
+    for _, archive_file in ipairs(archives or {}) do
+        table.insert(signature_lines, path.absolute(archive_file) .. "=" .. hash.sha256(archive_file))
     end
     local signature = table.concat(signature_lines, "\n") .. "\n"
     local object_dir = path.join(output_dir, "objects")
@@ -388,19 +398,16 @@ function unpack_objects(archives, ar_program, output_dir, owner_dir)
     safe_remove_tree(output_dir, owner_dir)
     os.mkdir(object_dir)
     local objects = {}
-    for archive_index, archive in ipairs(archives or {}) do
-        local extract_dir = path.join(output_dir, string.format("archive-%04d", archive_index))
-        os.mkdir(extract_dir)
-        os.vrunv(ar_program, {"x", path.absolute(archive)}, {curdir = extract_dir})
-        local members = table.join(
-            os.files(path.join(extract_dir, "*.o")),
-            os.files(path.join(extract_dir, "*.obj")))
-        table.sort(members)
+    for archive_index, archive_file in ipairs(archives or {}) do
+        local members = archive.object_members(archive_file)
+        if #members == 0 then
+            errors.fail("Rust staticlib contains no object members to absorb: %s", archive_file)
+        end
         for member_index, member in ipairs(members) do
-            local extension = path.extension(member)
+            local extension = member.name:lower():endswith(".obj") and ".obj" or ".o"
             local flattened = path.join(object_dir,
                 string.format("rust-%04d-%04d%s", archive_index, member_index, extension))
-            os.cp(member, flattened)
+            base.writefile_bytes(flattened, member.data)
             table.insert(objects, flattened)
         end
     end

@@ -72,10 +72,6 @@ function ndk_root()
     return androidndk.root_or_fail()
 end
 
-function ndk_host_tag()
-    return androidndk.host_tag()
-end
-
 function ndk_llvm_bin_dir()
     if not ndk_root() then
         return nil
