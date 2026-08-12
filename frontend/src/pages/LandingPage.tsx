@@ -319,7 +319,6 @@ export default function LandingPage() {
             <div className="landing-hero__actions">
               <Link className="button button--primary landing-hero__cta landing-glass-button" to="/register">建立第一册研习</Link>
               <button className="button button--light landing-glass-button" onClick={() => scroll('#workflow')}>了解解析与复习流程</button>
-              <a className="button button--light landing-glass-button" href="/wiki/">查看详细使用 Wiki</a>
             </div>
           </div>
           <div className="landing-hero__preview" aria-hidden="true">
@@ -460,8 +459,8 @@ export default function LandingPage() {
             <h2>从第一份资料开始建立复习系统</h2>
             <p>让千知万理协助解析、出题和安排复习，同时保留你对资料与答案的最终确认。</p>
             <div className="landing-cta__actions">
-              <Link className="button button--primary landing-glass-button" to="/register">注册并建立研习册</Link>
-              <button className="button button--light landing-glass-button" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>返回顶部</button>
+              <Link className="button button--primary landing-glass-button" to="/register">开始复习</Link>
+              <button className="button button--light landing-glass-button" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>重新阅读</button>
             </div>
           </div>
         </section>
@@ -473,7 +472,7 @@ export default function LandingPage() {
             <BrandMark compact />
             <div>
               <strong>千知万理</strong>
-              <p>AI 辅助解析，图谱连接知识，<br />让每一次复习都有依据。</p>
+              <p>知识有图谱，复习有剧情。<br />让每一次复习都有依据。</p>
             </div>
           </div>
           <div className="landing-footer__columns">
@@ -490,7 +489,7 @@ export default function LandingPage() {
               <h4>说明</h4>
               <nav>
                 <Link to="#faq" onClick={(e) => { e.preventDefault(); scroll('#faq') }}>常见问题</Link>
-                <a href="/wiki/">详细使用 Wiki</a>
+                <a href="/wiki/">使用说明</a>
                 <Link to="/login">登录</Link>
               </nav>
             </div>

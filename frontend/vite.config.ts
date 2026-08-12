@@ -1,8 +1,27 @@
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 
+function serveDevelopmentWikiIndex() {
+  return {
+    name: 'serve-development-wiki-index',
+    configureServer(server: { middlewares: { use: (handler: (req: { url?: string }, res: { statusCode: number; setHeader: (name: string, value: string) => void; end: () => void }, next: () => void) => void) => void } }) {
+      server.middlewares.use((req, res, next) => {
+        const url = new URL(req.url || '/', 'http://frontend')
+        if (url.pathname === '/wiki') {
+          res.statusCode = 308
+          res.setHeader('Location', `/wiki/${url.search}`)
+          res.end()
+          return
+        }
+        if (url.pathname === '/wiki/') req.url = `/wiki/index.html${url.search}`
+        next()
+      })
+    },
+  }
+}
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), serveDevelopmentWikiIndex()],
   build: {
     sourcemap: false,
   },

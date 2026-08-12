@@ -6,7 +6,13 @@ import { marked } from 'marked'
 const scriptDirectory = dirname(fileURLToPath(import.meta.url))
 const repositoryRoot = resolve(scriptDirectory, '..', '..')
 const wikiRoot = join(repositoryRoot, 'wiki')
-const outputRoot = join(repositoryRoot, 'frontend', 'dist', 'wiki')
+const outputArgumentIndex = process.argv.indexOf('--output')
+if (outputArgumentIndex >= 0 && !process.argv[outputArgumentIndex + 1]) {
+  throw new Error('--output requires a directory path.')
+}
+const outputRoot = outputArgumentIndex >= 0
+  ? resolve(process.cwd(), process.argv[outputArgumentIndex + 1])
+  : join(repositoryRoot, 'frontend', 'dist', 'wiki')
 
 const preferredOrder = [
   'Home.md',
@@ -66,10 +72,13 @@ function navigationHtml(pages, current) {
 function pageTemplate({ title, content, navigation, previous, next }) {
   const previousLink = previous
     ? `<a rel="prev" href="${previous.filename === 'Home.md' ? './' : `./${encodeURI(outputName(previous.filename))}`}"><span>上一页</span><strong>${escapeHtml(previous.label)}</strong></a>`
-    : '<span></span>'
+    : ''
   const nextLink = next
     ? `<a rel="next" href="./${encodeURI(outputName(next.filename))}"><span>下一页</span><strong>${escapeHtml(next.label)}</strong></a>`
-    : '<span></span>'
+    : ''
+  const pager = previousLink || nextLink
+    ? `<nav class="wiki-pager" aria-label="相邻页面">${previousLink}${nextLink}</nav>`
+    : ''
 
   return `<!doctype html>
 <html lang="zh-CN">
@@ -77,6 +86,7 @@ function pageTemplate({ title, content, navigation, previous, next }) {
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="description" content="千知万理使用 Wiki：${escapeHtml(title)}" />
+  <link rel="icon" type="image/svg+xml" href="/brand-logo.svg" />
   <title>千知万理 · 使用WIKI</title>
   <link rel="stylesheet" href="./res/wiki.css" />
 </head>
@@ -98,7 +108,7 @@ function pageTemplate({ title, content, navigation, previous, next }) {
     </aside>
     <main class="wiki-main" id="wiki-content">
       <article class="wiki-article">${content}</article>
-      <nav class="wiki-pager" aria-label="相邻页面">${previousLink}${nextLink}</nav>
+      ${pager}
       <footer class="wiki-footer">千知万理 · GalReview 项目使用手册</footer>
     </main>
   </div>

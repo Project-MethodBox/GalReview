@@ -245,6 +245,33 @@ $stdout
     return $reportPath
 }
 
+function Initialize-NodeServiceDependencies {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$WorkingDirectory,
+        [Parameter(Mandatory)][string]$RequiredCommand
+    )
+    $localCommand = Join-Path $WorkingDirectory "node_modules\.bin\$RequiredCommand.cmd"
+    if (Test-Path -LiteralPath $localCommand -PathType Leaf) { return }
+
+    $lockFile = Join-Path $WorkingDirectory 'package-lock.json'
+    if (-not (Test-Path -LiteralPath $lockFile -PathType Leaf)) {
+        throw "$Name dependency lock file is missing: $lockFile"
+    }
+    Write-Host "Installing $Name dependencies..." -ForegroundColor DarkCyan
+    Push-Location $WorkingDirectory
+    try {
+        & npm.cmd ci --no-audit --no-fund | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw "$Name dependency installation failed." }
+    }
+    finally {
+        Pop-Location
+    }
+    if (-not (Test-Path -LiteralPath $localCommand -PathType Leaf)) {
+        throw "$Name dependency installation did not provide $RequiredCommand.cmd."
+    }
+}
+
 function Start-MoonStoneStack {
     Stop-MoonStoneServices
     Remove-Item -LiteralPath $runtimeDirectory -Recurse -Force -ErrorAction SilentlyContinue
@@ -256,9 +283,24 @@ function Start-MoonStoneStack {
     $env:GATEWAY_HOST = '127.0.0.1'
     $env:GATEWAY_URL = $gatewayBaseUrl
 
+    $gatewayRoot = Join-Path $projectRoot 'gateway'
     $renderServiceRoot = Join-Path $backendRoot 'RenderService\service'
+    $frontendRoot = Join-Path $projectRoot 'frontend'
+    Initialize-NodeServiceDependencies 'Gateway' $gatewayRoot 'tsx'
+    Initialize-NodeServiceDependencies 'RenderService' $renderServiceRoot 'tsc'
+    Initialize-NodeServiceDependencies 'Frontend' $frontendRoot 'vite'
+    Write-Host 'Building Wiki for the Frontend development server...' -ForegroundColor DarkCyan
+    Push-Location $frontendRoot
+    try {
+        & npm.cmd run build:wiki:dev | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw 'Wiki development build failed.' }
+    }
+    finally {
+        Pop-Location
+    }
     Push-Location $renderServiceRoot
     try {
+        Write-Host 'Building RenderService...' -ForegroundColor DarkCyan
         & npm.cmd run build | Out-Host
         if ($LASTEXITCODE -ne 0) { throw 'RenderService build failed.' }
     }
@@ -267,7 +309,7 @@ function Start-MoonStoneStack {
     }
 
     $services = @(
-        Start-LocalService -Name 'gateway' -FilePath 'npm.cmd' -Arguments 'run dev' -HealthUrl "$gatewayBaseUrl/healthz" -WorkingDirectory (Join-Path $projectRoot 'gateway')
+        Start-LocalService -Name 'gateway' -FilePath 'npm.cmd' -Arguments 'run dev' -HealthUrl "$gatewayBaseUrl/healthz" -WorkingDirectory $gatewayRoot
         Start-LocalService -Name 'auth-service' -FilePath 'dotnet' -Arguments "run --project `"$backendRoot\AuthService\GalGame.AuthService.csproj`" -- --Gateway:BaseUrl $gatewayBaseUrl" -HealthUrl 'http://127.0.0.1:5102/healthz'
         Start-LocalService -Name 'file-service' -FilePath 'dotnet' -Arguments "run --project `"$backendRoot\FileService\GalGame.FileService.csproj`"" -HealthUrl 'http://127.0.0.1:5103/healthz'
         Start-LocalService -Name 'user-service' -FilePath 'dotnet' -Arguments "run --project `"$backendRoot\UserService\GalGame.UserService.csproj`"" -HealthUrl 'http://127.0.0.1:5101/healthz'
@@ -298,7 +340,7 @@ function Start-MoonStoneStack {
     $services += Start-LocalService -Name 'practice-service' -FilePath 'dotnet' -Arguments $practiceArguments -HealthUrl 'http://127.0.0.1:5107/healthz'
     $creditArguments = "run --project `"$backendRoot\CreditService\CreditService.API\CreditService.API.csproj`" -- --urls http://127.0.0.1:5108 --CreditStore:Provider Memory --Gateway:ServiceKey moonstone-local-gateway-key"
     $services += Start-LocalService -Name 'credit-service' -FilePath 'dotnet' -Arguments $creditArguments -HealthUrl 'http://127.0.0.1:5108/healthz'
-    $services += Start-LocalService -Name 'new-frontend' -FilePath 'npm.cmd' -Arguments 'run dev' -HealthUrl 'http://127.0.0.1:5121/' -WorkingDirectory (Join-Path $projectRoot 'frontend')
+    $services += Start-LocalService -Name 'new-frontend' -FilePath 'npm.cmd' -Arguments 'run dev' -HealthUrl 'http://127.0.0.1:5121/' -WorkingDirectory $frontendRoot
 
     $processManifest = @(
         $services | ForEach-Object {
