@@ -77,13 +77,16 @@ function pageTemplate({ title, content, navigation, previous, next }) {
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="description" content="千知万理使用 Wiki：${escapeHtml(title)}" />
-  <title>${escapeHtml(title)} · 千知万理 Wiki</title>
+  <title>千知万理 · 使用WIKI</title>
   <link rel="stylesheet" href="./res/wiki.css" />
 </head>
 <body>
   <a class="skip-link" href="#wiki-content">跳到正文</a>
   <header class="wiki-header">
-    <a class="wiki-brand" href="/"><strong>千知万理</strong><span>使用 Wiki</span></a>
+    <a class="wiki-brand" href="/">
+      <img class="wiki-brand-logo" src="/brand-logo.svg" alt="" aria-hidden="true" />
+      <strong>千知万理</strong><span>使用 Wiki</span>
+    </a>
     <nav aria-label="站点导航"><a href="/">返回产品首页</a><a href="/login">进入工作台</a></nav>
     <button class="wiki-nav-toggle" type="button" aria-expanded="false" aria-controls="wiki-sidebar">目录</button>
   </header>
