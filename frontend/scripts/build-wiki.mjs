@@ -1,4 +1,5 @@
 import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { marked } from 'marked'
@@ -13,6 +14,11 @@ if (outputArgumentIndex >= 0 && !process.argv[outputArgumentIndex + 1]) {
 const outputRoot = outputArgumentIndex >= 0
   ? resolve(process.cwd(), process.argv[outputArgumentIndex + 1])
   : join(repositoryRoot, 'frontend', 'dist', 'wiki')
+const wikiAssetVersion = createHash('sha256')
+  .update(await readFile(join(wikiRoot, 'res', 'wiki.css')))
+  .update(await readFile(join(wikiRoot, 'res', 'wiki.js')))
+  .digest('hex')
+  .slice(0, 12)
 
 const preferredOrder = [
   'Home.md',
@@ -88,7 +94,7 @@ function pageTemplate({ title, content, navigation, previous, next }) {
   <meta name="description" content="千知万理使用 Wiki：${escapeHtml(title)}" />
   <link rel="icon" type="image/svg+xml" href="/brand-logo.svg" />
   <title>千知万理 · 使用WIKI</title>
-  <link rel="stylesheet" href="./res/wiki.css" />
+  <link rel="stylesheet" href="./res/wiki.css?v=${wikiAssetVersion}" />
 </head>
 <body>
   <a class="skip-link" href="#wiki-content">跳到正文</a>
@@ -112,7 +118,7 @@ function pageTemplate({ title, content, navigation, previous, next }) {
       <footer class="wiki-footer">千知万理 · GalReview 项目使用手册</footer>
     </main>
   </div>
-  <script src="./res/wiki.js" defer></script>
+  <script src="./res/wiki.js?v=${wikiAssetVersion}" defer></script>
 </body>
 </html>`
 }

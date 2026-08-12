@@ -212,9 +212,10 @@ async function serveFrontend(request, response) {
   }
 
   const extension = extname(filePath).toLowerCase()
+  const isWikiRequest = pathname === '/wiki' || pathname.startsWith('/wiki/')
   response.writeHead(200, {
     'Content-Type': contentTypes.get(extension) || 'application/octet-stream',
-    'Cache-Control': filePath.endsWith('index.html')
+    'Cache-Control': isWikiRequest || extension === '.html'
       ? 'no-cache'
       : 'public, max-age=604800, immutable',
   })
