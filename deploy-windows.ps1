@@ -6,7 +6,8 @@ param(
     [string]$PublicUrl = '',
     [string]$CertificateThumbprint = '',
     [switch]$InitializeOnly,
-    [switch]$RequireRunning
+    [switch]$RequireRunning,
+    [switch]$CleanBuildCaches
 )
 
 $ErrorActionPreference = 'Stop'
@@ -28,6 +29,8 @@ $OutputEncoding = $consoleUtf8
 $projectRoot = [IO.Path]::GetFullPath($PSScriptRoot)
 $productionRoot = Join-Path $projectRoot '.production'
 $releasesRoot = Join-Path $productionRoot 'releases'
+$sharedRoot = Join-Path $productionRoot 'shared'
+$sharedModelResourcesRoot = Join-Path $sharedRoot 'model-resources'
 $logsRoot = Join-Path $productionRoot 'logs'
 $manifestPath = Join-Path $productionRoot 'processes.json'
 $currentReleasePath = Join-Path $productionRoot 'current-release.txt'
@@ -970,14 +973,129 @@ function Copy-NodeBuildSource {
     }
 }
 
+function Test-PathIsStrictChild {
+    param(
+        [Parameter(Mandatory)][string]$Parent,
+        [Parameter(Mandatory)][string]$Candidate
+    )
+    $parentPath = [IO.Path]::GetFullPath($Parent).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    $candidatePath = [IO.Path]::GetFullPath($Candidate).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    return $candidatePath.StartsWith($parentPath + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Remove-BuildDirectory {
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    if (-not (Test-PathIsStrictChild (Join-Path $releasesRoot '') $Path) -or
+        ([IO.Path]::GetFullPath($Path) -notmatch '[\\/]\.build[\\/]')) {
+        throw "Refusing to remove an unsafe build directory: $Path"
+    }
+    Remove-Item -LiteralPath $Path -Recurse -Force
+}
+
+function Remove-ProductionRelease {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [string]$Reason = 'Removing production release'
+    )
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    if (-not (Test-PathIsStrictChild $releasesRoot $Path)) {
+        throw "Refusing to remove a release outside ${releasesRoot}: $Path"
+    }
+    Write-Host "$Reason`: $Path" -ForegroundColor DarkYellow
+    Remove-Item -LiteralPath $Path -Recurse -Force
+}
+
+function Remove-OldProductionReleases {
+    param([string[]]$Keep = @())
+    if (-not (Test-Path -LiteralPath $releasesRoot -PathType Container)) { return }
+    $keptPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($path in $Keep) {
+        if ([string]::IsNullOrWhiteSpace($path)) { continue }
+        [void]$keptPaths.Add([IO.Path]::GetFullPath($path).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar))
+    }
+    foreach ($release in Get-ChildItem -LiteralPath $releasesRoot -Directory) {
+        $candidate = [IO.Path]::GetFullPath($release.FullName).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+        if ($keptPaths.Contains($candidate)) { continue }
+        try { Remove-ProductionRelease $candidate 'Removing superseded release' }
+        catch { Write-Warning "Unable to remove old release '$candidate': $($_.Exception.Message)" }
+    }
+}
+
+function Assert-ModelResourceSet {
+    param([Parameter(Mandatory)][string]$Root)
+    $resourceManifestPath = Join-Path $projectRoot 'backend\ModelService\resources.manifest.json'
+    if (-not (Test-Path -LiteralPath $resourceManifestPath -PathType Leaf)) {
+        throw "ModelService resource manifest is missing: $resourceManifestPath"
+    }
+    if (-not (Test-Path -LiteralPath $Root -PathType Container)) {
+        throw "ModelService Resources are missing: $Root"
+    }
+
+    $manifest = Get-Content -LiteralPath $resourceManifestPath -Raw -Encoding utf8 | ConvertFrom-Json
+    if ($manifest.schemaVersion -ne 'qzwl-model-resources-1') {
+        throw "Unsupported ModelService resource manifest version: $($manifest.schemaVersion)"
+    }
+    $rootPath = [IO.Path]::GetFullPath($Root)
+    $rootPrefix = $rootPath.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    foreach ($file in @($manifest.files)) {
+        $relativePath = ([string]$file.path).Replace('/', [IO.Path]::DirectorySeparatorChar)
+        $candidate = [IO.Path]::GetFullPath((Join-Path $rootPath $relativePath))
+        if (-not $candidate.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Unsafe ModelService resource path in manifest: $($file.path)"
+        }
+        if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+            throw "ModelService resource is missing: $candidate"
+        }
+        $item = Get-Item -LiteralPath $candidate
+        if ($item.Length -ne [long]$file.size) {
+            throw "ModelService resource size mismatch: $candidate"
+        }
+        $actualHash = (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actualHash -ne ([string]$file.sha256).ToLowerInvariant()) {
+            throw "ModelService resource hash mismatch: $candidate"
+        }
+    }
+}
+
+function Initialize-SharedModelResources {
+    $source = Join-Path $projectRoot 'backend\ModelService\Resources'
+    New-Item -ItemType Directory -Force -Path $sharedRoot | Out-Null
+
+    if (Test-Path -LiteralPath $sharedModelResourcesRoot -PathType Container) {
+        Assert-ModelResourceSet $sharedModelResourcesRoot
+        if (Test-Path -LiteralPath $source -PathType Container) {
+            Assert-ModelResourceSet $source
+            $sourceItem = Get-Item -LiteralPath $source -Force
+            if (($sourceItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Refusing to remove a reparse-point ModelService resource directory: $source"
+            }
+            Remove-Item -LiteralPath $source -Recurse -Force
+            Write-Host 'Removed the duplicate repository ModelService resource copy.' -ForegroundColor DarkGreen
+        }
+        Write-Host "Using shared ModelService resources: $sharedModelResourcesRoot" -ForegroundColor DarkGreen
+        return
+    }
+
+    Assert-ModelResourceSet $source
+    Move-Item -LiteralPath $source -Destination $sharedModelResourcesRoot
+    Write-Host "Moved ModelService resources into shared storage: $sharedModelResourcesRoot" -ForegroundColor DarkGreen
+}
+
+function Clear-ProductionBuildCaches {
+    if (-not $CleanBuildCaches) { return }
+    Write-Host 'Cleaning npm and NuGet build caches...' -ForegroundColor DarkCyan
+    try { Invoke-NativeCommand 'npm.cmd' @('cache', 'clean', '--force') $projectRoot }
+    catch { Write-Warning "npm cache cleanup failed: $($_.Exception.Message)" }
+    try { Invoke-NativeCommand 'dotnet' @('nuget', 'locals', 'all', '--clear') $projectRoot }
+    catch { Write-Warning "NuGet cache cleanup failed: $($_.Exception.Message)" }
+}
+
 function Build-ProductionRelease {
     Assert-Command 'dotnet'
     Assert-Command 'node'
     Assert-Command 'npm.cmd'
-
-    if (-not (Test-Path -LiteralPath (Join-Path $projectRoot 'backend\ModelService\Resources') -PathType Container)) {
-        throw 'ModelService Resources are missing. Run scripts\download-model-resources.ps1 before building.'
-    }
+    Initialize-SharedModelResources
 
     $wikiSource = Join-Path $projectRoot 'wiki'
     if (-not (Test-Path -LiteralPath (Join-Path $wikiSource 'Home.md') -PathType Leaf)) {
@@ -991,12 +1109,20 @@ function Build-ProductionRelease {
     }
 
     New-Item -ItemType Directory -Force -Path $releasesRoot | Out-Null
+    $previousRelease = ''
+    if (Test-Path -LiteralPath $currentReleasePath -PathType Leaf) {
+        $candidate = (Get-Content -LiteralPath $currentReleasePath -Raw -Encoding utf8).Trim()
+        if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Container)) {
+            $previousRelease = [IO.Path]::GetFullPath($candidate)
+        }
+    }
     $releaseId = (Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss')
     $releaseRoot = Join-Path $releasesRoot $releaseId
     if (Test-Path -LiteralPath $releaseRoot) { $releaseRoot += '-' + [Guid]::NewGuid().ToString('N').Substring(0, 8) }
     New-Item -ItemType Directory -Force -Path $releaseRoot | Out-Null
 
-    Write-Host "Building production release $([IO.Path]::GetFileName($releaseRoot))..." -ForegroundColor Cyan
+    try {
+        Write-Host "Building production release $([IO.Path]::GetFileName($releaseRoot))..." -ForegroundColor Cyan
 
     $dotnetServices = @(
         @{ Name = 'user-service'; Project = 'backend\UserService\GalGame.UserService.csproj' },
@@ -1006,71 +1132,99 @@ function Build-ProductionRelease {
         @{ Name = 'galgame-service'; Project = 'backend\GalGameService\GalGame.GalGameService.csproj' },
         @{ Name = 'practice-service'; Project = 'backend\PracticeService\PracticeService.API\PracticeService.API.csproj' },
         @{ Name = 'credit-service'; Project = 'backend\CreditService\CreditService.API\CreditService.API.csproj' },
-        @{ Name = 'model-service'; Project = 'backend\ModelService\ModelService.API\ModelService.API.csproj' }
+        @{ Name = 'model-service'; Project = 'backend\ModelService\ModelService.API\ModelService.API.csproj'; PublishArguments = @('-p:SkipModelResourcesCopy=true') }
     )
 
     Write-Host '  [1/4] Publishing .NET services...' -ForegroundColor DarkCyan
     foreach ($service in $dotnetServices) {
         $destination = Join-Path $releaseRoot ("services\" + $service.Name)
         New-Item -ItemType Directory -Force -Path $destination | Out-Null
-        Invoke-NativeCommand 'dotnet' @(
+        $publishArguments = @(
             'publish', (Join-Path $projectRoot $service.Project), '-c', 'Release',
             '-o', $destination, '--nologo'
-        ) $projectRoot
+        )
+        if ($service.ContainsKey('PublishArguments')) { $publishArguments += @($service.PublishArguments) }
+        Invoke-NativeCommand 'dotnet' $publishArguments $projectRoot
     }
     Write-Host '        8 backend services published.' -ForegroundColor DarkGreen
 
     Write-Host '  [2/4] Building API Gateway...' -ForegroundColor DarkCyan
     $gatewaySource = Join-Path $projectRoot 'gateway'
     $gatewayBuildSource = Join-Path $releaseRoot '.build\gateway'
-    Copy-NodeBuildSource $gatewaySource $gatewayBuildSource
-    Invoke-NativeCommand 'npm.cmd' @('ci', '--no-audit', '--no-fund') $gatewayBuildSource
-    Invoke-NativeCommand 'npm.cmd' @('run', 'build') $gatewayBuildSource
-    $gatewayDestination = Join-Path $releaseRoot 'gateway'
-    New-Item -ItemType Directory -Force -Path $gatewayDestination | Out-Null
-    Copy-Item -LiteralPath (Join-Path $gatewayBuildSource 'package.json'), (Join-Path $gatewayBuildSource 'package-lock.json') -Destination $gatewayDestination
-    Copy-DirectoryContents (Join-Path $gatewayBuildSource 'dist') (Join-Path $gatewayDestination 'dist')
-    Remove-NonRuntimeNodeArtifacts (Join-Path $gatewayDestination 'dist')
-    Invoke-NativeCommand 'npm.cmd' @('ci', '--omit=dev', '--no-audit', '--no-fund') $gatewayDestination
+    try {
+        Copy-NodeBuildSource $gatewaySource $gatewayBuildSource
+        Invoke-NativeCommand 'npm.cmd' @('ci', '--no-audit', '--no-fund') $gatewayBuildSource
+        Invoke-NativeCommand 'npm.cmd' @('run', 'build') $gatewayBuildSource
+        $gatewayDestination = Join-Path $releaseRoot 'gateway'
+        New-Item -ItemType Directory -Force -Path $gatewayDestination | Out-Null
+        Copy-Item -LiteralPath (Join-Path $gatewayBuildSource 'package.json'), (Join-Path $gatewayBuildSource 'package-lock.json') -Destination $gatewayDestination
+        Copy-DirectoryContents (Join-Path $gatewayBuildSource 'dist') (Join-Path $gatewayDestination 'dist')
+        Remove-NonRuntimeNodeArtifacts (Join-Path $gatewayDestination 'dist')
+        Invoke-NativeCommand 'npm.cmd' @('ci', '--omit=dev', '--no-audit', '--no-fund') $gatewayDestination
+    }
+    finally {
+        Remove-BuildDirectory $gatewayBuildSource
+    }
     Write-Host '        Gateway production package ready.' -ForegroundColor DarkGreen
 
     Write-Host '  [3/4] Building RenderService...' -ForegroundColor DarkCyan
     $renderSource = Join-Path $projectRoot 'backend\RenderService\service'
     $renderBuildSource = Join-Path $releaseRoot '.build\render-service'
-    Copy-NodeBuildSource $renderSource $renderBuildSource
-    Invoke-NativeCommand 'npm.cmd' @('ci', '--no-audit', '--no-fund') $renderBuildSource
-    Invoke-NativeCommand 'npm.cmd' @('run', 'build') $renderBuildSource
-    $renderDestination = Join-Path $releaseRoot 'render-service'
-    Copy-DirectoryContents (Join-Path $renderBuildSource 'dist') (Join-Path $renderDestination 'dist')
-    Copy-DirectoryContents (Join-Path $renderBuildSource 'demo') (Join-Path $renderDestination 'demo')
-    Copy-Item -LiteralPath (Join-Path $renderBuildSource 'runtime.wasm.base64') -Destination $renderDestination
-    Remove-NonRuntimeNodeArtifacts (Join-Path $renderDestination 'dist')
+    try {
+        Copy-NodeBuildSource $renderSource $renderBuildSource
+        Invoke-NativeCommand 'npm.cmd' @('ci', '--no-audit', '--no-fund') $renderBuildSource
+        Invoke-NativeCommand 'npm.cmd' @('run', 'build') $renderBuildSource
+        $renderDestination = Join-Path $releaseRoot 'render-service'
+        Copy-DirectoryContents (Join-Path $renderBuildSource 'dist') (Join-Path $renderDestination 'dist')
+        Copy-DirectoryContents (Join-Path $renderBuildSource 'demo') (Join-Path $renderDestination 'demo')
+        Copy-Item -LiteralPath (Join-Path $renderBuildSource 'runtime.wasm.base64') -Destination $renderDestination
+        Remove-NonRuntimeNodeArtifacts (Join-Path $renderDestination 'dist')
+    }
+    finally {
+        Remove-BuildDirectory $renderBuildSource
+    }
     Write-Host '        RenderService production package ready.' -ForegroundColor DarkGreen
 
     Write-Host '  [4/4] Building frontend...' -ForegroundColor DarkCyan
     $frontendSource = Join-Path $projectRoot 'frontend'
     $frontendBuildSource = Join-Path $releaseRoot '.build\frontend'
     $wikiBuildSource = Join-Path $releaseRoot '.build\wiki'
-    Copy-NodeBuildSource $frontendSource $frontendBuildSource
-    Copy-DirectoryContents $wikiSource $wikiBuildSource
-    Invoke-NativeCommand 'npm.cmd' @('ci', '--no-audit', '--no-fund') $frontendBuildSource
-    Invoke-NativeCommand 'npm.cmd' @('run', 'build') $frontendBuildSource
-    $frontendDestination = Join-Path $releaseRoot 'frontend'
-    New-Item -ItemType Directory -Force -Path $frontendDestination | Out-Null
-    Copy-Item -LiteralPath (Join-Path $frontendBuildSource 'server.mjs') -Destination $frontendDestination
-    Copy-DirectoryContents (Join-Path $frontendBuildSource 'dist') (Join-Path $frontendDestination 'dist')
-    $exposedSourceFiles = @(Get-ChildItem -LiteralPath (Join-Path $frontendDestination 'dist') -Recurse -File |
-        Where-Object { $_.Extension -in @('.map', '.ts', '.tsx') })
-    if ($exposedSourceFiles.Count -gt 0) {
-        throw 'Frontend production output unexpectedly contains source or source-map files.'
+    try {
+        Copy-NodeBuildSource $frontendSource $frontendBuildSource
+        Copy-DirectoryContents $wikiSource $wikiBuildSource
+        Invoke-NativeCommand 'npm.cmd' @('ci', '--no-audit', '--no-fund') $frontendBuildSource
+        Invoke-NativeCommand 'npm.cmd' @('run', 'build') $frontendBuildSource
+        $frontendDestination = Join-Path $releaseRoot 'frontend'
+        New-Item -ItemType Directory -Force -Path $frontendDestination | Out-Null
+        Copy-Item -LiteralPath (Join-Path $frontendBuildSource 'server.mjs') -Destination $frontendDestination
+        Copy-DirectoryContents (Join-Path $frontendBuildSource 'dist') (Join-Path $frontendDestination 'dist')
+        $exposedSourceFiles = @(Get-ChildItem -LiteralPath (Join-Path $frontendDestination 'dist') -Recurse -File |
+            Where-Object { $_.Extension -in @('.map', '.ts', '.tsx') })
+        if ($exposedSourceFiles.Count -gt 0) {
+            throw 'Frontend production output unexpectedly contains source or source-map files.'
+        }
+    }
+    finally {
+        Remove-BuildDirectory $frontendBuildSource
+        Remove-BuildDirectory $wikiBuildSource
     }
     Write-Host '        Frontend production assets ready.' -ForegroundColor DarkGreen
 
-    Remove-Item -LiteralPath (Join-Path $releaseRoot '.build') -Recurse -Force
+        $buildRoot = Join-Path $releaseRoot '.build'
+        if (Test-Path -LiteralPath $buildRoot) { Remove-Item -LiteralPath $buildRoot -Recurse -Force }
 
-    Set-Content -LiteralPath $currentReleasePath -Value $releaseRoot -Encoding utf8
-    Write-Host "Production release built: $releaseRoot" -ForegroundColor Green
-    return $releaseRoot
+        Remove-OldProductionReleases @($releaseRoot, $previousRelease)
+        Set-Content -LiteralPath $currentReleasePath -Value $releaseRoot -Encoding utf8
+        Clear-ProductionBuildCaches
+        Write-Host "Production release built: $releaseRoot" -ForegroundColor Green
+        return $releaseRoot
+    }
+    catch {
+        $buildError = $_
+        try { Remove-ProductionRelease $releaseRoot 'Removing incomplete release' }
+        catch { Write-Warning "Unable to remove incomplete release '$releaseRoot': $($_.Exception.Message)" }
+        throw $buildError
+    }
 }
 
 function Get-CurrentRelease {
@@ -1308,7 +1462,7 @@ function Start-ProductionServices {
             },
             @{
                 Name = 'model-service'; File = Join-Path $releaseRoot 'services\model-service\ModelService.API.exe'; Work = Join-Path $releaseRoot 'services\model-service'; Health = 'http://127.0.0.1:5109/readyz';
-                Env = $commonAspNet + @{ ASPNETCORE_URLS = 'http://127.0.0.1:5109'; Gateway__ServiceKey = Get-Setting 'MODEL_SERVICE_KEY'; Nli__MinimumTopProbability = Get-Setting 'MODEL_NLI_MIN_TOP_PROBABILITY' '0.75'; Nli__MinimumMargin = Get-Setting 'MODEL_NLI_MIN_MARGIN' '0.20' }
+                Env = $commonAspNet + @{ ASPNETCORE_URLS = 'http://127.0.0.1:5109'; Gateway__ServiceKey = Get-Setting 'MODEL_SERVICE_KEY'; ModelResources__RootPath = $sharedModelResourcesRoot; Nli__MinimumTopProbability = Get-Setting 'MODEL_NLI_MIN_TOP_PROBABILITY' '0.75'; Nli__MinimumMargin = Get-Setting 'MODEL_NLI_MIN_MARGIN' '0.20' }
             },
             @{
                 Name = 'practice-service'; File = Join-Path $releaseRoot 'services\practice-service\PracticeService.API.exe'; Work = Join-Path $releaseRoot 'services\practice-service'; Health = 'http://127.0.0.1:5107/readyz';
@@ -1416,6 +1570,11 @@ function Invoke-DeploymentAction {
                         catch { Write-Warning "The previous release could not be restarted: $($_.Exception.Message)" }
                     }
                 }
+                elseif (Test-Path -LiteralPath $currentReleasePath -PathType Leaf) {
+                    Remove-Item -LiteralPath $currentReleasePath -Force
+                }
+                try { Remove-ProductionRelease $newRelease 'Removing release that failed startup checks' }
+                catch { Write-Warning "Unable to remove failed release '$newRelease': $($_.Exception.Message)" }
                 throw $deploymentError
             }
             break

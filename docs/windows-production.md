@@ -14,7 +14,7 @@ Windows 生产发布不需要单独部署 Wiki 服务。Frontend 构建阶段从
 - Windows Server 已安装 Node.js 22 和 .NET 10 SDK；
 - MySQL、MongoDB 和 Neo4j 已作为 Windows 服务启动；
 - MySQL 中已创建 `galreview_user`、`galreview_auth`、`qzwl_credit` 数据库；
-- `backend/ModelService/Resources` 已通过 `scripts/download-model-resources.ps1` 按 `backend/ModelService/resources.manifest.json` 恢复并通过哈希校验；
+- 首次部署前，模型资源可以恢复到 `backend/ModelService/Resources`；部署脚本会校验后将其移动到 `.production/shared/model-resources`，后续所有 release 共用这一份资源。也可以直接运行 `scripts/download-model-resources.ps1 -DestinationPath .production/shared/model-resources`；
 - 公网入口可由本脚本自动安装和配置 IIS，也可自行使用 Nginx/Caddy 反向代理至 `127.0.0.1:5120`。
 
 ## 配置
@@ -45,6 +45,16 @@ Set-ExecutionPolicy -Scope Process Bypass
 3. 从运行产物中排除 TypeScript declaration/source map，并确认前端 `dist` 不含 `.ts`/`.tsx`/`.map`；
 4. 停止上一个由本脚本记录的版本；
 5. 按依赖顺序启动新版本，逐个等待 `/readyz`/`healthz`。
+
+Windows 发布默认使用低空间模式：Gateway、RenderService 和 Frontend 的临时 `.build` 会在各自打包结束后立即删除；未完成或未通过启动检查的新 release 会自动删除；成功构建后只保留当前版本与上一版本。ModelService 的约 518 MiB 只读模型资源位于 `.production/shared/model-resources`，不会复制进每个新 release。
+
+若服务器磁盘非常紧张，可在成功构建后同时清空 npm 与 NuGet 下载缓存：
+
+```powershell
+.\deploy-windows.ps1 -Action Deploy -CleanBuildCaches
+```
+
+缓存清理默认关闭；启用后下一次构建需要重新下载依赖，因此仅建议在磁盘空间比下载时间更重要时使用。
 
 如果新版本未通过健康检查，脚本会停止其已启动的进程，并尝试恢复此前正在运行的版本。
 

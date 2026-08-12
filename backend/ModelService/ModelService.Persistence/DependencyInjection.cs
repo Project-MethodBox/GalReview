@@ -11,7 +11,11 @@ public static class DependencyInjection
         IConfiguration configuration,
         string contentRoot)
     {
-        services.AddSingleton(new ModelAssetCatalog(Path.Combine(contentRoot, "Resources")));
+        var configuredRoot = configuration["ModelResources:RootPath"];
+        var resourceRoot = string.IsNullOrWhiteSpace(configuredRoot)
+            ? Path.Combine(contentRoot, "Resources")
+            : Path.GetFullPath(configuredRoot, contentRoot);
+        services.AddSingleton(new ModelAssetCatalog(resourceRoot));
         services.AddSingleton<IModelAssetStatusReader>(provider =>
             provider.GetRequiredService<ModelAssetCatalog>());
         services.AddSingleton<IFacetInferenceEngine, MultilingualNliInferenceEngine>();

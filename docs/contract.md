@@ -2016,7 +2016,7 @@ SMTP、HTTP(S)、SOCKS 等第三方协议端口不受该范围限制。测试监
 - GalGameService 使用 `Gateway__BaseUrl`、`Gateway__ServiceKey`、`InternalAccess__ValidationAllowedServices__0`、`InternalAccess__PackageReaderAllowedServices__0` 和 `NarrativeGeneration__*`；两个 INTERNAL 调用方默认都只允许 `RenderService`，叙事 API key 只从 `DEEPSEEK_API_KEY` 注入；
 - PracticeService 使用 `Gateway__BaseUrl`、`Gateway__ServiceName=PracticeService`、`Gateway__ServiceKey` 和 MongoDB 连接串；主观题必要事实通过 Gateway 调用 ModelService，不在本进程装载模型；
 - CreditService 使用 `Gateway__ServiceKey`、`CreditStore__Provider=MySQL` 与独立 `ConnectionStrings__CreditDatabase`；
-- ModelService 使用 `Gateway__ServiceKey`、`Nli__MinimumTopProbability`、`Nli__MinimumMargin` 与构建前恢复的只读 `Resources`；不配置数据库连接；
+- ModelService 使用 `Gateway__ServiceKey`、`Nli__MinimumTopProbability`、`Nli__MinimumMargin` 与只读模型资源；资源根目录默认是服务内容目录下的 `Resources`，Windows 低空间发布通过 `ModelResources__RootPath` 指向 `.production/shared/model-resources`，供当前与回滚 release 共用；不配置数据库连接；
 - RenderService 基础壳只使用 `PORT`；未来实现 INTERNAL 回调时再启用 `Gateway__BaseUrl`、`Gateway__ServiceName` 与 `Gateway__ServiceKey`；
 - AuthService、UserService 与 CreditService 分别使用自己的 `Gateway__ServiceKey`、独立 MySQL 连接串和独立数据卷；Auth/User 服务器模板固定使用 `MySql` 模式，本地可显式覆盖为 `Mock`，CreditService 生产固定使用 MySQL。Compose 内部 MySQL 8.4 的 `caching_sha2_password` 连接串包含 `AllowPublicKeyRetrieval=True` 且端口不外露；改接外部数据库时必须使用受信 CA 的 TLS；
 - Frontend 使用 `GATEWAY_UPSTREAM`，AuthService 的可选邮件配置使用 `SMTP_*` 与 `ACCOUNT_FRONTEND_BASE_URL`；

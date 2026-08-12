@@ -11,7 +11,7 @@
     <ProjectReference Include="..\ModelService.Persistence\ModelService.Persistence.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <Content Include="..\Resources\**\*.*" Link="Resources\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\Resources\**\*.*" Link="Resources\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" Condition="'$(SkipModelResourcesCopy)' != 'true'" />
     <Content Include="..\THIRD_PARTY_LICENSES\**\*.*" Link="THIRD_PARTY_LICENSES\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\NOTICE.md" Link="NOTICE.md" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
