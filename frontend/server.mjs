@@ -227,6 +227,15 @@ const server = createServer((request, response) => {
     response.end('ok\n')
     return
   }
+  if (requestPath(request) === '/wiki') {
+    const search = new URL(request.url || '/wiki', 'http://frontend').search
+    response.writeHead(308, {
+      Location: `/wiki/${search}`,
+      'Cache-Control': 'no-cache',
+    })
+    response.end()
+    return
+  }
   if (request.url?.startsWith('/api/')) {
     proxyToGateway(request, response)
     return
