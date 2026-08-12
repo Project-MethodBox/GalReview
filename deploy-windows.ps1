@@ -979,6 +979,11 @@ function Build-ProductionRelease {
         throw 'ModelService Resources are missing. Run scripts\download-model-resources.ps1 before building.'
     }
 
+    $wikiSource = Join-Path $projectRoot 'wiki'
+    if (-not (Test-Path -LiteralPath (Join-Path $wikiSource 'Home.md') -PathType Leaf)) {
+        throw "Wiki sources are missing. Expected $wikiSource\Home.md."
+    }
+
     $legacyPracticeModelScoring = Join-Path $projectRoot 'backend\PracticeService\PracticeService.Persistence\ModelScoring.cs'
     if (Test-Path -LiteralPath $legacyPracticeModelScoring -PathType Leaf) {
         Write-Warning "Ignoring obsolete PracticeService source left by an overlay update: $legacyPracticeModelScoring"
@@ -1045,7 +1050,9 @@ function Build-ProductionRelease {
     Write-Host '  [4/4] Building frontend...' -ForegroundColor DarkCyan
     $frontendSource = Join-Path $projectRoot 'frontend'
     $frontendBuildSource = Join-Path $releaseRoot '.build\frontend'
+    $wikiBuildSource = Join-Path $releaseRoot '.build\wiki'
     Copy-NodeBuildSource $frontendSource $frontendBuildSource
+    Copy-DirectoryContents $wikiSource $wikiBuildSource
     Invoke-NativeCommand 'npm.cmd' @('ci', '--no-audit', '--no-fund') $frontendBuildSource
     Invoke-NativeCommand 'npm.cmd' @('run', 'build') $frontendBuildSource
     $frontendDestination = Join-Path $releaseRoot 'frontend'
