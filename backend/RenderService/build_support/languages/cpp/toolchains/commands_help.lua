@@ -41,14 +41,18 @@ local toolchains_config_help = {
     {"--toolchains_auto=<true|false>", "Enable or disable automatic bootstrap/use of the project-local GCC toolchain during plain xmake builds."},
     {"--toolchains_target=<triplet>", "Override the inferred GNU target triplet."},
     {"--gcc_features=<list>", "Comma/space separated feature names appended globally through gcc.features."},
-    {"--gcc_git_url=<url>", "GCC git repository URL."},
-    {"--gcc_ref=<ref>", "GCC branch, tag, or commit label used by the manager."},
-    {"--darwin_arm64_gcc_git_url=<url>", "Darwin Arm64 GCC git repository URL."},
-    {"--darwin_arm64_gcc_ref=<ref>", "Darwin Arm64 GCC branch, tag, or commit label used by the manager."},
-    {"--wasm_gcc_git_url=<url>", "Experimental GCC WebAssembly backend repository URL."},
-    {"--wasm_gcc_ref=<commit>", "Pinned experimental GCC WebAssembly backend commit."},
-    {"--wasm_wabt_git_url=<url>", "Annotated-WAT WABT fork repository required by the GCC backend."},
-    {"--wasm_wabt_ref=<commit>", "Pinned WABT fork commit."},
+    -- The eight source-identity options below override the project defaults
+    -- for THIS configuration only; each config store keeps its own copy. Pass
+    -- an empty value (`--gcc_ref=`) to drop the override and follow the
+    -- project default again.
+    {"--gcc_git_url=<url>", "Override the GCC git repository URL."},
+    {"--gcc_ref=<ref>", "Override the GCC branch, tag, or commit the manager syncs."},
+    {"--darwin_arm64_gcc_git_url=<url>", "Override the Darwin Arm64 GCC git repository URL."},
+    {"--darwin_arm64_gcc_ref=<ref>", "Override the Darwin Arm64 GCC branch, tag, or commit the manager syncs."},
+    {"--wasm_gcc_git_url=<url>", "Override the GCC WebAssembly backend repository URL."},
+    {"--wasm_gcc_ref=<commit>", "Override the pinned GCC WebAssembly backend commit."},
+    {"--wasm_wabt_git_url=<url>", "Override the annotated-WAT WABT fork repository required by the GCC backend."},
+    {"--wasm_wabt_ref=<commit>", "Override the pinned WABT fork commit."},
     {"--wasm_ld=<path>", "wasm-ld override for WebAssembly linking; the managed Emscripten toolset LLVM is used when unset."},
     {"--wasm_node=<path>", "Node.js override for running WebAssembly modules; the managed Emscripten toolset Node is used when unset."},
     {"--wasm_exit_runtime=<auto|true|false>", "Tear down the Emscripten runtime when main returns (default on; set false for long-lived browser targets)."},

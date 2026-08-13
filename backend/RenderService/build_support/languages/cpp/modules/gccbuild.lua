@@ -23,6 +23,12 @@ import("hostboot")
 import("gcctargets")
 import("gccinstall")
 
+-- Captured at LOAD time on purpose: inside a function body os.scriptdir()
+-- reports the caller's script directory, not this module's, so a path built
+-- there silently points somewhere else (embed_longpath_manifest quietly found
+-- no manifest and did nothing until this was pinned down).
+local MODULE_DIR = os.scriptdir()
+
 -- Mirrored option fallbacks. options.lua owns the description-scope
 -- originals (option() defaults are evaluated before any module can load, so
 -- they cannot move here), and script scope cannot see description globals.
@@ -266,6 +272,69 @@ local function download_binutils_snapshot(force)
     return src
 end
 
+-- Windows lifts MAX_PATH per PROCESS, through an embedded manifest -- the
+-- machine-wide LongPathsEnabled switch only makes that opt-in possible, it
+-- does not grant it. A compiler without the manifest therefore cannot write a
+-- file past MAX_PATH no matter how the machine is configured, which is why a
+-- build died on `save ...<partition>.gcm.d failed, cannot open file, the
+-- system cannot find the path specified` for exactly the longest module
+-- partition while every shorter one in the same run went through
+-- (2026-08-12). Measured with a mingw-built fopen() probe on this host: 253
+-- chars succeeded either way, 278 and 328 failed unmanifested and succeeded
+-- manifested -- so mingw's CRT does reach the wide API and the manifest is
+-- the whole fix. xmake.exe already carries the same manifest for the same
+-- reason; this gives the toolchains the project's stated stance instead of
+-- making module partition names pay for a single platform's limit.
+--
+-- Skipped with a warning when mt.exe is absent: it ships with the Windows
+-- SDK, which is not a build prerequisite, and a toolchain without the
+-- manifest is merely limited, not broken.
+local function embed_longpath_manifest(target_os)
+    if not base.is_windows_host() then
+        return
+    end
+    local prefix = settings.gcc_prefix(target_os)
+    local stamp = path.join(prefix, ".xmake-longpath-manifest")
+    if os.isfile(stamp) then
+        return
+    end
+    local manifest = path.join(MODULE_DIR, "..", "toolchains", "longpath.manifest")
+    if not os.isfile(manifest) then
+        return
+    end
+    -- Newest SDK wins; os.files returns them sorted, so take the last.
+    local candidates = os.files(path.join(os.getenv("ProgramFiles(x86)") or "C:\\Program Files (x86)",
+        "Windows Kits", "10", "bin", "*", "x64", "mt.exe"))
+    local mt = candidates[#candidates] or hosttools.find_tool_path("mt")
+    if not mt or not os.isfile(mt) then
+        errors.warn("mt.exe (Windows SDK) was not found, so the managed toolchain keeps the default MAX_PATH limit; builds whose module partition paths exceed it will fail saving .gcm.d dependency files")
+        return
+    end
+
+    local binaries = {}
+    for _, pattern in ipairs({path.join(prefix, "bin", "*.exe"), path.join(prefix, "libexec", "**", "*.exe")}) do
+        for _, file in ipairs(os.files(pattern)) do
+            table.insert(binaries, file)
+        end
+    end
+    local embedded = 0
+    for _, binary in ipairs(binaries) do
+        -- try: a driver alias or a file another process still holds must not
+        -- fail the install over an optional capability
+        local ok = errors.trycall(function ()
+            os.runv(mt, {"-nologo", "-manifest", manifest, "-outputresource:" .. binary .. ";#1"})
+            return true
+        end)
+        if ok then
+            embedded = embedded + 1
+        end
+    end
+    if embedded > 0 then
+        print(string.format("embedded the long-path manifest into %d toolchain executable(s)", embedded))
+        base.writefile_bytes(stamp, "ok\n")
+    end
+end
+
 local function strip_installed_toolchain(target_os)
     if not settings.strip_enabled() then
         return
@@ -461,6 +530,12 @@ function finalize_existing_toolchain_install(target_os)
     if provider.finalize then
         provider.finalize(target_os)
     end
+    -- Unconditional: the long-path manifest is a property of the installed
+    -- BINARIES, not of the stamp lifecycle. Gating it on "no stamp yet" would
+    -- have left every already-installed toolchain limited until someone
+    -- happened to rebuild it -- hours of work to collect a capability that
+    -- costs one file write. Its own stamp makes the re-run an os.isfile().
+    embed_longpath_manifest(target_os)
     if not os.isfile(settings.stamp_file(target_os)) then
         errors.log("finalizing existing project-local GCC toolchain")
         strip_installed_toolchain(target_os)
@@ -480,6 +555,39 @@ function managed_toolchains_gcc_configure_makefile_complete(makefile)
     end
     local content = io.readfile(makefile) or ""
     return content:find("configure%-gcc", 1, false) ~= nil
+end
+
+-- An autoconf build directory bakes the ABSOLUTE path of the shell that
+-- configured it into its Makefile and config.status, and re-execs that shell
+-- whenever the source tree changes underneath it (`config.status --recheck`,
+-- which a source-revision bump always triggers). If that shell came from the
+-- transient private bootstrap and the bootstrap has since been removed, make
+-- dies on `config.status: exec: .../sh.exe: not found` -- an error that names
+-- the missing file but not the stale party, and that no amount of retrying
+-- fixes. Detect the dead recording up front and reconfigure from scratch.
+--
+-- Validated rather than folded into the configure signature on purpose: the
+-- shell legitimately differs between a bootstrap build and a host build, so
+-- signing it would make those two alternately discard each other's build
+-- directory. Same reasoning as the recorded CMake make-program check in
+-- gccwasm.lua.
+function managed_toolchains_configure_shell_present(build)
+    local makefile = path.join(build, "Makefile")
+    if not os.isfile(makefile) then
+        return true
+    end
+    local shell = (io.readfile(makefile) or ""):match("[\r\n]SHELL = ([^\r\n]+)")
+    shell = shell and base.trim(shell) or ""
+    -- Only an absolute recording can be checked: a bare `sh` is resolved
+    -- through PATH at run time and says nothing about this directory.
+    if shell == "" or not path.is_absolute(shell) or shell:find("$", 1, true) then
+        return true
+    end
+    if os.isfile(shell) then
+        return true
+    end
+    print("discarding the build directory: the shell it was configured with is gone (" .. shell .. ")")
+    return false
 end
 
 local function patch_install_macros_to_cp_file(file, label)
@@ -528,6 +636,16 @@ end
 -- restart, on a machine where the very same probe passes once the platform
 -- settles. Run the same compile+run+write probe up front so the failure is
 -- immediate and the message actionable instead of autoconf archaeology.
+--
+-- Both steps go through the POSIX shell whenever one exists, because that is
+-- how the real build invokes them and the difference is not cosmetic: the
+-- build environment's PATH is assembled in SHELL form (POSIX separator and
+-- entry syntax), so handing it straight to a native CreateProcess yields a
+-- PATH Windows cannot parse. A compiler that needs its own bin directory on
+-- PATH to reach cc1 -- the host w64devkit does -- then fails with "cannot
+-- execute 'cc1'" in a probe whose whole purpose is to exonerate the compiler.
+-- Lived through on 2026-08-12: a healthy compiler was reported broken while
+-- the identical command succeeded by hand.
 function ensure_fresh_binary_can_run(build, build_envs)
     local cc = build_envs and build_envs.CC
     if not cc or cc == "" then
@@ -548,15 +666,32 @@ function ensure_fresh_binary_can_run(build, build_envs)
         "}",
         ""
     }, "\n"))
-    local compiled = errors.trycall(function ()
-        os.runv(cc, {"-o", program, source}, {curdir = build, envs = build_envs})
+    local shell = hosttools.preferred_posix_shell()
+    local shelled = shell and os.isfile(shell)
+    local function probe_step(tool, argv)
+        if shelled then
+            local command = base.shquote(tool)
+            for _, argument in ipairs(argv) do
+                command = command .. " " .. base.shquote(argument)
+            end
+            return os.iorunv(shell, {"-c", command}, {curdir = build, envs = build_envs})
+        end
+        return os.iorunv(tool, argv, {curdir = build, envs = build_envs})
+    end
+    -- Capture the compiler's own diagnostics: without them this failure only
+    -- ever said "cannot compile a trivial probe", which points at the compiler
+    -- while the real cause is just as often the environment handed to it.
+    local compiled, output = errors.trycall(function ()
+        local out, err = probe_step(cc, {"-o", program, source})
+        return base.trim((out or "") .. (err or ""))
     end)
     if not compiled or not os.isfile(program) then
         os.tryrm(source)
-        errors.fail("the configure-stage C compiler %s cannot compile a trivial probe under %s; the bootstrap toolchain is broken or quarantined -- fix or reinstall it, then rerun the same xmake command", cc, build)
+        errors.fail("the configure-stage C compiler %s cannot compile a trivial probe under %s; the bootstrap toolchain is broken or quarantined -- fix or reinstall it, then rerun the same xmake command%s",
+            cc, build, (type(output) == "string" and output ~= "") and ("\n  compiler output: " .. output) or "")
     end
     local ran = errors.trycall(function ()
-        os.runv(program, {}, {curdir = build, envs = build_envs})
+        probe_step(program, {})
     end)
     local wrote = os.isfile(marker)
     os.tryrm(source)
@@ -597,7 +732,8 @@ local function configure_binutils(target_os)
     local sigfile = path.join(build, ".xmake-configure")
     local signature = gccinstall.configure_signature(args, target_os, nil, gcctargets.signature_extra(target_os))
     local old_signature = os.isfile(sigfile) and base.trim(io.readfile(sigfile)) or ""
-    if os.isfile(path.join(build, "Makefile")) and old_signature ~= base.trim(signature) then
+    if os.isfile(path.join(build, "Makefile")) and (old_signature ~= base.trim(signature)
+            or not managed_toolchains_configure_shell_present(build)) then
         reset_build_dir(build)
     end
     os.mkdir(build)
@@ -704,9 +840,9 @@ local function configure_gcc(target_os)
     local makefile = path.join(build, "Makefile")
     local signature = gccinstall.configure_signature(args, target_os, src, gcctargets.signature_extra(target_os))
     local old_signature = os.isfile(sigfile) and base.trim(io.readfile(sigfile)) or ""
-    if os.isfile(makefile) and not managed_toolchains_gcc_configure_makefile_complete(makefile) then
-        reset_build_dir(build)
-    elseif os.isfile(makefile) and old_signature ~= base.trim(signature) then
+    if os.isfile(makefile) and (not managed_toolchains_gcc_configure_makefile_complete(makefile)
+            or not managed_toolchains_configure_shell_present(build)
+            or old_signature ~= base.trim(signature)) then
         reset_build_dir(build)
     end
     os.mkdir(build)
@@ -1184,6 +1320,30 @@ local function patch_gcc_makefile_for_windows(build, target_os)
             path.join(libstdcxx, "src", ".libs", "libstdc++.lai"),
             "libstdc++-v3/src/.libs/libstdc++.lai")
     end
+
+    -- Keep this pass's edits from being thrown away mid-make. GNU make honours
+    -- the generated `config.status: configure` and `Makefile: Makefile.in
+    -- config.status` rules: if the SOURCE configure looks newer, make re-execs
+    -- config.status, REGENERATES the top-level Makefile from Makefile.in and
+    -- restarts -- silently discarding everything patched above, including the
+    -- no-op override that keeps GCC's in-tree gettext from being configured.
+    -- The source tree legitimately gets a newer mtime whenever the patch pass
+    -- restores and re-applies it (a sibling target syncing the SHARED mainline
+    -- tree is enough), so this fires long after configure ran.
+    --
+    -- That recheck is spurious here: configure_gcc() has just run configure for
+    -- the current signature, and a signature change resets the whole build
+    -- directory instead. So stamp the outputs as newer than their inputs. The
+    -- alternative -- re-patching after each failure -- was tried first and does
+    -- not converge: the retry re-triggers the same recheck (2026-08-12, both
+    -- cross toolchains and finally the native one all died in gettext's
+    -- configure with "no acceptable egrep", w64devkit having none autoconf
+    -- accepts).
+    local config_status = path.join(build, "config.status")
+    if os.isfile(config_status) then
+        os.touch(config_status)
+    end
+    os.touch(makefile)
 end
 
 -- The per-prefix cross-process install lock file (beside the install stamp).
@@ -1283,7 +1443,11 @@ function build_gcc_for(target_os, opt)
     envs.MAKEINFO = "true"
     local make = hosttools.preferred_host_tool(settings.value_or("toolchains_make", "make"))
     errors.log("configuring GCC make targets")
-    makerunner.run_make_target(make, build, envs, "configure-gcc")
+    makerunner.run_make_target(make, build, envs, "configure-gcc", {
+        before_retry = function ()
+            patch_gcc_makefile_for_windows(build, target_os)
+        end
+    })
     gccsources.patch_gcc_libcody_revision_makefile(path.join(build, "libcody", "Makefile"), mounted_windows_drive_source)
     gccsources.sync_gcc_generated_sources_to_build(source_dir, build)
     patch_gcc_makefile_for_windows(build, target_os)
@@ -1306,7 +1470,11 @@ function build_gcc_for(target_os, opt)
             step.before()
         end
         for _, make_target in ipairs(step.targets or {}) do
-            makerunner.run_make_target(make, build, envs, make_target)
+            makerunner.run_make_target(make, build, envs, make_target, {
+                before_retry = function ()
+                    patch_gcc_makefile_for_windows(build, target_os)
+                end
+            })
             if step.patch == true then
                 plan_context.patch()
             elseif step.patch then
@@ -1325,6 +1493,7 @@ function build_gcc_for(target_os, opt)
         provider.finalize(target_os)
     end
     strip_installed_toolchain(target_os)
+    embed_longpath_manifest(target_os)
     install_stamp(target_os)
     cleanup_windows_bootstrap_toolchain_after_success(target_os)
     end)

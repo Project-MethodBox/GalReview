@@ -141,21 +141,24 @@ end
 
 local source_pin_warned
 
--- Every source pin this project bumps by editing its built-in default. xmake
--- freezes an option's value into the config store at configure time, so a
--- bumped default stays INVISIBLE to an already-configured checkout: the sync
--- keeps restoring the old revision, the patch families verify the old tree,
--- and the command exits 0 having done nothing (lived through on 2026-08-12 --
--- a pin jump that silently rebuilt the previous baseline). Worse, each config
--- store carries its own copy: the root, every lane, and the test subproject
--- must each be re-stated, and one that is missed builds different sources than
--- its siblings with no other symptom.
+-- Upstream source identity: which repository and which revision each managed
+-- GCC line is built from. The project bumps these by editing their built-in
+-- default in defaults.lua, and the matching options default to EMPTY so the
+-- edit reaches every configuration (see the note in languages/cpp/options.lua
+-- -- a mirrored option default froze into each store at configure time, which
+-- on 2026-08-12 let a pin jump exit 0 having silently rebuilt the previous
+-- baseline, and left three lane stores pointing at a retired repository).
 --
--- Warning rather than failing is deliberate: a stored value that differs from
--- the default is also exactly what a legitimate `--<pin>=` override looks
--- like, and nothing persisted distinguishes the two. So this says what it
--- sees, names the fix, and leaves the judgement to the operator.
-local SOURCE_PINS = {"wasm_gcc_ref", "wasm_wabt_ref", "gcc_ref", "darwin_arm64_gcc_ref"}
+-- With empty defaults a stored value can only come from an explicit
+-- `--<name>=` override, so that is what this reports: it names the store's
+-- override and the default it is shadowing. It warns rather than fails
+-- because overriding is legitimate -- the risk is a FORGOTTEN override, and
+-- an override is per-store, so a sibling store can still be on the default.
+local SOURCE_PINS =
+{
+    "wasm_gcc_ref", "wasm_wabt_ref", "gcc_ref", "darwin_arm64_gcc_ref",
+    "wasm_gcc_git_url", "wasm_wabt_git_url", "gcc_git_url", "darwin_arm64_gcc_git_url"
+}
 
 function warn_source_pin_drift()
     if source_pin_warned then
@@ -168,8 +171,8 @@ function warn_source_pin_drift()
             local active = tostring(value_or(pin, builtin))
             if active ~= builtin then
                 errors.warn(
-                    "this configuration pins %s to %s while the project's built-in default is now %s -- xmake froze the option when the configuration was written, so a bumped default cannot reach it; if the difference is not intentional, restate it (`xmake f --%s=%s -y`) in EVERY config store: the root, each lane under build/<plat>, and the test subproject",
-                    pin, active, builtin, pin, builtin)
+                    "this configuration overrides %s to %s, shadowing the project default %s -- the override lives in this config store only, so its siblings (the root, each lane under build/<plat>, the test subproject) may be building different sources; drop it with `xmake f --%s= -y` to follow the project default again",
+                    pin, active, builtin, pin)
             end
         end
     end
@@ -440,7 +443,11 @@ function gcc_source_profile(target_os)
             name = "wasm-experimental",
             cache_name = "gcc-wasm-experimental",
             url = value_or("wasm_gcc_git_url", defaults.wasm_gcc_git_url),
-            ref = value_or("wasm_gcc_ref", defaults.wasm_gcc_ref)
+            ref = value_or("wasm_gcc_ref", defaults.wasm_gcc_ref),
+            -- prerequisite of the THIN bundle this line ships in-repo; the
+            -- restore fetches it from the URL above before applying the
+            -- bundle (see the note beside wasm_gcc_base_ref in defaults.lua)
+            base_ref = defaults.wasm_gcc_base_ref
         }
     end
     if uses_darwin_arm64_gcc(target_os) then

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Embedded into every executable of the managed toolchains on a Windows host
+  by embed_longpath_manifest in languages/cpp/modules/gccbuild.lua.
+
+  Windows lifts MAX_PATH per PROCESS, through this manifest. The machine wide
+  LongPathsEnabled switch only makes the opt in possible; it does not grant
+  it. A tool without the manifest therefore cannot open a path past MAX_PATH
+  no matter how the machine is configured.
+
+  Measured on this project's own mingw build (2026-08-12), a probe calling
+  fopen on the same path: 253 characters succeeded either way, while 278 and
+  328 failed unmanifested and succeeded manifested.
+
+  Note for editors: XML forbids a double hyphen inside a comment, and mt.exe
+  rejects the whole manifest with "general error c1010070: Failed to load and
+  parse the manifest" when one appears. Keep the prose free of them.
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings xmlns:ws2="http://schemas.microsoft.com/SMI/2016/WindowsSettings">
+      <ws2:longPathAware>true</ws2:longPathAware>
+    </windowsSettings>
+  </application>
+</assembly>

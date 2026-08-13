@@ -183,6 +183,36 @@ function windows_extra_path_dirs()
     return dirs
 end
 
+-- w64devkit ships its triplet-prefixed drivers as ~17 KB alias stubs that
+-- re-resolve the REAL driver through PATH under the same name. That makes them
+-- unusable as declared build tools: the environment that builds a toolchain
+-- puts that toolchain's own install prefix first on PATH, and for a
+-- host-targeted build the prefix holds a driver with the very same
+-- triplet-prefixed name -- so the stub re-execs the compiler currently being
+-- rebuilt and dies with "cannot execute 'cc1'" (lived through on 2026-08-12;
+-- the project-private bootstrap hid it for months because its stubs are
+-- replaced with real binaries on provisioning). The unprefixed sibling in the
+-- same kit is the real binary and the same compiler, so candidate selection
+-- simply skips the stubs.
+--
+-- Read raw bytes: io.readfile defaults to a text/encoding mode that inflates
+-- and mangles a binary .exe (a 17 KB stub reads back as ~22 KB), which once
+-- made the marker unfindable and every stub look like a real binary.
+function is_w64devkit_alias(file)
+    if not os.isfile(file) then
+        return false
+    end
+    local leaf = (path.filename(file) or ""):lower()
+    local size = os.filesize and os.filesize(file) or 0
+    if leaf:find("readelf", 1, true) and size > 0 and size < 65536 then
+        return true
+    end
+    local ok, content = errors.trycall(function ()
+        return io.readfile(file, {encoding = "binary"})
+    end)
+    return (ok and content and content:find("w64devkit (alias)", 1, true) ~= nil) or false
+end
+
 function preferred_host_tool(program)
     if base.is_windows_host() then
         for _, dir in ipairs(windows_extra_path_dirs()) do
@@ -204,18 +234,28 @@ function preferred_project_tool(program)
     end
 end
 
+-- Candidates are tried in preference order, but an alias stub is skipped in
+-- favour of a later candidate (see is_w64devkit_alias). A stub is still
+-- returned when nothing else resolves: reporting the only tool that exists
+-- beats reporting a name that does not.
 function preferred_host_tool_any(candidates)
+    local alias_fallback
     for _, candidate in ipairs(candidates) do
-        local project_tool = preferred_project_tool(candidate)
-        if project_tool then
-            return project_tool
+        local tool = preferred_project_tool(candidate)
+        if not tool then
+            local host = preferred_host_tool(candidate)
+            if os.isfile(host) or host ~= candidate then
+                tool = host
+            end
         end
-        local tool = preferred_host_tool(candidate)
-        if os.isfile(tool) or tool ~= candidate then
-            return tool
+        if tool then
+            if not is_w64devkit_alias(tool) then
+                return tool
+            end
+            alias_fallback = alias_fallback or tool
         end
     end
-    return candidates[1]
+    return alias_fallback or candidates[1]
 end
 
 function shell_host_tool(program)

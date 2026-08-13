@@ -1,11 +1,10 @@
 -- GCC source patches owned by the mainline family and applied to every
 -- source profile (both isolated forks are mainline rebases): libstdc++
 -- std-module fallback preservation, PE-COFF contracts default handler
--- wiring, the module-streaming fixes (PR c++/125334 backport,
--- PR c++/118630 tolerance, keyed-entity reader fix), x86_64 Android
+-- wiring, the module-streaming fixes (PR c++/118630 tolerance,
+-- keyed-entity reader fix), x86_64 Android
 -- long-double/__float128 ABI collision avoidance, and generated-file
--- invalidation. apply() consumes the wasm freestanding flags, so the facade
--- must run wasm.apply() first.
+-- invalidation.
 
 import("base", {rootdir = path.join(os.scriptdir(), "..", "..", "..", "..", "core", "modules")})
 import("errors", {rootdir = path.join(os.scriptdir(), "..", "..", "..", "..", "core", "modules")})
@@ -17,8 +16,6 @@ function apply(ctx)
     local src = ctx.src
     local target_os = ctx.target_os
     local generated_options_changed = false
-    local wasm_freestanding_std_module_changed = ctx.flags.wasm_freestanding_std_module_changed
-    local wasm_freestanding_include_headers_changed = ctx.flags.wasm_freestanding_include_headers_changed
     local warn_patch_drift = shared.warn_patch_drift
     local function dependent_gcc_compiler_build_dirs()
         return shared.dependent_gcc_compiler_build_dirs(ctx)
@@ -195,10 +192,10 @@ function apply(ctx)
         return content:find("export module " .. module_name .. ";", 1, true) ~= nil
     end
 
-    local function invalidate_incomplete_libstdcxx_std_module_build(cxx23_dir, force)
+    local function invalidate_incomplete_libstdcxx_std_module_build(cxx23_dir)
         local libstdcxx_build = path.directory(path.directory(cxx23_dir))
         local include_bits = path.join(libstdcxx_build, "include", "bits")
-        local incomplete = force or false
+        local incomplete = false
         for _, module in ipairs({
             {source = "std.cc", name = "std"},
             {source = "std.compat.cc", name = "std.compat"}
@@ -206,16 +203,7 @@ function apply(ctx)
             local generated = path.join(cxx23_dir, module.source)
             local installed_bits = path.join(include_bits, module.source)
             local generated_exists = os.isfile(generated)
-            if force then
-                if generated_exists then
-                    print("invalidating changed libstdc++ standard module source: " .. generated)
-                    os.rm(generated)
-                end
-                if os.isfile(installed_bits) then
-                    print("invalidating changed libstdc++ standard module bits copy: " .. installed_bits)
-                    os.rm(installed_bits)
-                end
-            elseif generated_exists and not libstdcxx_std_module_source_valid(generated, module.name) then
+            if generated_exists and not libstdcxx_std_module_source_valid(generated, module.name) then
                 print("invalidating incomplete libstdc++ standard module source: " .. generated)
                 os.rm(generated)
                 print("invalidating libstdc++ standard module bits copy: " .. installed_bits)
@@ -250,7 +238,7 @@ function apply(ctx)
         end
     end
 
-    local function invalidate_libstdcxx_include_header_stamps(cxx23_dir, force)
+    local function invalidate_libstdcxx_include_header_stamps(cxx23_dir)
         local libstdcxx_build = path.directory(path.directory(cxx23_dir))
         local include_dir = path.join(libstdcxx_build, "include")
         local required_headers = {
@@ -290,7 +278,7 @@ function apply(ctx)
             }
         }
         for stamp_name, headers in pairs(required_headers) do
-            local stale = force
+            local stale = false
             if target_os == "emscripten" then
                 for _, header in ipairs(headers) do
                     if not os.isfile(path.join(include_dir, header)) then
@@ -316,15 +304,8 @@ function apply(ctx)
     for _, makefile in ipairs(os.files(path.join(layout.toolchains_cache_root(), "*", "*", "*", "build", "gcc", "*", "libstdc++-v3", "src", "c++23", "Makefile"))) do
         patch_libstdcxx_std_module_fallbacks(makefile,
             "generated " .. path.relative(makefile, layout.toolchains_cache_root()))
-        local target_build_relative = path.relative(makefile, settings.gcc_build_dir(target_os))
-        local belongs_to_target_build = target_build_relative ~= ".."
-            and not target_build_relative:find("^%.%.[/\\]")
-        invalidate_libstdcxx_include_header_stamps(
-            path.directory(makefile),
-            wasm_freestanding_include_headers_changed and belongs_to_target_build)
-        invalidate_incomplete_libstdcxx_std_module_build(
-            path.directory(makefile),
-            wasm_freestanding_std_module_changed and belongs_to_target_build)
+        invalidate_libstdcxx_include_header_stamps(path.directory(makefile))
+        invalidate_incomplete_libstdcxx_std_module_build(path.directory(makefile))
     end
 
     -- PE-COFF targets cannot use libstdc++'s weak contract violation handler
@@ -456,27 +437,21 @@ function apply(ctx)
             "C++-only option flags may be dropped by the option generator.")
     end
 
-    -- GCC trunk module streaming forms mergeable clusters with more than one
-    -- entry dep for large single-module interfaces (dependent-ADL-heavy code
-    -- in large partitioned modules), which fires a
-    -- checking assert in cp/module.cc sort_cluster (PR c++/118630 residual
-    -- case) and can stream unreadable CMIs. Backport the upstream fix
-    -- r17/bb2601808 "c++/modules: dependent ADL laziness [PR125334]"
-    -- (2026-06-23, one day after the pinned snapshot): dependent ADL functions
-    -- become reachable bindings instead of tight dependencies of the call
-    -- site, so those clusters never form. Drop this patch once gcc_ref is
-    -- bumped to a snapshot at or after bb2601808.
+    -- RETIRED 2026-08-12: the backport of upstream r17/bb2601808
+    -- "c++/modules: dependent ADL laziness [PR125334]" that used to open this
+    -- block. It made dependent-ADL-heavy partitioned modules stop forming
+    -- mergeable clusters with more than one entry dep. Its anchor
+    -- ("add_dependency (make_dependency (fn, EK_DECL));") is absent from both
+    -- the 2026-07-07 and 2026-08-12 master snapshots, so upstream has carried
+    -- the fix for at least a month and the patch had silently been a no-op --
+    -- it replaced text that no longer exists and, having no drift warning and
+    -- no postcondition by design, said nothing about it. The residual
+    -- PR c++/118630 tolerance below is a SEPARATE case the backport never
+    -- covered and stays.
     local patched_module_streaming = false
     local module_cc = path.join(src, "gcc", "cp", "module.cc")
     if os.isfile(module_cc) then
-        local content = io.readfile(module_cc)
-        local patched = base.replace_plain(content,
-            "add_dependency (make_dependency (fn, EK_DECL));",
-            "make_dependency (fn, EK_DECL); /* project-local backport of upstream bb2601808 (PR c++/125334). */")
-        if patched ~= content then
-            print("patching GCC module streaming: backport dependent ADL laziness (PR c++/125334)")
-            patched_module_streaming = true
-        end
+        local patched = io.readfile(module_cc)
         -- Residual PR c++/118630 case not covered by the ADL backport: some
         -- non-ADL merge-key walks still produce clusters with a second entry
         -- dep and fire the checking assert. Keep the discovered order for the

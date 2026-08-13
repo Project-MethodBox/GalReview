@@ -27,26 +27,11 @@ function set_force_private_bootstrap(value)
     MANAGED_TOOLCHAINS_FORCE_PRIVATE_BOOTSTRAP = value
 end
 
+-- The detector itself lives in core (hosttools) because host-tool selection
+-- has to skip these stubs; this name stays as the C++-side spelling used by
+-- the readelf repair and the bootstrap alias replacement.
 function managed_toolchains_is_w64devkit_alias(file)
-    if not os.isfile(file) then
-        return false
-    end
-    local leaf = (path.filename(file) or ""):lower()
-    local size = os.filesize and os.filesize(file) or 0
-    if leaf:find("readelf", 1, true) and size > 0 and size < 65536 then
-        return true
-    end
-    local ok, content = errors.trycall(function ()
-        -- Read raw bytes: io.readfile defaults to a text/encoding mode that
-        -- inflates and mangles a binary .exe (a 17 KB alias stub reads back as
-        -- ~22 KB), so the "w64devkit (alias)" marker was never found. The
-        -- triplet drivers then looked like real binaries and were never
-        -- replaced, and a private-bootstrap GCC build died at configure with
-        -- "cannot execute 'cc1'" (the surviving alias resolves the driver
-        -- through PATH, which the build PATH does not satisfy).
-        return io.readfile(file, {encoding = "binary"})
-    end)
-    return ok and content and content:find("w64devkit (alias)", 1, true) ~= nil
+    return hosttools.is_w64devkit_alias(file)
 end
 
 function repair_windows_readelf_aliases(target_os)

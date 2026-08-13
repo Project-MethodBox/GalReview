@@ -787,8 +787,74 @@ rule("gcc.modules")
 -- The classic explicit trio add_rules("toolchains.auto", "gcc.features",
 -- "gcc.modules") keeps working unchanged -- this is the same set expressed
 -- as one dependency-ordered name.
+-- Split debug information out of PE binaries, the way xmake already does it
+-- for the platforms it covers.
+--
+-- `set_symbols("debug")` paired with `set_strip("all")` is xmake's documented
+-- request for a stripped binary plus a standalone symbol file, and xmake
+-- honours it on Apple (.dSYM) and Android/Linux (.sym) -- but not on
+-- windows/mingw, where the request is silently answered with a binary that
+-- keeps every byte of DWARF. Measured 2026-08-12 on WhiteHopeEngine.Test:
+-- 176.82 MB, of which .text is 5.57 MB and the .debug_* sections are ~160 MB
+-- (release DWARF is LARGER than debug DWARF -- inlining multiplies
+-- .debug_info and optimized variable lifetimes add a 38 MB .debug_loclists
+-- that barely exists at -O0). The same binary is 16.62 MB once the debug
+-- sections move out, i.e. the size gap against the macOS build was never
+-- about code.
+--
+-- The three-step objcopy dance is the standard one: keep the debug sections
+-- in a sidecar, drop them from the binary, then record a debuglink so gdb
+-- finds the sidecar by name next to the binary. Nothing is lost -- the
+-- symbol file is a complete debugging companion.
+rule("gcc.splitdebug")
+    after_link(function (target)
+        if not target:is_plat("windows", "mingw") or not target:is_binary() then
+            return
+        end
+        -- Only when the target actually asked for it, so this never surprises
+        -- a target that deliberately keeps its symbols inline.
+        local symbols = target:get("symbols")
+        local wants_debug = false
+        for _, value in ipairs(table.wrap(symbols)) do
+            wants_debug = wants_debug or value == "debug"
+        end
+        if not wants_debug or target:get("strip") ~= "all" then
+            return
+        end
+
+        local base = import("base", {rootdir = CORE_MODULES_DIR})
+        local settings = import("settings", {rootdir = CORE_MODULES_DIR})
+        local target_os = settings.configured_target_os()
+        local objcopy = path.join(settings.gcc_prefix(target_os), "bin", base.exe("objcopy"))
+        if not os.isfile(objcopy) then
+            -- The managed prefix is the only supplier we can vouch for; a
+            -- PATH objcopy could belong to a different binutils entirely.
+            return
+        end
+
+        -- targetfile() is relative to the project directory, so absolutize it
+        -- before anything changes directory underneath it.
+        local binary = path.absolute(target:targetfile())
+        local symbolfile = binary .. ".sym"
+        if not os.isfile(binary) then
+            return
+        end
+        os.vrunv(objcopy, {"--only-keep-debug", binary, symbolfile})
+        -- --strip-all, not --strip-debug: set_strip("all") asks for the whole
+        -- symbol table to go too, which is what xmake's own Linux path does.
+        -- Stopping at --strip-debug left the PE binary carrying ~9.5 MB of
+        -- COFF symbol table that its Linux sibling had already dropped.
+        -- Everything removed here survives in the sidecar.
+        os.vrunv(objcopy, {"--strip-all", binary})
+        -- The debuglink section is meant to hold a bare filename that gdb
+        -- resolves beside the binary, so this last step runs IN the output
+        -- directory and names both files by leaf.
+        os.vrunv(objcopy, {"--add-gnu-debuglink=" .. path.filename(symbolfile), path.filename(binary)},
+            {curdir = path.directory(binary)})
+    end)
+
 rule("gcc.managed")
-    add_deps("toolchains.auto", "gcc.features", "gcc.modules")
+    add_deps("toolchains.auto", "gcc.features", "gcc.modules", "gcc.splitdebug")
 
 includes(path.join(os.scriptdir(), "toolchains", "commands_help.lua"))
 

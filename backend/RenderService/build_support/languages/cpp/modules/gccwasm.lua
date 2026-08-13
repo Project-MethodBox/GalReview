@@ -29,8 +29,8 @@ local RUST_MODULES_DIR = path.join(os.scriptdir(), "..", "..", "rust", "modules"
 -- use Rust"; only the smoke EXECUTION and the finalize-time shape check
 -- (targets/emscripten.lua ensure_smoke_current) do, and both run outside
 -- project loading.
-local WASM_CAPABILITY = "gcc17-hosted-emscripten-pthread-tls-atomic-locks-wait-rust-atomic-concepts-contracts-coroutines-reflection-basic-abi-int128-eh-backend-wasm64-multilib-v45"
-local WASM_SMOKE_CAPABILITY = "hosted-pthread-tls-native-atomics-shared-ptr-rust-int128-std-module-empty-abi-dwarf-line-name-section-eh-catch-opt-size-wasm64-multilib-main-signature-v11"
+local WASM_CAPABILITY = "gcc17-hosted-emscripten-pthread-tls-atomic-locks-wait-rust-atomic-concepts-contracts-coroutines-reflection-basic-abi-int128-eh-backend-wasm64-multilib-sret-int128-v46"
+local WASM_SMOKE_CAPABILITY = "hosted-pthread-tls-native-atomics-shared-ptr-rust-int128-std-module-empty-abi-dwarf-line-name-section-eh-catch-opt-size-wasm64-multilib-main-signature-sret-int128-v12"
 
 -- Memoized once per process. Safe ONLY outside project loading (smoke
 -- execution, finalize hooks, status printing) -- never call this from
@@ -364,7 +364,8 @@ function sync_wabt_source(force)
     gccsources.managed_toolchains_run_git(git, {"-C", src, "init"}, {envs = envs.proxy_envs()})
     gccsources.managed_toolchains_run_git(git, {"-C", src, "config", "--local", "core.autocrlf", "false"}, {envs = envs.proxy_envs()})
     gccsources.managed_toolchains_run_git(git, {"-C", src, "remote", "add", "origin", url}, {envs = envs.proxy_envs()})
-    if not (pinned_commit and gccsources.managed_toolchains_restore_source_from_bundle(git, src, "wabt-gcc-wasm", ref, envs.proxy_envs())) then
+    if not (pinned_commit and gccsources.managed_toolchains_restore_source_from_bundle(git, src, "wabt-gcc-wasm", ref,
+            envs.proxy_envs(), defaults.wasm_wabt_base_ref)) then
         gccsources.managed_toolchains_fetch_gcc_ref(git, src, ref, envs.proxy_envs(), not pinned_commit)
     end
     gccsources.managed_toolchains_run_git(git, {"-C", src, "checkout", "--force", "FETCH_HEAD"}, {envs = envs.proxy_envs()})
@@ -650,6 +651,23 @@ local function libgcc_path(target_os, memory64)
         errors.fail("expected exactly one installed GCC WebAssembly libgcc archive, found %d", #candidates)
     end
     return candidates[1]
+end
+
+-- Emscripten's compiler-rt, which owns the 128-bit helpers since the backend
+-- started naming them canonically (before that they came from this project's
+-- own libgcc as __gnu_*, precisely to avoid colliding with this archive).
+-- Only the direct wasm-ld smoke links need it by hand: production links go
+-- through emcc, which adds it itself. The -mt variant matches the toolchain's
+-- -pthread configuration, and there is no fallback on purpose -- a silently
+-- different variant would be a worse answer than a named failure.
+local function compiler_rt_path()
+    local sysroot = emscripten_sysroot()
+    local archive = sysroot and path.join(sysroot, "lib", "wasm32-emscripten", "libcompiler_rt-mt.a")
+    if not archive or not os.isfile(archive) then
+        errors.fail("the Emscripten compiler-rt archive that supplies the 128-bit helpers was not found: %s",
+            tostring(archive))
+    end
+    return archive
 end
 
 local function libstdcxx_path(target_os, memory64)
@@ -1827,9 +1845,19 @@ local function verify_basic_abi_wat(wat_file)
     assert_wat_signature(wat, "gcc_wasm_abi_varargs", {"i32", "i32"}, "i32")
 end
 
+-- A 128-bit value goes out through a hidden return pointer, not as a pair of
+-- results: the leading i32 is where the caller wants the answer written, the
+-- two i64 halves are the argument, and the function itself returns nothing.
+--
+-- It used to be a multi-value return (i64,i64 -> i64,i64), which is what this
+-- assertion pinned until 2026-08-12. The backend then adopted the convention
+-- the rest of this platform already uses, so the old expectation is now the
+-- wrong one -- and pinning it is exactly how this check earns its keep: an
+-- ABI that changes underneath a toolchain is otherwise silent until something
+-- linked against emcc-compiled code returns garbage.
 local function verify_int128_abi_wat(wat_file, function_name)
     local wat = io.readfile(wat_file)
-    assert_wat_signature(wat, function_name, {"i64", "i64"}, {"i64", "i64"})
+    assert_wat_signature(wat, function_name, {"i32", "i64", "i64"}, nil)
 end
 
 local function verify_int128_low_truncation_wat(wat, function_name)
@@ -2238,14 +2266,29 @@ function run_backend_smoke(target_os)
         "-o", int128_runtime_wat
     }, {target_os = target_os, envs = cxx_envs})
     local int128_runtime_wat_content = io.readfile(int128_runtime_wat) or ""
+    -- Both halves of this check inverted on 2026-08-12, and the pair has to
+    -- move together because it encodes WHO supplies the 128-bit helpers.
+    --
+    -- The line used to ship its own libgcc int128.c built with
+    -- LIBGCC2_GNU_PREFIX, so the helpers were named __gnu_* precisely to keep
+    -- them from colliding with the identically-shaped ones inside
+    -- Emscripten's compiler-rt and Rust's builtins. Then the backend adopted
+    -- this platform's convention, int128.c was deleted upstream and t-wasm
+    -- stopped naming it -- so the __gnu_* symbols no longer exist anywhere.
+    -- Emitting them now would not be a naming nicety, it would be an
+    -- undefined reference at link time; the canonical names are the correct
+    -- ones because emcc is what resolves them.
+    --
+    -- Verified from the probe's own WAT before flipping: five canonical
+    -- symbols present, zero __gnu_ ones.
     for _, symbol in ipairs({"__gnu_multi3", "__gnu_udivti3", "__gnu_umodti3", "__gnu_divti3", "__gnu_modti3"}) do
-        if not int128_runtime_wat_content:find(symbol, 1, true) then
-            errors.fail("GCC WebAssembly __int128 runtime probe did not emit expected libcall: %s", symbol)
+        if int128_runtime_wat_content:find(symbol, 1, true) then
+            errors.fail("GCC WebAssembly __int128 runtime probe emitted a libcall no runtime supplies any more: %s", symbol)
         end
     end
     for _, symbol in ipairs({"__multi3", "__udivti3", "__umodti3", "__divti3", "__modti3"}) do
-        if int128_runtime_wat_content:find(symbol, 1, true) then
-            errors.fail("GCC WebAssembly __int128 runtime probe leaked canonical Emscripten/Rust libcall name: %s", symbol)
+        if not int128_runtime_wat_content:find(symbol, 1, true) then
+            errors.fail("GCC WebAssembly __int128 runtime probe did not emit expected libcall: %s", symbol)
         end
     end
     for _, function_name in ipairs({
@@ -2271,8 +2314,14 @@ function run_backend_smoke(target_os)
         "-S", libcall_gc_source,
         "-o", libcall_gc_wat
     }, {target_os = target_os, envs = cxx_envs})
-    if not (io.readfile(libcall_gc_wat) or ""):find("__gnu_udivti3", 1, true) then
-        errors.fail("GCC WebAssembly GC-rooted libcall probe did not emit __gnu_udivti3")
+    -- Same rename as the __int128 runtime probe above: the helper this probe
+    -- forces out is spelled by its canonical name now that emcc supplies it
+    -- (verified in the probe's own WAT). What this case actually guards is
+    -- unchanged and is not about the spelling -- it runs the compiler with
+    -- ggc-min-heapsize=0 so a collection happens mid-expansion, and asserts
+    -- the libcall symbol still survives it.
+    if not (io.readfile(libcall_gc_wat) or ""):find("__udivti3", 1, true) then
+        errors.fail("GCC WebAssembly GC-rooted libcall probe did not emit __udivti3")
     end
     local int128_runtime_object = path.join(root, "int128_runtime.o")
     local int128_runtime_flags = table.clone(cxx_flags)
@@ -2343,6 +2392,7 @@ function run_backend_smoke(target_os)
         "--export=gcc_wasm_int128_signed_low8",
         int128_runtime_object,
         libgcc_path(target_os),
+        compiler_rt_path(),
         "-o", int128_runtime_module
     }, {target_os = target_os})
     local int128_runtime_script = table.concat({
@@ -2350,9 +2400,10 @@ function run_backend_smoke(target_os)
         "const bytes=fs.readFileSync(process.argv[1]);",
         "const compiled=new WebAssembly.Module(bytes);",
         "const imports={};",
+        "let memory;",
         "for(const item of WebAssembly.Module.imports(compiled)){",
         " imports[item.module]??={};",
-        " if(item.kind==='memory') imports[item.module][item.name]=new WebAssembly.Memory({initial:2});",
+        " if(item.kind==='memory'){memory=new WebAssembly.Memory({initial:2});imports[item.module][item.name]=memory;}",
         " else if(item.kind==='table') imports[item.module][item.name]=new WebAssembly.Table({initial:1,element:'anyfunc'});",
         " else if(item.kind==='global') imports[item.module][item.name]=new WebAssembly.Global({value:'i32',mutable:true},0);",
         " else imports[item.module][item.name]=()=>0;",
@@ -2362,11 +2413,20 @@ function run_backend_smoke(target_os)
         " const bits=BigInt.asUintN(128,value);",
         " return [BigInt.asIntN(64,bits),BigInt.asIntN(64,bits>>64n)];",
         "};",
-        "const join=parts=>{",
-        " if(!Array.isArray(parts)||parts.length!==2) throw new Error('__int128 result is not a two-value array');",
-        " return BigInt.asUintN(128,BigInt.asUintN(64,parts[0])|(BigInt.asUintN(64,parts[1])<<64n));",
+        -- A 128-bit result arrives through a hidden pointer now, not as a pair
+        -- of returned values (the 2026-08-12 ABI change), so the caller hands
+        -- the callee an address and reads the two halves back out of memory.
+        -- Every expected VALUE below is untouched: only the way the answer is
+        -- collected changed, and relaxing the arithmetic to make this pass
+        -- would have thrown away the whole point of the probe.
+        "memory??=instance.exports.memory;",
+        "if(!memory) throw new Error('the module exposes no memory to receive a 128-bit result through');",
+        "const RESULT=1024;",
+        "const call=(name,left,right)=>{",
+        " instance.exports[name](RESULT,...split(left),...split(right));",
+        " const view=new DataView(memory.buffer);",
+        " return BigInt.asUintN(128,view.getBigUint64(RESULT,true)|(view.getBigUint64(RESULT+8,true)<<64n));",
         "};",
-        "const call=(name,left,right)=>join(instance.exports[name](...split(left),...split(right)));",
         "const callLow=(name,value)=>instance.exports[name](...split(value));",
         "const expect=(name,actual,expected)=>{",
         " if(actual!==expected) throw new Error(name+' mismatch: expected '+expected.toString(16)+', got '+actual.toString(16));",

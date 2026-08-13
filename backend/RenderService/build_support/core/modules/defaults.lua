@@ -8,16 +8,16 @@
 import("errors")
 
 local DEFAULTS = {
-    -- pinned gcc master snapshot 2026-07-07; see the bump protocol note in
+    -- pinned gcc master snapshot 2026-08-12; see the bump protocol note in
     -- options.lua next to default_ref
-    ref = "4790838765e8a4b0580b11ba0d8c6671d7c3fc95",
+    ref = "977fd87bade47e7624d803ba0cc549d819c03fe1",
     gcc_git_url = "https://github.com/gcc-mirror/gcc.git",
     -- pinned master-wip-apple-si revision validated end-to-end on the macOS
-    -- test host 2026-07-11 (toolchain build + engine test targets green).
+    -- test host 2026-08-12 (toolchain build + engine test targets green).
     -- The upstream branch is a rebased work-in-progress line, so a floating
     -- name can silently move or even lose this exact revision; see the bump
     -- protocol note in options.lua next to default_darwin_arm64_gcc_ref.
-    darwin_arm64_gcc_ref = "f4e36f15b1ce1c46926f9cbce847625336d01615",
+    darwin_arm64_gcc_ref = "077460b4f902b7b8480547d14e0d2ff543f50c58",
     darwin_arm64_gcc_git_url = "https://github.com/iains/gcc-darwin-arm64.git",
     darwin_arm64_gcc_tracking_branch = "master-wip-apple-si",
     -- iOS minimum deployment target (owner decision, phase E1): the common
@@ -27,15 +27,26 @@ local DEFAULTS = {
     ios_deployment_target = "15.0",
     -- The WebAssembly line was ported onto GCC master on 2026-08-12 and now
     -- TRACKS mainline instead of consuming a pinned upstream revision, so the
-    -- pin below is a commit of that line itself and exists on no public
-    -- remote: the URL keeps pointing at the upstream fork it descends from
-    -- (whose branch still sits at the old revision), and the pinned commit is
-    -- restored from the local git bundle in .toolchains/.cache/bundles --
-    -- exactly the offline channel bundles were added for. Seed that bundle on
-    -- a new machine before the first sync, or the fetch has nowhere to go.
-    wasm_gcc_ref = "ee5f1859289f4ebc80d6a302e40893235f3c92ae",
+    -- pins below are commits of that line itself and exist on no public
+    -- remote. They are restored from a git bundle that ships IN THIS
+    -- REPOSITORY (build_support/languages/cpp/bundles), which is why each
+    -- pin carries a *_base_ref: the bundle is THIN -- it packs only
+    -- base..pin, and the base is a commit the URL below really serves. A
+    -- full bundle of this line is 180 MB; thin against the base it descends
+    -- from it is 8.7 MB, which is what makes shipping it in git tenable at
+    -- all (measured 2026-08-12; wabt 1.6 MB -> 20 KB).
+    --
+    -- Restore is therefore two steps: shallow-fetch the base from the URL,
+    -- then fetch the bundle over it. The trade is deliberate -- a thin bundle
+    -- buys its size by depending on the base staying reachable upstream, so
+    -- keep one FULL bundle archived outside the repository as cold insurance
+    -- (`xmake toolchains bundle emscripten` regenerates one from any synced
+    -- tree). Bumping a pin means regenerating and committing the bundle too.
+    wasm_gcc_ref = "9664a2e1510feff92a1df621e7cd29f1266058c2",
+    wasm_gcc_base_ref = "ac20dcd5f8c5ae858f9b2d9cdf4140c0738e5e27",
     wasm_gcc_git_url = "https://forge.sourceware.org/feedable/gcc-TEST.git",
-    wasm_wabt_ref = "f2d60b0532f35e13f86899f0581ab87fc029db36",
+    wasm_wabt_ref = "8470fe7dd2a97bb5613a3e85b41b43b799a1879a",
+    wasm_wabt_base_ref = "651c9ffbce3d0525d2d1324fab79160e5fcf8173",
     wasm_wabt_git_url = "https://github.com/feedab1e/wabt.git",
     binutils_snapshot_url = "https://ftp.gnu.org/gnu/binutils/binutils-2.45.tar.xz",
     mingw_w64_snapshot_url = "https://downloads.sourceforge.net/project/mingw-w64/mingw-w64/mingw-w64-release/mingw-w64-v14.0.0.tar.bz2",
@@ -109,17 +120,16 @@ end
 
 
 -- options.lua text patterns -> the module value each literal must equal
--- (values bind at module load; the definitions above run first)
+-- (values bind at module load; the definitions above run first).
+--
+-- The eight upstream source-identity constants (the two URLs and two refs per
+-- managed GCC line) are deliberately ABSENT: their options default to empty
+-- and read through settings.value_or(), so this module is their only home and
+-- there is no second literal left to drift. Everything still listed here is
+-- mirrored in options.lua because its option default must evaluate before any
+-- module can load.
 local OPTIONS_MIRROR = {
-    {pattern = 'default_ref%s*=%s*"([^"]*)"',                          field = "ref",                              value = DEFAULTS.ref},
-    {pattern = 'default_gcc_git_url%s*=%s*"([^"]*)"',                  field = "gcc_git_url",                      value = DEFAULTS.gcc_git_url},
-    {pattern = 'default_darwin_arm64_gcc_ref%s*=%s*"([^"]*)"',        field = "darwin_arm64_gcc_ref",             value = DEFAULTS.darwin_arm64_gcc_ref},
-    {pattern = 'default_darwin_arm64_gcc_git_url%s*=%s*"([^"]*)"',    field = "darwin_arm64_gcc_git_url",          value = DEFAULTS.darwin_arm64_gcc_git_url},
     {pattern = 'default_ios_deployment_target%s*=%s*"([^"]*)"',       field = "ios_deployment_target",            value = DEFAULTS.ios_deployment_target},
-    {pattern = 'default_wasm_gcc_ref%s*=%s*"([^"]*)"',                field = "wasm_gcc_ref",                     value = DEFAULTS.wasm_gcc_ref},
-    {pattern = 'default_wasm_gcc_git_url%s*=%s*"([^"]*)"',            field = "wasm_gcc_git_url",                 value = DEFAULTS.wasm_gcc_git_url},
-    {pattern = 'default_wasm_wabt_ref%s*=%s*"([^"]*)"',               field = "wasm_wabt_ref",                    value = DEFAULTS.wasm_wabt_ref},
-    {pattern = 'default_wasm_wabt_git_url%s*=%s*"([^"]*)"',           field = "wasm_wabt_git_url",                value = DEFAULTS.wasm_wabt_git_url},
     {pattern = 'default_binutils_snapshot_url%s*=%s*"([^"]*)"',        field = "binutils_snapshot_url",            value = DEFAULTS.binutils_snapshot_url},
     {pattern = 'default_mingw_w64_snapshot_url%s*=%s*"([^"]*)"',       field = "mingw_w64_snapshot_url",           value = DEFAULTS.mingw_w64_snapshot_url},
     {pattern = 'default_musl_snapshot_url%s*=%s*"([^"]*)"',            field = "musl_snapshot_url",                value = DEFAULTS.musl_snapshot_url},

@@ -146,8 +146,8 @@ i18n.register({
         "缺少 GCC configure 所需的 POSIX shell;请使用附带 sh.exe 的 MinGW 发行版",
     ["using the system proxy %s for downloads and build child processes (export HTTP_PROXY/ALL_PROXY to override it, or turn the system proxy off)"] =
         "已自动采用系统代理 %s 用于下载与构建子进程(可用 HTTP_PROXY/ALL_PROXY 环境变量覆盖,或关闭系统代理)",
-    ["the configure-stage C compiler %s cannot compile a trivial probe under %s; the bootstrap toolchain is broken or quarantined -- fix or reinstall it, then rerun the same xmake command"] =
-        "configure 阶段的 C 编译器 %s 在 %s 下连最小探针程序都编译不了;引导工具链已损坏或被杀毒软件隔离——请修复或重装它,然后重跑同一条 xmake 命令",
+    ["the configure-stage C compiler %s cannot compile a trivial probe under %s; the bootstrap toolchain is broken or quarantined -- fix or reinstall it, then rerun the same xmake command%s"] =
+        "configure 阶段的 C 编译器 %s 在 %s 下连最小探针程序都编译不了;引导工具链已损坏或被杀毒软件隔离——请修复或重装它,然后重跑同一条 xmake 命令%s",
     ["a freshly compiled test program cannot run or write a file inside the build tree %s, so GCC configure is bound to fail with its opaque \"cannot run C compiled programs\". This is almost always security software distrusting brand-new unsigned executables: on Windows check the Defender operational log for event 1123 (Controlled Folder Access), move the project out of the protected-folder list or pause the interference, then rerun the same xmake command"] =
         "刚编译出的测试程序无法在构建目录 %s 内运行或写文件,GCC configure 必然会以晦涩的 \"cannot run C compiled programs\" 失败。这几乎总是安全软件在拦截全新的未签名可执行文件:Windows 上请查看 Defender 操作日志中的 1123 事件(受控文件夹访问),把项目目录移出受保护文件夹列表或暂停拦截,然后重跑同一条 xmake 命令",
     ["missing required MinGW bootstrap tools: %s. A bare gcc.exe is not enough; use a MinGW distribution that includes POSIX build tools, such as w64devkit or MSYS2/UCRT64"] =
@@ -407,8 +407,8 @@ i18n.register({
         "无法应用 %s:上游锚点在 %s 中存在歧义",
     ["cannot apply %s: an upstream file already exists with different content: %s"] =
         "无法应用 %s:上游已存在内容不同的文件:%s",
-    ["this configuration pins %s to %s while the project's built-in default is now %s -- xmake froze the option when the configuration was written, so a bumped default cannot reach it; if the difference is not intentional, restate it (`xmake f --%s=%s -y`) in EVERY config store: the root, each lane under build/<plat>, and the test subproject"] =
-        "当前配置把 %s 钉在 %s,而项目内置默认值已是 %s——xmake 在写配置时就把该选项固化了,改默认值传不进来;若这不是有意覆盖,请在**每一份配置**里重新声明(`xmake f --%s=%s -y`):根配置、build/<plat> 下的每条 lane、以及测试子工程",
+    ["this configuration overrides %s to %s, shadowing the project default %s -- the override lives in this config store only, so its siblings (the root, each lane under build/<plat>, the test subproject) may be building different sources; drop it with `xmake f --%s= -y` to follow the project default again"] =
+        "当前配置把 %s 覆盖成了 %s,遮住项目默认值 %s——该覆盖只存在于这一份配置里,它的同伴(根配置、build/<plat> 下的每条 lane、测试子工程)可能在用不同的源码;若不是有意为之,用 `xmake f --%s= -y` 去掉覆盖,重新跟随项目默认值",
     ["no source patch stamp registered for profile '%s'"] =
         "源码档案 '%s' 没有登记补丁标记版本",
     ["cannot migrate %s: source file is missing: %s"] = "无法迁移 %s:源文件缺失:%s",

@@ -8,7 +8,7 @@
 import("errors", {rootdir = path.join(os.scriptdir(), "..", "..", "..", "..", "core", "modules")})
 
 function source_patch_stamp()
-    return "pinned-fork-carries-patches-v1"
+    return "pinned-fork-carries-patches-v3"
 end
 
 -- The pinned fork absorbed everything this file used to patch in (2026-08-12),
@@ -27,7 +27,22 @@ local VERIFY_WITNESSES = {
     {file = path.join("src", "tools", "wat2wasm.cc"), fingerprint = "kLargeToolStackBytes",
         what = "wat2wasm large-stack tool thread (deep branch tables assemble without a silent stack overflow)"},
     {file = path.join("src", "binary-writer.cc"), fingerprint = "debug_line",
-        what = "wat2wasm DWARF line-table emission"}
+        what = "wat2wasm DWARF line-table emission"},
+    {file = path.join("include", "wabt", "ir.h"), fingerprint = "struct SymAlias",
+        what = "wat2wasm symbol aliases in relocatable output"},
+    {file = path.join("include", "wabt", "ir.h"), fingerprint = "struct CustomFixup",
+        what = "wat2wasm custom-section value fixups"},
+    {file = path.join("src", "wast-parser.cc"), fingerprint = "ParseAliasAnnotation",
+        what = "wat2wasm alias annotation parsing"},
+    {file = path.join("src", "binary-writer.cc"), fingerprint = "ResolveCustomFixups",
+        what = "wat2wasm custom-section fixup resolution"},
+    -- The call site, not the callee's name: OnReturnCallIndirect has existed
+    -- all along and only gained the table argument here, so the bare name
+    -- would have verified happily against the previous pin (checked: 1 hit
+    -- before the change, 1 after). A witness that cannot fail is not one.
+    {file = path.join("src", "shared-validator.cc"),
+        fingerprint = "func_type.params, func_type.results, table_type.limits",
+        what = "wat2wasm takes the table's index width in a returning indirect call"}
 }
 
 function verify(src)

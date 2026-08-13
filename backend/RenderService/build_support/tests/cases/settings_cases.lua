@@ -70,6 +70,38 @@ function run(t)
             "ios must select the darwin-arm64 profile")
     end)
 
+    -- Upstream source identity must live in exactly one place. xmake freezes
+    -- an option's value into the config store at configure time and every
+    -- store keeps its own copy (the root, each lane under build/<plat>, the
+    -- test subproject), so an option that MIRRORS the built-in default freezes
+    -- that default too: bumping defaults.lua then reaches none of the existing
+    -- stores. Lived through twice -- a pin jump that exited 0 having rebuilt
+    -- the previous baseline, and three lane stores left pointing at a retired
+    -- repository URL. An empty default freezes as empty, so settings.value_or
+    -- consults the module value on every read and one edit reaches every
+    -- store; an explicit --<name>= override still wins in its own store.
+    t.case("source identity: the pin and URL options carry no default of their own", function ()
+        local support = path.join(os.projectdir(), "build_support")
+        local options = io.readfile(path.join(support, "languages", "cpp", "options.lua")) or ""
+        for _, name in ipairs({
+            "gcc_ref", "gcc_git_url",
+            "darwin_arm64_gcc_ref", "darwin_arm64_gcc_git_url",
+            "wasm_gcc_ref", "wasm_gcc_git_url",
+            "wasm_wabt_ref", "wasm_wabt_git_url"
+        }) do
+            local block = options:match('option%("' .. name .. '"%)(.-)option_end%(%)')
+            t.assert_true(block ~= nil, "no option declaration found for " .. name)
+            t.assert_match(block, 'set_default("")',
+                name .. " must default to empty so a bumped built-in default can reach a frozen store")
+        end
+    end)
+
+    t.case("source identity: value_or falls through to the built-in default", function ()
+        os.setenv("GCC_REF", "")
+        t.assert_eq(settings.value_or("gcc_ref", "BUILT-IN"), "BUILT-IN",
+            "an unset/empty option value must resolve to the module default")
+    end)
+
     -- leave the process environment clean for later suites
     os.setenv("TOOLCHAINS_TARGET", "")
 end

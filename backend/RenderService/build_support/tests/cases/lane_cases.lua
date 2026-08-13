@@ -41,9 +41,37 @@ function run(t)
     t.case("lane: an unregistered lane configures the plat it is named after", function ()
         local layout = lane.lane_layout(ROOT, "macosx")
         t.assert_eq(layout.plat, "macosx", "plat")
-        -- no pinned arch: the macosx/ios aarch64 clamp and the android arch
+        -- no pinned arch: the macosx aarch64 clamp and the android arch
         -- policy stay the single source of truth for those plats
         t.assert_true(layout.arch == nil, "an unregistered lane must not pin an arch")
         t.assert_eq(layout.configdir, path.join(ROOT, "build", "macosx"), "config home")
+    end)
+
+    -- The lane is spelled `ios` because that is the OS everyone says, but the
+    -- plat xmake actually has is `iphoneos`. Letting the lane name through as
+    -- a plat put every ios build on xmake's generic (GNU-shaped) packaging
+    -- path. That stayed invisible while ios only ever built a static library
+    -- -- the managed toolchain is chosen by target OS, not by the plat string,
+    -- so the objects were right regardless. It surfaced the first time a
+    -- release EXECUTABLE was linked (2026-08-12): the generic path answers
+    -- set_strip("all") by running `objcopy --only-keep-debug`, and no Mach-O
+    -- toolchain ships objcopy, so the build failed immediately after
+    -- producing a perfectly good binary.
+    -- Leaving android unpinned did not mean "let policy decide" -- it meant
+    -- xmake's own default, armeabi-v7a, for which this project has never
+    -- provisioned a toolchain. The lane then quietly started building a whole
+    -- arm cross-GCC instead of the engine.
+    t.case("lane: android pins the arch this project actually provisions", function ()
+        local layout = lane.lane_layout(ROOT, "android")
+        t.assert_eq(layout.plat, "android", "plat")
+        t.assert_eq(layout.arch, "x86_64", "an unpinned android arch falls to armeabi-v7a")
+    end)
+
+    t.case("lane: ios configures the real iphoneos plat, not its own name", function ()
+        local layout = lane.lane_layout(ROOT, "ios")
+        t.assert_eq(layout.plat, "iphoneos", "ios must map to the plat xmake really has")
+        t.assert_eq(layout.arch, "arm64", "arch")
+        t.assert_eq(layout.home, path.join(ROOT, "build", "iphoneos"),
+            "a lane's state belongs under its plat's build directory")
     end)
 end

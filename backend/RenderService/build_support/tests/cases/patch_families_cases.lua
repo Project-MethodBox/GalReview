@@ -301,4 +301,54 @@ function run(t)
             "the iOS override header must not be written outside the darwin profile")
         t.assert_eq(#ctx.postconditions, 0, "no ios postconditions outside the darwin profile")
     end)
+
+    -- Call-surface guards. The patch pipeline only runs when a GCC source tree
+    -- is actually re-synced, which on an installed checkout can be months
+    -- apart -- so a helper deleted along with the code that seemed to be its
+    -- only caller stays invisible until the next upstream bump, and then the
+    -- whole sync dies on "attempt to call a nil value". Both variants shipped
+    -- in 53c1907 and surfaced together on 2026-08-12: shared.warn_patch_drift
+    -- was removed while 18 call sites remained, and the facade still called
+    -- wasm.apply() after that family was reduced to witnesses. These two cases
+    -- are the cheap, general guard; they read the real sources, not a replica.
+    local SUPPORT = path.join(os.projectdir(), "build_support", "languages", "cpp", "modules")
+
+    t.case("patch families: every shared.<helper> the families call is defined", function ()
+        local patches = path.join(SUPPORT, "patches")
+        local shared = import("shared", {rootdir = patches, anonymous = true})
+        local missing = {}
+        for _, file in ipairs(os.files(path.join(patches, "*.lua"))) do
+            if path.filename(file) ~= "shared.lua" then
+                for name in (io.readfile(file) or ""):gmatch("shared%.([%w_]+)") do
+                    if type(shared[name]) ~= "function" then
+                        table.insert(missing, path.filename(file) .. " -> shared." .. name)
+                    end
+                end
+            end
+        end
+        t.assert_true(#missing == 0,
+            "patch families call helpers shared.lua does not define: " .. table.concat(missing, ", "))
+    end)
+
+    t.case("patch facade: every family entry point gccpatches calls is defined", function ()
+        local patches = path.join(SUPPORT, "patches")
+        local families = {}
+        for _, name in ipairs({"darwin", "ios", "mainline", "wasm"}) do
+            families[name] = import(name, {rootdir = patches, anonymous = true})
+        end
+        local facade = io.readfile(path.join(SUPPORT, "gccpatches.lua")) or ""
+        local missing = {}
+        local seen = 0
+        for family, entry in facade:gmatch("([%w_]+)%.([%w_]+)%(ctx") do
+            if families[family] then
+                seen = seen + 1
+                if type(families[family][entry]) ~= "function" then
+                    table.insert(missing, family .. "." .. entry)
+                end
+            end
+        end
+        t.assert_true(seen > 0, "the facade call scan found no family calls at all")
+        t.assert_true(#missing == 0,
+            "gccpatches calls family entry points that do not exist: " .. table.concat(missing, ", "))
+    end)
 end

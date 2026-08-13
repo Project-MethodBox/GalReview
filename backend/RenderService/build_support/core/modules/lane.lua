@@ -33,7 +33,28 @@ local LANES =
     linux = {plat = "linux", arch = "x86_64"},
     wasm = {plat = "wasm", arch = "wasm32"},
     wasm64 = {plat = "wasm", arch = "wasm64"},
-    emscripten = {plat = "emscripten", arch = "wasm32"}
+    emscripten = {plat = "emscripten", arch = "wasm32"},
+    -- xmake has no `ios` plat -- the Apple mobile one is `iphoneos`. A lane
+    -- named after the missing plat still "worked" for the engine, because the
+    -- managed toolchain is chosen by target OS rather than by the plat
+    -- string, so a static library came out right either way. An EXECUTABLE
+    -- does not: on an unrecognized plat xmake falls back to its generic
+    -- (GNU-shaped) packaging, which answers set_strip("all") by shelling out
+    -- to `objcopy --only-keep-debug` -- a tool no Mach-O toolchain ships, so
+    -- the release link died right after producing a perfectly good binary
+    -- (2026-08-12). Naming the real plat routes it to the Apple path, which
+    -- uses dsymutil (present in the prefix) and emits a .dSYM instead.
+    ios = {plat = "iphoneos", arch = "arm64"},
+    -- Android's unpinned arch resolves to xmake's own default, armeabi-v7a --
+    -- an architecture this project has never provisioned a toolchain for. A
+    -- bare `xmake lane android build` therefore did not build anything: it
+    -- silently began compiling a complete arm cross-GCC from source, visible
+    -- only as `preparing project-local GCC for windows/android/arm` a few
+    -- lines into the log (2026-08-12, ~36 minutes before it was noticed).
+    -- x86_64 is the arch this project actually provisions and packages (see
+    -- the no-dex APK flow), so the lane names it. Another arch stays one
+    -- positional away: `xmake lane android config debug arm64`.
+    android = {plat = "android", arch = "x86_64"}
 }
 local DEFAULT_MODE = "debug"
 

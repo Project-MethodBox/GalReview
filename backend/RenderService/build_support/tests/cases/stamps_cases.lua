@@ -318,6 +318,52 @@ function run(t)
         os.setenv("LINUX_LIBC", "")
     end)
 
+    -- Build-directory reuse must also check the tools the directory RECORDS.
+    -- An autoconf build dir bakes the absolute path of its configuring shell
+    -- into the generated Makefile and re-execs it on `config.status --recheck`,
+    -- which every source-revision bump triggers. When that shell came from the
+    -- transient private bootstrap and the bootstrap is gone, make dies on
+    -- "config.status: exec: .../sh.exe: not found" -- naming the missing file
+    -- but not the stale party, and no retry helps (2026-08-12, first mainline
+    -- pin bump after the bootstrap was removed). Deliberately validated rather
+    -- than folded into the configure signature: the shell legitimately differs
+    -- between a bootstrap and a host build, so signing it would make the two
+    -- alternately discard each other's build directory.
+    local function build_dir_with_shell(t, label, shell)
+        local build = t.tmpdir(label)
+        io.writefile(path.join(build, "Makefile"),
+            "# generated\nCC = cc\nSHELL = " .. shell .. "\nall:\n\t@true\n")
+        return build
+    end
+
+    t.case("build dir: a recorded shell that is gone discards the directory", function ()
+        local _, gccbuild = fresh_gccbuild(t)
+        local build = build_dir_with_shell(t, "shellgone",
+            path.join(t.tmpdir("vanished-bootstrap"), "bin", "sh.exe"))
+        t.assert_true(not gccbuild.managed_toolchains_configure_shell_present(build),
+            "a build directory pointing at a deleted shell must not be reused")
+    end)
+
+    t.case("build dir: a recorded shell that still exists is reused", function ()
+        local _, gccbuild = fresh_gccbuild(t)
+        local shelldir = t.tmpdir("live-bootstrap")
+        local shell = path.join(shelldir, "sh.exe")
+        io.writefile(shell, "#!/bin/sh\n")
+        t.assert_true(gccbuild.managed_toolchains_configure_shell_present(
+            build_dir_with_shell(t, "shelllive", shell)),
+            "a build directory whose recorded shell exists must survive")
+    end)
+
+    t.case("build dir: a PATH-resolved or absent shell recording is not judged", function ()
+        local _, gccbuild = fresh_gccbuild(t)
+        t.assert_true(gccbuild.managed_toolchains_configure_shell_present(
+            build_dir_with_shell(t, "shellbare", "sh")),
+            "a bare name says nothing about this directory")
+        local empty = t.tmpdir("shellnomakefile")
+        t.assert_true(gccbuild.managed_toolchains_configure_shell_present(empty),
+            "a directory with no Makefile has nothing to invalidate")
+    end)
+
     os.setenv("TOOLCHAINS_TARGET", "")
     os.setenv("IOS_SDK", "")
     os.setenv("LINUX_LIBC", "")

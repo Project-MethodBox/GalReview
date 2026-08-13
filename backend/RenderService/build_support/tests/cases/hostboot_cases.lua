@@ -105,6 +105,63 @@ function run(t)
             "a small readelf-named binary is an alias by the size heuristic")
     end)
 
+    -- Detecting the stub is not enough: host-tool SELECTION has to refuse it,
+    -- because an alias resolves its real driver through PATH under the same
+    -- name -- and the environment that builds a toolchain puts that
+    -- toolchain's own install prefix first on PATH. For a host-targeted build
+    -- the prefix holds a driver with the very same triplet-prefixed name, so
+    -- declaring the stub as CC made the bootstrap compiler re-exec the
+    -- compiler being rebuilt and fail with "cannot execute 'cc1'" (2026-08-12,
+    -- on a host kit; the private bootstrap hid it because provisioning
+    -- replaces its stubs with real binaries). Candidate names are deliberately
+    -- nonsense so a tool of the same name on the real PATH cannot answer.
+    local function alias_selection_sandbox(t, label)
+        local replica = t.replicate_build_support({"core/modules"}, label)
+        local modules = path.join(replica, "core", "modules")
+        local hosttools = import("hosttools", {rootdir = modules, anonymous = true})
+        local layout = import("layout", {rootdir = modules, anonymous = true})
+        local base = import("base", {rootdir = modules, anonymous = true})
+        local bin = path.join(layout.tools_cache_dir(), "bin")
+        os.mkdir(bin)
+        return hosttools, base, bin
+    end
+
+    local function write_alias_stub(file)
+        io.writefile(file, "MZ\144\0\3\0\0\0\255\255w64devkit (alias): could not start process\0PE\0\0",
+            {encoding = "binary"})
+    end
+
+    local function write_real_driver(file)
+        io.writefile(file, "MZ\144\0\3\0\0\0\255\255 a real self-locating driver \0PE\0\0\200",
+            {encoding = "binary"})
+    end
+
+    t.case("host tools: a preferred alias stub loses to the real later candidate", function ()
+        local hosttools, base, bin = alias_selection_sandbox(t, "alias-select-skip")
+        write_alias_stub(path.join(bin, base.exe("zzwhe-triplet-cc")))
+        write_real_driver(path.join(bin, base.exe("zzwhe-cc")))
+        local chosen = hosttools.preferred_host_tool_any({"zzwhe-triplet-cc", "zzwhe-cc"})
+        t.assert_match(tostring(chosen), "zzwhe-cc", "selection must skip the alias stub")
+        t.assert_true(not tostring(chosen):find("zzwhe-triplet-cc", 1, true),
+            "the alias stub must not be declared as a build tool")
+    end)
+
+    t.case("host tools: an alias is still returned when nothing else resolves", function ()
+        local hosttools, base, bin = alias_selection_sandbox(t, "alias-select-only")
+        write_alias_stub(path.join(bin, base.exe("zzwhe-lonely-cc")))
+        local chosen = hosttools.preferred_host_tool_any({"zzwhe-lonely-cc", "zzwhe-absent-cc"})
+        t.assert_match(tostring(chosen), "zzwhe-lonely-cc",
+            "the only tool that exists beats a name that does not")
+    end)
+
+    t.case("host tools: a real preferred candidate still wins outright", function ()
+        local hosttools, base, bin = alias_selection_sandbox(t, "alias-select-real-first")
+        write_real_driver(path.join(bin, base.exe("zzwhe-first-cc")))
+        write_real_driver(path.join(bin, base.exe("zzwhe-second-cc")))
+        local chosen = hosttools.preferred_host_tool_any({"zzwhe-first-cc", "zzwhe-second-cc"})
+        t.assert_match(tostring(chosen), "zzwhe-first-cc", "preference order must be preserved")
+    end)
+
     -- Shared bootstrap directory reader-writer guard (2026-07-23): the
     -- .cache/windows/bootstrap/<arch> tree is shared by every Windows-hosted
     -- build, so a concurrent build must not have its cc1 deleted mid-configure.

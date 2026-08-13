@@ -26,7 +26,11 @@ function register_postconditions(ctx)
             path.join("gcc", "config", "wasm", "wasm_simd128.h"),
             path.join("gcc", "config", "wasm", "wasm-wasi.h"),
             path.join("libgcc", "config", "wasm", "cpp-exception-tag.wat"),
-            path.join("libgcc", "config", "wasm", "int128.c"),
+            -- int128.c stood here until 2026-08-12. The backend now returns
+            -- and queries 128-bit integers itself, so the hand-written libgcc
+            -- helper was deleted upstream and t-wasm no longer names it;
+            -- keeping the witness would demand a file that is meant to be
+            -- gone. Verified against both pins before removing it.
             path.join("libgcc", "config", "wasm", "memory.c"),
             path.join("libgcc", "config", "wasm", "unwind-abort.c"),
             path.join("libstdc++-v3", "include", "bits", "wasm_freestanding_hosted_compat.h")
@@ -101,9 +105,12 @@ function register_postconditions(ctx)
             {file = path.join("gcc", "config", "wasm", "wasm-passes.def"),
                 fingerprint = "wasm_ehsel",
                 what = "WebAssembly per-pad selector rewrite pass"},
+            -- Was DWARF2_LINENO_DEBUGGING_INFO while the channel carried line
+            -- numbers only; the 2026-08-12 pin emits full debug information,
+            -- which retires that macro in favour of the general one.
             {file = path.join("gcc", "config", "wasm", "wasm.h"),
-                fingerprint = "DWARF2_LINENO_DEBUGGING_INFO",
-                what = "WebAssembly line-number debug channel"},
+                fingerprint = "DWARF2_DEBUGGING_INFO",
+                what = "WebAssembly DWARF debug channel"},
             {file = path.join("gcc", "config", "wasm", "wasm.md"),
                 fingerprint = "return_call",
                 what = "WebAssembly tail-call instruction patterns"},
@@ -127,7 +134,49 @@ function register_postconditions(ctx)
                 what = "libcall block hoist guard"},
             {file = path.join("libgcc", "Makefile.in"),
                 fingerprint = "auto-target.h:config.in",
-                what = "libgcc header stamp relative template"}
+                what = "libgcc header stamp relative template"},
+            {file = path.join("gcc", "config", "wasm", "wasm-asm.cc"),
+                fingerprint = "wasm_output_debug_sections",
+                what = "WebAssembly full debug-information section emission"},
+            {file = path.join("gcc", "config", "wasm", "wasm-asm.cc"),
+                fingerprint = "(@sym.alias",
+                what = "WebAssembly symbol alias directive emission"},
+            {file = path.join("gcc", "config", "wasm", "wasm-protos.h"),
+                fingerprint = "wasm_output_alias",
+                what = "WebAssembly alias emission declaration"},
+            {file = path.join("gcc", "config", "wasm", "wasm.h"),
+                fingerprint = "ASM_OUTPUT_DEF",
+                what = "WebAssembly alias output hooks"},
+            -- The 2026-08-12 language/ABI batch. Every one of these is a fact
+            -- about layout or codegen that a rolled-back pin would lose in
+            -- silence: nothing fails to compile, the program just behaves
+            -- differently -- a struct crossing a call with the wrong shape, a
+            -- destructor that never runs, a 128-bit value returned the wrong
+            -- way. That is exactly what witnesses are for.
+            {file = path.join("gcc", "config", "wasm", "wasm.h"),
+                fingerprint = "PCC_BITFIELD_TYPE_MATTERS",
+                what = "WebAssembly bit-field allocation unit follows the declared type"},
+            {file = path.join("gcc", "config", "wasm", "wasm.h"),
+                fingerprint = "TARGET_PTRMEMFUNC_VBIT_LOCATION",
+                what = "WebAssembly member-pointer virtual bit placement"},
+            {file = path.join("gcc", "config", "wasm", "wasm.cc"),
+                fingerprint = "TARGET_C_BITINT_TYPE_INFO",
+                what = "WebAssembly _BitInt support"},
+            {file = path.join("gcc", "config", "wasm", "wasm.cc"),
+                fingerprint = "EXCESS_PRECISION_TYPE_FLOAT16",
+                what = "WebAssembly _Float16 support"},
+            {file = path.join("gcc", "config", "wasm", "wasm.cc"),
+                fingerprint = "TARGET_LIBGCC_SHIFT_COUNT_MODE",
+                what = "WebAssembly 128-bit integer return convention"},
+            {file = path.join("gcc", "config", "wasm", "wasm.md"),
+                fingerprint = "Sub-word values live in promoted registers",
+                what = "WebAssembly sub-word compare-and-exchange"},
+            {file = path.join("gcc", "config", "wasm", "wasm-passes.def"),
+                fingerprint = "wasm_dtors",
+                what = "WebAssembly static destructor execution"},
+            {file = path.join("gcc", "config", "wasm", "wasm-cg.cc"),
+                fingerprint = "setjmp",
+                what = "WebAssembly setjmp/longjmp"}
         }) do
             table.insert(ctx.postconditions, condition)
         end

@@ -139,7 +139,16 @@ function print_make_failure_logs(build, target_os, target, logfile)
     end
 end
 
-function run_make_target(make, build, buildenvs, target)
+-- opt.before_retry runs between the two attempts. It exists because a make
+-- run can legitimately regenerate its own Makefile mid-flight -- GNU make
+-- honours the `config.status: configure` rule, re-execs config.status and
+-- restarts -- which silently discards any patch the caller had applied to the
+-- generated Makefile. A retry over the regenerated file then reproduces the
+-- same failure, so the caller gets a chance to re-apply first (2026-08-12: the
+-- cross toolchains' gettext no-op override was lost exactly this way and both
+-- attempts died in gettext's configure).
+function run_make_target(make, build, buildenvs, target, opt)
+    opt = opt or {}
     local args = (target and target ~= "") and make_args_for(make, target) or make_args_for(make)
     args = table.join(args, make_tool_args())
     local logfile = make_target_log_file(build, target)
@@ -154,6 +163,9 @@ function run_make_target(make, build, buildenvs, target)
     if not ok then
         errors.warn("make failed; retrying once in case a transient file lock (antivirus or indexer) broke a build step")
         errors.sleep(2)
+        if opt.before_retry then
+            opt.before_retry()
+        end
         ok = errors.trycall(function ()
             run_make_with_log(make, args, {curdir = build, envs = buildenvs}, logfile)
         end)

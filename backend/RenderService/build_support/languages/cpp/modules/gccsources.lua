@@ -612,8 +612,24 @@ end
 -- durable escape when a rebased upstream branch drops the pinned revision.
 -- Bundles are keyed by cache name + revision, so a stale bundle can never be
 -- silently substituted for a different pin.
+-- Bundles are looked up in the machine-local cache first and in the
+-- repository's shipped seed directory second. The seed copy is what makes a
+-- pin restorable on a fresh checkout with nothing pre-seeded: the lines whose
+-- pins exist on no public remote ride along in git (thin, see the
+-- wasm_gcc_base_ref note in core/modules/defaults.lua). The cache still wins
+-- when both exist, so a locally regenerated bundle overrides the shipped one
+-- without touching the working tree.
 function managed_toolchains_source_bundle_file(cache_name, revision)
-    return path.join(layout.bundles_cache_dir(), cache_name .. "-" .. revision .. ".bundle")
+    local leaf = cache_name .. "-" .. revision .. ".bundle"
+    local cached = path.join(layout.bundles_cache_dir(), leaf)
+    if os.isfile(cached) then
+        return cached
+    end
+    local seeded = path.join(os.scriptdir(), "..", "bundles", leaf)
+    if os.isfile(seeded) then
+        return path.absolute(seeded)
+    end
+    return cached
 end
 
 -- The managed source trees are shallow, so a bundle carries a boundary
@@ -633,13 +649,29 @@ local function managed_toolchains_mark_shallow_boundary(src, revision)
     io.writefile(shallow, content .. revision .. "\n")
 end
 
-function managed_toolchains_restore_source_from_bundle(git, src, cache_name, ref, envs)
+-- base_ref, when given, means the bundle is THIN: it packs only base..pin and
+-- git will refuse it ("did not send all necessary objects") unless the base
+-- object is already present. So the base is shallow-fetched from the remote
+-- first -- which also plants the shallow boundary, and is why the tip must NOT
+-- be marked shallow in that case: doing so would declare the pinned commit
+-- parentless and orphan the very commits the bundle just supplied.
+function managed_toolchains_restore_source_from_bundle(git, src, cache_name, ref, envs, base_ref)
     local bundle = managed_toolchains_source_bundle_file(cache_name, ref)
     if not os.isfile(bundle) then
         return false
     end
     print("restoring source from local bundle: " .. bundle)
-    managed_toolchains_mark_shallow_boundary(src, ref)
+    if base_ref and base_ref ~= "" then
+        if not managed_toolchains_run_git(git,
+                {"-C", src, "fetch", "--depth=1", "origin", base_ref, "--no-tags"},
+                {envs = envs, try = true}) then
+            errors.warn("cannot fetch the bundle's base commit %s, so the thin bundle cannot be applied: %s",
+                base_ref, bundle)
+            return false
+        end
+    else
+        managed_toolchains_mark_shallow_boundary(src, ref)
+    end
     local ok = managed_toolchains_run_git(git, {"-C", src, "fetch", bundle, "HEAD", "--no-tags"}, {envs = envs, try = true})
     if not ok then
         errors.warn("local source bundle could not be read; falling back to a normal fetch: %s", bundle)
@@ -795,7 +827,8 @@ function sync_gcc_git_source(target_os, force, refresh)
     -- fetch entirely: it is both the offline path and the recovery path when
     -- a rebased upstream branch no longer carries the pinned commit.
     local restored_from_bundle = pinned_commit
-        and managed_toolchains_restore_source_from_bundle(git, src, source.cache_name, ref, envs.proxy_envs())
+        and managed_toolchains_restore_source_from_bundle(git, src, source.cache_name, ref,
+            envs.proxy_envs(), source.base_ref)
     local fetched_with_blob_filter = false
     if not restored_from_bundle then
         print("fetching GCC ref with git: " .. ref)

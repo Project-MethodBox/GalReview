@@ -1,6 +1,6 @@
 -- Project-local GCC source patches (C++-specific): libstdc++ std-module
 -- fallback preservation, PE-COFF contracts default handler wiring, the
--- module-streaming fixes (PR c++/125334 backport, PR c++/118630 tolerance,
+-- module-streaming fixes (PR c++/118630 tolerance,
 -- keyed-entity reader fix, WebAssembly empty-record ABI state, the
 -- post_load_processing lazy-load re-entrancy guard and assert_definition
 -- neutralization that fix the -Os module-recursion ICE / re-export re-install
@@ -35,7 +35,7 @@ import("wasm", {rootdir = path.join(os.scriptdir(), "patches")})
 local PROFILE_PATCH_STAMP = {
     ["mainline"] = 70,
     ["darwin-arm64"] = 70,
-    ["wasm-experimental"] = 76,
+    ["wasm-experimental"] = 78,
 }
 
 function source_patch_stamp_version(target_os)
@@ -95,10 +95,6 @@ function patch_gcc_source(src, target_os)
     local ctx = {
         src = src,
         target_os = target_os,
-        flags = {
-            wasm_freestanding_std_module_changed = false,
-            wasm_freestanding_include_headers_changed = false
-        },
         postconditions = {}
     }
     -- The WebAssembly line was ported onto GCC master and now carries every
@@ -108,16 +104,16 @@ function patch_gcc_source(src, target_os)
     -- longer exist. That profile is therefore verified rather than patched --
     -- the postcondition checkpoint below still runs, and is now the whole
     -- guarantee: a pin that silently lost a fix fails the sync exactly as a
-    -- lost patch write used to.
+    -- lost patch write used to. The wasm family has no apply() left at all,
+    -- for any profile: its patches only ever had anchors in a tree that
+    -- carries the WebAssembly backend, which upstream master does not.
     --
     -- Order is behavior-critical for the profiles that still patch:
-    -- mainline.apply() consumes the wasm freestanding flags, so wasm.apply()
-    -- must run first. darwin.apply() runs for every profile; its patches are
-    -- anchor self-gated. ios.apply() is profile gated to darwin-arm64 trees
-    -- and must follow darwin.apply(): its libgcc case reuses the
-    -- t-darwin-no-eh fragment file that darwin.apply() materializes.
+    -- darwin.apply() runs for every one of them and its patches are anchor
+    -- self-gated. ios.apply() is profile gated to darwin-arm64 trees and must
+    -- follow darwin.apply(): its libgcc case reuses the t-darwin-no-eh
+    -- fragment file that darwin.apply() materializes.
     if settings.gcc_source_profile(target_os).name ~= "wasm-experimental" then
-        wasm.apply(ctx)
         darwin.apply(ctx)
         ios.apply(ctx)
         mainline.apply(ctx)
@@ -130,8 +126,9 @@ function patch_gcc_source(src, target_os)
     -- above give context, but only this checkpoint guarantees a stamped
     -- source tree actually carries the fixes -- a lost write or an upstream
     -- anchor drift fails the sync here instead of resurfacing later as a
-    -- compiler defect. The bb2601808 ADL backport is intentionally absent:
-    -- its anchor disappearing means upstream already contains the fix.
+    -- compiler defect. Every patch that still applies is listed; a patch whose
+    -- only job was backporting an upstream commit is retired once its anchor
+    -- is gone rather than left here as a permanently silent no-op.
     mainline.register_postconditions(ctx)
     darwin.register_postconditions(ctx)
     ios.register_postconditions(ctx)

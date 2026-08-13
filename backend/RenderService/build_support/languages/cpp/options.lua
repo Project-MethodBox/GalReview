@@ -67,32 +67,29 @@ end
 
 MANAGED_TOOLCHAINS_OWNER_ROOT = MANAGED_TOOLCHAINS_OWNER_ROOT or managed_toolchains_detect_owner_root()
 
--- pinned master snapshot (2026-07-07): the module-streaming cluster
--- machinery is layout-sensitive, so an unpinned moving branch makes every
--- fresh CI toolchain a new gamble (2026-07-10 master silently wrote a
--- corrupt CMI for a Windows-only partition that this snapshot compiles
--- cleanly). Bump deliberately: rebuild + engine build green on one host
--- first; patch drift warnings tell you which tolerances upstream retired.
-default_ref = "4790838765e8a4b0580b11ba0d8c6671d7c3fc95"
-default_gcc_git_url = "https://github.com/gcc-mirror/gcc.git"
--- pinned master-wip-apple-si revision (validated 2026-07-11 on the macOS
--- test host). That branch is rebased upstream, so a floating name is a
--- gamble on every fresh sync AND the pinned commit itself can become
--- unreachable after a rebase -- keep a source bundle as offline insurance
--- (`xmake toolchains bundle macosx` on a host that has the tree). Bump
--- protocol: `xmake toolchains update macosx` reports where the tracking
--- branch has moved; revalidate the new revision on a macOS host before
--- changing this pin (and defaults.lua) to it.
-default_darwin_arm64_gcc_ref = "f4e36f15b1ce1c46926f9cbce847625336d01615"
-default_darwin_arm64_gcc_git_url = "https://github.com/iains/gcc-darwin-arm64.git"
+-- Upstream source identity -- which repository and which revision each managed
+-- GCC line is built from -- lives ONLY in core/modules/defaults.lua. The
+-- matching options below exist to OVERRIDE it, so their default is empty and
+-- settings.value_or() falls through to the module value.
+--
+-- Why no literal is mirrored here: xmake freezes an option's value into the
+-- config store the moment a configuration is written, and every store keeps
+-- its own copy -- the root, each lane under build/<plat>, and the test
+-- subproject. A mirrored default is therefore frozen at write time, so
+-- bumping defaults.lua reached none of the existing stores and every bump
+-- turned into a restate-it-in-N-places ritual, with a missed store silently
+-- building different sources than its siblings (found the hard way: three
+-- lane stores were still carrying a retired WebAssembly repository URL and
+-- the pin from two syncs earlier). An empty default freezes as empty, so the
+-- module value is consulted on every read and one edit reaches every store.
+-- An explicit `--gcc_ref=<rev>` still overrides, still only in the store it
+-- is written to -- now the ONLY way a store can differ, which is exactly what
+-- settings.warn_source_pin_drift() reports.
+--
 -- mirrored from core/modules/defaults.lua (ios_deployment_target); the ios
 -- GCC patch family reads the module value, so this literal must stay equal
 -- to it (check_options_file verifies at configure time)
 default_ios_deployment_target = "15.0"
-default_wasm_gcc_ref = "ee5f1859289f4ebc80d6a302e40893235f3c92ae"
-default_wasm_gcc_git_url = "https://forge.sourceware.org/feedable/gcc-TEST.git"
-default_wasm_wabt_ref = "f2d60b0532f35e13f86899f0581ab87fc029db36"
-default_wasm_wabt_git_url = "https://github.com/feedab1e/wabt.git"
 default_binutils_snapshot_url = "https://ftp.gnu.org/gnu/binutils/binutils-2.45.tar.xz"
 default_mingw_w64_snapshot_url = "https://downloads.sourceforge.net/project/mingw-w64/mingw-w64/mingw-w64-release/mingw-w64-v14.0.0.tar.bz2"
 default_musl_snapshot_url = "https://musl.libc.org/releases/musl-1.2.5.tar.gz"
@@ -148,52 +145,54 @@ option("toolchains_target")
     set_description("Override target triplet")
 option_end()
 
+-- Source-identity overrides: empty default on purpose, see the note above the
+-- ios_deployment_target literal. Empty means "use core/modules/defaults.lua".
 option("gcc_git_url")
-    set_default(default_gcc_git_url)
+    set_default("")
     set_showmenu(true)
-    set_description("GCC git repository URL")
+    set_description("Override the GCC git repository URL")
 option_end()
 
 option("gcc_ref")
-    set_default(default_ref)
+    set_default("")
     set_showmenu(true)
-    set_description("GCC branch/tag/commit to sync")
+    set_description("Override the GCC branch/tag/commit to sync")
 option_end()
 
 option("darwin_arm64_gcc_git_url")
-    set_default(default_darwin_arm64_gcc_git_url)
+    set_default("")
     set_showmenu(true)
-    set_description("Darwin Arm64 GCC git repository URL")
+    set_description("Override the Darwin Arm64 GCC git repository URL")
 option_end()
 
 option("darwin_arm64_gcc_ref")
-    set_default(default_darwin_arm64_gcc_ref)
+    set_default("")
     set_showmenu(true)
-    set_description("Darwin Arm64 GCC branch/tag/commit to sync")
+    set_description("Override the Darwin Arm64 GCC branch/tag/commit to sync")
 option_end()
 
 option("wasm_gcc_git_url")
-    set_default(default_wasm_gcc_git_url)
+    set_default("")
     set_showmenu(true)
-    set_description("Experimental GCC WebAssembly backend git repository URL")
+    set_description("Override the GCC WebAssembly backend git repository URL")
 option_end()
 
 option("wasm_gcc_ref")
-    set_default(default_wasm_gcc_ref)
+    set_default("")
     set_showmenu(true)
-    set_description("Pinned experimental GCC WebAssembly backend commit")
+    set_description("Override the pinned GCC WebAssembly backend commit")
 option_end()
 
 option("wasm_wabt_git_url")
-    set_default(default_wasm_wabt_git_url)
+    set_default("")
     set_showmenu(true)
-    set_description("WABT fork git repository URL required by the GCC WebAssembly backend")
+    set_description("Override the WABT fork git repository URL required by the GCC WebAssembly backend")
 option_end()
 
 option("wasm_wabt_ref")
-    set_default(default_wasm_wabt_ref)
+    set_default("")
     set_showmenu(true)
-    set_description("Pinned WABT fork commit required by the GCC WebAssembly backend")
+    set_description("Override the pinned WABT fork commit required by the GCC WebAssembly backend")
 option_end()
 
 option("wasm_ld")
